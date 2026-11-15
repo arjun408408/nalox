@@ -23,6 +23,10 @@ nalox_page.html
 nalox_fault.log
 logs/
 
+# v7.1: the fixed-line TTS cache — rendered audio, his
+# machine's own; never committed, never shipped in packs.
+cache/
+
 # Memory stores & captures
 *.db
 *.sqlite

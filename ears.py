@@ -942,6 +942,111 @@ def _post_heard(text):
 
 
 # ------------------------------------------------- mic auto-connect (v3.5)
+# v7.1: STARTUP MIC PROBE (pattern re-implemented from a
+# study of jarvis-hector — technique only, no code copied).
+# When mic_device is unset ("auto"), the would-be default
+# input is probed ONCE per process for a fraction of a
+# second: a healthy mic in a quiet room still shows
+# room-tone peaks; a muted / disconnected / wrong default
+# shows digital silence. A silent default triggers a scan
+# of the other inputs and the loudest WORKING one is used
+# instead, announced as ONE line. An explicit mic_device
+# choice in Settings is never probed or overridden.
+_PROBE_PEAK_THRESHOLD = 0.001
+_PROBE_SECONDS = 0.5
+_PROBE_MAX_SCAN = 6
+_PROBE_DONE = False
+_PROBED_DEVICE = None
+
+
+def _probe_device_peak(sd, idx):
+    """Peak |sample| heard from device `idx` over a short
+    window, or None when the device cannot be probed at
+    all. Fully guarded — probing must never break boot."""
+    stream_cls = getattr(sd, "InputStream", None)
+    if stream_cls is None:
+        return None
+    peak = [0.0]
+
+    def _cb(indata, frames, time_info, status):
+        try:
+            import numpy as _np
+            if indata is not None and len(indata):
+                value = float(_np.max(_np.abs(indata)))
+                if value > peak[0]:
+                    peak[0] = value
+        except Exception:
+            pass
+
+    stream = None
+    try:
+        stream = stream_cls(samplerate=SAMPLE_RATE, channels=1,
+                            dtype="float32", device=idx,
+                            callback=_cb)
+        stream.start()
+        time.sleep(_PROBE_SECONDS)
+    except Exception:
+        return None
+    finally:
+        if stream is not None:
+            try:
+                stream.stop()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
+    return peak[0]
+
+
+def _probe_inputs(sd, default_idx):
+    """Choose the input device for auto mode (v7.1).
+
+    The default wins whenever it hears anything at all.
+    Only a SILENT (or near-silent) default triggers the
+    scan; the loudest other input above the threshold
+    takes over, with exactly one switch line. Any doubt —
+    probe failure, no device above threshold — keeps the
+    default. Never raises."""
+    try:
+        peak = _probe_device_peak(sd, default_idx)
+    except Exception:
+        return default_idx
+    if peak is None or peak >= _PROBE_PEAK_THRESHOLD:
+        return default_idx
+    best_idx = None
+    best_peak = _PROBE_PEAK_THRESHOLD
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        return default_idx
+    scanned = 0
+    for idx, dev in enumerate(devices):
+        if idx == default_idx or scanned >= _PROBE_MAX_SCAN:
+            continue
+        try:
+            if dev.get("max_input_channels", 0) <= 0:
+                continue
+        except Exception:
+            continue
+        scanned += 1
+        try:
+            other = _probe_device_peak(sd, idx)
+        except Exception:
+            other = None
+        if other is not None and other > best_peak:
+            best_idx = idx
+            best_peak = other
+    if best_idx is None:
+        return default_idx
+    name = _device_name(best_idx)
+    line = (f"[mic] default mic silent — using {name} instead")
+    log.info(line)
+    _fire_status(line)
+    return best_idx
+
+
 def pick_input_device(cfg=None):
     """Index of the input device Nalox should listen on, or None.
 
@@ -951,7 +1056,13 @@ def pick_input_device(cfg=None):
     Any failure returns None, which means "sounddevice default".
     Re-evaluated before every listen, so hot-plugging the external
     mic switches over automatically.
+
+    v7.1: in auto mode the default is PROBED once per
+    process (see _probe_inputs) — a silent default is
+    replaced by the loudest working input for the rest of
+    the process. An explicit mic_device is never probed.
     """
+    global _PROBE_DONE, _PROBED_DEVICE
     try:
         import sounddevice as sd
     except Exception:
@@ -970,13 +1081,23 @@ def pick_input_device(cfg=None):
                     continue
         except Exception:
             pass  # fall through to the default device
+    default_idx = None
     try:
         default_in = sd.default.device[0]
         if default_in is not None and int(default_in) >= 0:
-            return int(default_in)
+            default_idx = int(default_in)
     except Exception:
         pass
-    return None
+    if default_idx is None:
+        return None
+    if not _PROBE_DONE:
+        _PROBE_DONE = True
+        try:
+            _PROBED_DEVICE = _probe_inputs(sd, default_idx)
+        except Exception:
+            _PROBED_DEVICE = default_idx
+    return _PROBED_DEVICE if _PROBED_DEVICE is not None \
+        else default_idx
 
 
 def _device_name(idx):
@@ -1420,6 +1541,18 @@ _cuda_probe_cache = None
 _big_resolved_notice_sent = False
 _big_gpu_notice_sent = False
 
+# v7.1 (F5): set by _get_model the moment a big-model
+# load STARTS; the worker loop flushes it as a
+# "big-model-loading" notice at the next notice point
+# (before the ready sentinel for a preload load, after
+# the paying job's result for a lazy one — always AFTER
+# the result, never before, per the v6.13 discipline:
+# a notice must never displace a job's answer in a
+# bounded reader). v7.0 logged only the load's
+# completion, so a bad window caused by an in-progress
+# load could only be inferred after the fact.
+_big_load_started = False
+
 
 def _probe_supported_compute(device):
     """The compute types CTranslate2 reports for a device,
@@ -1531,6 +1664,7 @@ def _construct_big(model_cls, name):
 def _get_model(name):
     global _big_model_down, _big_model_error
     global _big_model_fail_kind, _big_resolved
+    global _big_load_started
     # v6.12: the WAKE and PREVIEW lanes must never construct
     # the big model — that construction (a ~3 GB load on
     # CPU) is exactly the starvation this release removes.
@@ -1557,7 +1691,12 @@ def _get_model(name):
                 # ladder: the first rung the installed
                 # faster-whisper accepts serves under the
                 # configured name, and is remembered for
-                # the next boot.
+                # the next boot. v7.1 (F5): the load's START
+                # is flagged — the worker loop turns it into
+                # the "big-model-loading" notice at the next
+                # notice point, so a load window is measured
+                # in the log, not inferred.
+                _big_load_started = True
                 model, resolved, kind, exc = _try_load_big(
                     WhisperModel)
                 if model is not None:
@@ -1719,6 +1858,17 @@ WAKE_COOLDOWN_S = 20.0
 # writes a logbook ERROR instead of another quiet cooldown.
 WAKE_COOLDOWN_EPISODES_MAX = 3
 WAKE_COOLDOWN_EPISODE_WINDOW_S = 600.0
+# v7.1 (F2): the anti-chain respawn is a STALL remedy, not
+# a slowness remedy. Field proof (the wake-slowness
+# diagnosis): the worker it kept respawning was healthy
+# but starved — its decodes were completing, just late.
+# So the respawn now requires a true stall: zero decodes
+# completed inside WAKE_STALL_WINDOW_S. A slow-but-alive
+# lane gets WAKE_EXTENDED_COOLDOWN_S of quiet instead —
+# no respawn, no logbook ERROR. Gate:
+# ears_antichain_require_stall (default ON).
+WAKE_STALL_WINDOW_S = 60.0
+WAKE_EXTENDED_COOLDOWN_S = 60.0
 LOG_THROTTLE_WINDOW = 60.0
 # v6.14 steady-ears timings (lane coordination below):
 # module-level so the suites can shrink them; the values
@@ -1871,6 +2021,9 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     global _big_cuda_fail_reason, _big_gpu_fallback_reason
     global _big_device_desc, _cuda_probe_cache
     global _big_resolved_notice_sent, _big_gpu_notice_sent
+    # v7.1 (F5): a clean load-start slate for this process.
+    global _big_load_started
+    _big_load_started = False
     _PROCESS_LANE = lane or "combined"
     _MODEL_CPU_THREADS = _lane_threads(_PROCESS_LANE, cfg)
     _BIG_DEVICE_CFG = str(cfg.get("ears_big_device")
@@ -1977,6 +2130,17 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                         _big_model_fail_kind or "error")))
             res_q.put((0, "notice", "big-model-fallback"))
             _notice_sent = True
+        except Exception:
+            pass
+    if _big_load_started:
+        # v7.1 (F5): a big load STARTED during preload —
+        # the parent logs the start before the ready
+        # sentinel, so the load window is bracketed in
+        # the log (loading… -> ready / resolved).
+        _big_load_started = False
+        try:
+            res_q.put((0, "notice",
+                       ("big-model-loading", _big_slot_name)))
         except Exception:
             pass
     if _big_resolved:
@@ -2178,6 +2342,21 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                 _big_gpu_notice_sent = True
             except Exception:
                 pass
+        if _big_load_started:
+            # v7.1 (F5): a big load STARTED inside the job
+            # above — announced LAST in this job's message
+            # train, after the result and the resolved /
+            # gpu notices, so the caller's message shape is
+            # exactly as it was (the v6.13 discipline
+            # above). The parent logs the start; the
+            # resolved notice beside it marks the finish.
+            _big_load_started = False
+            try:
+                res_q.put((0, "notice",
+                           ("big-model-loading",
+                            _big_slot_name)))
+            except Exception:
+                pass
 
 
 # ------------------------------------------------------------- v6.14
@@ -2348,6 +2527,16 @@ class _TxWorkerClient:
         # v6.13 anti-chain: monotonic stamps of this lane's
         # recent cooldown episodes (see _note_cooldown_episode).
         self._cooldown_episodes = []
+        # v7.1 (F2): monotonic time of the last COMPLETED
+        # decode on this client (any result-shaped worker
+        # message — see _classify); 0.0 = none yet. The
+        # anti-chain stall gate reads it.
+        self._last_completion_at = 0.0
+        # v7.1 (F4): whether the most recent request() call
+        # actually submitted its job to the worker (False =
+        # a fail-fast None: closed / cooldown / backoff /
+        # spawn failure — no decode was ever attempted).
+        self._last_submitted = False
         self._throttle = _LogThrottle()
         # v6.8 big-model retry state: "none" (nothing heard)
         # / "armed" (preload failed, retry due at
@@ -2465,6 +2654,14 @@ class _TxWorkerClient:
             rid, mkind, result = msg
         except Exception:
             return "stale", None
+        # v7.1 (F2): completion tracking for the anti-chain
+        # stall gate — ANY result-shaped message proves the
+        # worker finished a job, including a late/stale one
+        # for an old job id (it is classified "stale" below
+        # but the worker demonstrably cycled). Lifecycle
+        # traffic (ready / notice / ack) does not count.
+        if mkind not in ("ready", "notice", "ack"):
+            self._last_completion_at = time.monotonic()
         if mkind == "ready":
             self._ready = True
             # v6.10 boot diagnostics: the sentinel carries
@@ -2596,6 +2793,21 @@ class _TxWorkerClient:
                         % (_greason or "unknown error"))
                 except Exception:
                     pass
+            elif isinstance(result, tuple) and result \
+                    and result[0] == "big-model-loading":
+                # v7.1 (F5): a big-model load is STARTING
+                # in the worker (posted by _get_model the
+                # moment the ladder runs). Until now only
+                # the load's completion was logged, so a
+                # slow window with a load still in flight
+                # was invisible in the log; this line makes
+                # the next bad window measurable.
+                try:
+                    self._throttle.emit(
+                        "big-model-loading",
+                        "[ears] big local model loading…")
+                except Exception:
+                    pass
             elif result == "big-model-ready":
                 self._big_state = "done"
                 try:
@@ -2697,9 +2909,26 @@ class _TxWorkerClient:
             # (a live worker is never restarted for
             # slowness), and production wake traffic rides
             # the "wake" lane only.
-            if self.lane == "wake" \
-                    and self._note_cooldown_episode():
-                return
+            # v7.1 (F2): the episode verdict is tri-state —
+            # True = stall, lane respawned (no cooldown
+            # stacked); "extended" = slow but still
+            # completing decodes, so the lane takes the
+            # EXTENDED cooldown below and is NOT respawned;
+            # False = below threshold, ordinary cooldown.
+            if self.lane == "wake":
+                _episode = self._note_cooldown_episode()
+                if _episode is True:
+                    return
+                if _episode == "extended":
+                    self._cooldown_until = (
+                        time.monotonic()
+                        + WAKE_EXTENDED_COOLDOWN_S)
+                    self._throttle.emit(
+                        "cooldown",
+                        "[ears] wake transcription paused "
+                        "briefly (worker slow) — still "
+                        "listening")
+                    return
             self._cooldown_until = \
                 time.monotonic() + WAKE_COOLDOWN_S
             self._throttle.emit(
@@ -2713,14 +2942,26 @@ class _TxWorkerClient:
         Episodes older than WAKE_COOLDOWN_EPISODE_WINDOW_S
         are pruned. Below WAKE_COOLDOWN_EPISODES_MAX nothing
         changes — the caller applies the ordinary single
-        cooldown, exactly as before. AT the threshold the
-        chain is broken for good: the episode list clears,
-        any live cooldown is dropped, ONE logbook ERROR line
-        is written ("[ears] wake lane restarted (repeated
-        cooldowns)" — an ERROR, so logsync uploads early),
-        and the lane is force-respawned even though its
-        heartbeat still answers. Returns True iff the
-        threshold tripped."""
+        cooldown, exactly as before (returns False). AT the
+        threshold the chain is broken for good: the episode
+        list clears, any live cooldown is dropped, ONE
+        logbook ERROR line is written ("[ears] wake lane
+        restarted (repeated cooldowns)" — an ERROR, so
+        logsync uploads early), and the lane is
+        force-respawned even though its heartbeat still
+        answers (returns True).
+
+        v7.1 (F2): the threshold verdict first passes the
+        STALL GATE (config ears_antichain_require_stall,
+        default ON). Field proof showed the respawned
+        worker was healthy but starved — its decodes were
+        completing, just late — so with the gate ON the
+        respawn fires ONLY when zero decodes completed in
+        the last WAKE_STALL_WINDOW_S (a true stall). A
+        slow-but-completing lane returns "extended": the
+        caller applies WAKE_EXTENDED_COOLDOWN_S, no
+        respawn happens and no logbook ERROR is written.
+        Gate OFF = the exact v6.13/v7.0 behaviour."""
         now = time.monotonic()
         self._cooldown_episodes = [
             t for t in self._cooldown_episodes
@@ -2730,6 +2971,16 @@ class _TxWorkerClient:
                 < WAKE_COOLDOWN_EPISODES_MAX:
             return False
         self._cooldown_episodes = []
+        if self._cfg.get("ears_antichain_require_stall",
+                         True) \
+                and self._last_completion_at > 0.0 \
+                and now - self._last_completion_at \
+                < WAKE_STALL_WINDOW_S:
+            # Slow, not stuck: decodes ARE completing.
+            # Respawning this worker would throw away a
+            # healthy lane (and its loaded models) for
+            # nothing — the field failure this fixes.
+            return "extended"
         self._cooldown_until = 0.0
         _logbook_error("[ears] wake lane restarted "
                        "(repeated cooldowns)")
@@ -2922,10 +3173,26 @@ class _TxWorkerClient:
         except Exception:
             pass
 
+    def last_request_submitted(self):
+        """v7.1 (F4): True when the most recent request()
+        call actually submitted its job to the worker;
+        False when it fail-fasted (closed / cooldown /
+        backoff / spawn failure) and no decode was ever
+        attempted. Callers read it immediately after the
+        call it describes."""
+        return self._last_submitted
+
     def request(self, kind, payload, deadline):
         """One job: the worker's result, or None (timeout /
         crash / backoff / cooldown / closed)."""
         with self._call_lock:
+            # v7.1 (F4): record whether THIS call actually
+            # submits a job — the fail-fast returns below
+            # (closed / cooldown / backoff / spawn failure)
+            # leave it False, so a caller can tell "the pass
+            # ran and heard nothing" from "the pass never
+            # ran" (see last_request_submitted).
+            self._last_submitted = False
             if self._closed:
                 return None
             # v6.8: the armed big-model retry fires lazily
@@ -2949,6 +3216,7 @@ class _TxWorkerClient:
             except Exception:
                 self._kill()
                 return None
+            self._last_submitted = True
             if kind == "ping":
                 # A job-queue ping is a lifecycle proof, not a
                 # decode: the plain deadline applies (v6.2
@@ -4098,6 +4366,9 @@ class Ears:
         self._tx_worker = None
         self._tx_lock = threading.Lock()
         self._tx_seq = 0
+        # v7.1 (F3): throttle stamp for the stale wake
+        # segment drop line (see _tx_loop).
+        self._stale_drop_logged_at = 0.0
         # v6.12: TWO lane clients — the wake lane (tiny/base
         # only, wake/raw jobs only) and the command lane
         # (small + lazy big ladder, command/file/upgrade +
@@ -4368,9 +4639,34 @@ class Ears:
     def _tx_loop(self):
         while not self._stop.is_set():
             try:
-                audio, model_name, job_id = self._tx_queue.get(
-                    timeout=0.5)
+                audio, model_name, job_id, submitted_at = \
+                    self._tx_queue.get(timeout=0.5)
             except queue.Empty:
+                continue
+            # v7.1 (F3): a wake segment that waited longer
+            # than ears_wake_segment_max_age_s in the queue
+            # is STALE — the moment it was spoken for has
+            # passed, and decoding it can only delay the
+            # fresh speech behind it (the queue-pinned
+            # grind of the wake-slowness diagnosis). Drop
+            # it, with a throttled log line: the drop is
+            # visible, never silent. Wake listening only —
+            # a submitted COMMAND is never dropped anywhere.
+            try:
+                _max_age = float(self.cfg.get(
+                    "ears_wake_segment_max_age_s", 10.0) or 0.0)
+            except Exception:
+                _max_age = 10.0
+            if _max_age > 0 and submitted_at \
+                    and time.monotonic() - submitted_at \
+                    > _max_age:
+                _now = time.monotonic()
+                if _now - self._stale_drop_logged_at >= 60.0:
+                    self._stale_drop_logged_at = _now
+                    log.info("[ears] dropped a stale wake "
+                             "segment (queued %.1fs) — "
+                             "listening continues",
+                             _now - submitted_at)
                 continue
             woke = False
             try:
@@ -4420,7 +4716,10 @@ class Ears:
         with self._tx_lock:
             self._tx_seq += 1
             job_id = self._tx_seq
-        job = (audio, model_name, job_id)
+        # v7.1 (F3): the submit stamp rides the job — the
+        # consumer drops wake segments that waited too long
+        # (see _tx_loop).
+        job = (audio, model_name, job_id, time.monotonic())
         try:
             self._tx_queue.put_nowait(job)
             return True
@@ -4580,6 +4879,20 @@ class Ears:
         reading (wake-name stripped) becomes the command;
         the wake remainder survives only as the fallback when
         the command path hears nothing usable.
+
+        v7.1 — triggers (a)/(b)/(c) retry with the ESCALATION
+        model (config wake_escalation_model, default "small",
+        resident on the command lane), NOT the configured
+        command model: v7.0's escalation to the big model
+        triggered its lazy ~1.6 GB load inside the command
+        worker's serial loop and starved this lane for tens
+        of seconds (the wake-slowness diagnosis, PROVEN from
+        the first synced field log). The retry only hunts
+        for the name, so nothing is lost — the v6.6 re-hear
+        above still uses the real command model. The retry
+        is also skipped when the first pass never actually
+        ran (F4: the wake client fail-fasted on cooldown /
+        backoff, so there is no hearing to improve on).
         """
         kwargs = dict(beam_size=1, language=None, word_timestamps=False)
         kwargs.update(_DECODE_GUARDS)
@@ -4595,21 +4908,54 @@ class Ears:
         if got_pass is not None:
             text, lang, no_speech = got_pass
         took = time.monotonic() - started
+        # v7.1 (F4): did the first pass actually RUN? A
+        # fail-fast None (wake client in cooldown / backoff
+        # / closed — see last_request_submitted) means no
+        # decode was ever attempted; escalating then would
+        # burn command-lane seconds re-decoding a segment
+        # whose first hearing never happened, so the retry
+        # below is skipped and the segment does not wake.
+        # Stub clients from the suites predate the flag and
+        # read as attempted (their pre-v7.1 semantics).
+        _pass_client = self._client_for_model(model_name)
+        _submitted_fn = getattr(_pass_client,
+                                "last_request_submitted",
+                                None)
+        first_attempted = bool(_submitted_fn()) \
+            if callable(_submitted_fn) else True
 
         command_model = (self.cfg.get("whisper_command_model")
                          or BIG_COMMAND_MODEL)
+        # v7.1 (F1): the (a)/(b)/(c) retry hunts for the
+        # NAME only, so it runs on the resident ESCALATION
+        # model (config wake_escalation_model, default
+        # "small" — already loaded on the command lane),
+        # never on the big command model: escalating to the
+        # big model made the command worker pay its lazy
+        # ~1.6 GB load inside its serial loop and starved
+        # the wake lane for tens of seconds (the
+        # wake-slowness diagnosis). Command quality is
+        # untouched — on a match, the remainder below is
+        # re-heard through transcribe_command_best with the
+        # REAL command model, exactly as before.
+        escalation_model = (self.cfg.get(
+            "wake_escalation_model") or "small")
         peak = self._segment_peak_rms(audio)
         threshold = self.gate_threshold()
         loud = peak >= 3.0 * threshold
-        can_retry = (command_model != model_name and loud)
+        can_retry = (escalation_model != model_name and loud
+                     and first_attempted)
         # v6.4: the near-miss retry runs on WAKE_RETRY_MODEL
         # ("base") — stronger than the tiny first pass, faster
         # than going straight to the command model.
         can_retry_base = (WAKE_RETRY_MODEL != model_name and loud)
 
-        def _retry_with_command_model():
-            """The one small-model retry; (text, lang, nsp) or None."""
-            got2 = self._wake_pass(audio, command_model, kwargs)
+        def _retry_with_escalation_model():
+            """The one escalation-model retry (v7.1 F1: the
+            resident "small" by default, NOT the big command
+            model); (text, lang, nsp) or None."""
+            got2 = self._wake_pass(audio, escalation_model,
+                                   kwargs)
             if got2 is None:
                 return None
             t2, l2, n2 = got2
@@ -4635,8 +4981,9 @@ class Ears:
                 log.info("Wake segment garbled by %s (peak %.4f = "
                          "%.1fx the gate) — retrying once with %s",
                          model_name, peak,
-                         peak / max(threshold, 1e-9), command_model)
-                got = _retry_with_command_model()
+                         peak / max(threshold, 1e-9),
+                         escalation_model)
+                got = _retry_with_escalation_model()
                 took = time.monotonic() - started
                 if got is not None:
                     text, lang, no_speech = got
@@ -4650,8 +4997,9 @@ class Ears:
             retried = True
             log.info("Wake model %s labelled a loud segment %r "
                      "(lang %s, outside en/bn/hi) — retrying once "
-                     "with %s", model_name, text, lang, command_model)
-            got = _retry_with_command_model()
+                     "with %s", model_name, text, lang,
+                     escalation_model)
+            got = _retry_with_escalation_model()
             took = time.monotonic() - started
             if got is not None:
                 text, lang, no_speech = got
@@ -4664,8 +5012,9 @@ class Ears:
             log.info("Wake segment in %s script with no wake "
                      "match (loud, peak %.4f) — retrying once "
                      "with %s (Bengali wake rescue)",
-                     _dominant_script(text), peak, command_model)
-            got = _retry_with_command_model()
+                     _dominant_script(text), peak,
+                     escalation_model)
+            got = _retry_with_escalation_model()
             took = time.monotonic() - started
             if got is not None:
                 text, lang, no_speech = got

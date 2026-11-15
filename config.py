@@ -77,6 +77,38 @@ DEFAULTS = {
     # Only the big command model ever uses the GPU — the
     # wake lane and preview stay on CPU. ---
     "ears_big_device": "auto",
+    # --- v7.1: WAKE ESCALATION MODEL — when a loud wake
+    # segment's first pass comes back garbage / out-of-set
+    # language / clean-but-nameless (triggers a/b/c), the
+    # RETRY that hunts for the NAME runs on this model —
+    # "small", which is already resident on the command
+    # lane — NOT on whisper_command_model. v7.0 escalated
+    # to the big model, whose lazy ~1.6 GB load inside the
+    # command worker's serial loop starved the wake lane
+    # for tens of seconds (see the wake-slowness
+    # diagnosis). Command quality is untouched: the retry
+    # only hunts for the name; a match's remainder is
+    # re-heard cloud-first with the REAL command model,
+    # exactly as before. Set this to the command model to
+    # restore the v7.0 behaviour. ---
+    "wake_escalation_model": "small",
+    # --- v7.1: ANTI-CHAIN STALL GATE — the v6.13
+    # anti-chain force-respawns the wake worker after 3
+    # cooldown episodes in 10 minutes. With this ON (the
+    # default) the respawn fires ONLY on a true stall:
+    # zero decodes completed in the last 60 s. A worker
+    # that is slow but still completing decodes gets an
+    # EXTENDED cooldown instead — no respawn. OFF
+    # restores the exact v6.13/v7.0 behaviour. ---
+    "ears_antichain_require_stall": True,
+    # --- v7.1: STALE WAKE SEGMENTS — the wake consumer
+    # drops a queued wake-listening segment older than
+    # this many seconds instead of grinding stale audio
+    # while fresh speech waits (the drop is logged,
+    # throttled — never silent). Commands themselves are
+    # never dropped: this is wake listening only. 0 =
+    # off (v7.0 FIFO behaviour). ---
+    "ears_wake_segment_max_age_s": 10.0,
     # --- v5.1: CLOUD EARS — the COMMAND transcription may go
     # to the cloud first (Gemini audio, then Groq Whisper),
     # because the local small model still garbles Arjun's

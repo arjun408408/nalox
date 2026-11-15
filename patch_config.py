@@ -131,6 +131,12 @@ PATCH_IF_ABSENT = {
     "ears_mic_restart_window_s": 600.0,
     "watchdog_speaking_s": 45.0,
     "watchdog_stage_s": 90.0,
+    # v7.1: wake escalation model + anti-chain stall gate
+    # + stale wake-segment age cap (see config.py) — added
+    # when absent; his values are preserved.
+    "wake_escalation_model": "small",
+    "ears_antichain_require_stall": True,
+    "ears_wake_segment_max_age_s": 10.0,
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"

@@ -1209,7 +1209,7 @@ def main():
         try:
             if not _voice_mod.is_speaking():
                 speaker.say("স্যার, মাইকে সমস্যা হচ্ছে।",
-                            lang="bn")
+                            lang="bn", fixed=True)
         except Exception:
             pass
 
@@ -1559,8 +1559,13 @@ def main():
         except Exception:
             pass
 
-    def say(text, lang=None):
+    def say(text, lang=None, fixed=False):
         """Speak a reply, mirrored to the HUD with a SPEAKING status.
+
+        v7.1: fixed=True is forwarded to speaker.say — the
+        fixed-line TTS cache (the wake ack and the
+        could-not-hear line come through here; the greeting
+        and the mic warning call speaker.say directly).
 
         v4.1 BARGE-IN: the speech runs on a worker thread while
         ears.monitor_interrupt listens on its own stream. If Arjun
@@ -1614,7 +1619,7 @@ def main():
                 outcome["result"] = speaker.say(
                     text,
                     lang=lang if lang is not None else brain.last_lang,
-                    on_chunk=_on_chunk)
+                    on_chunk=_on_chunk, fixed=fixed)
             except Exception as exc:  # speaker.say is guarded; be safe
                 log.warning("speaker.say raised: %s", exc)
                 outcome["result"] = "done"
@@ -1754,7 +1759,8 @@ def main():
         if cfg.get("greet_on_startup", True):
             hudstatus("speaking")
             hudlog("NALOX: " + greet_text)
-            speaker.say(greet_text, lang=_greet_lang)
+            speaker.say(greet_text, lang=_greet_lang,
+                        fixed=True)
         else:
             hudlog("[sys] greeting skipped (turned off in Settings)")
         # v4.3: the boot briefing IS Morning Digest 2.0 — greeting,
@@ -1809,6 +1815,17 @@ def main():
         _updated_to = _updater_mod.pop_updated_marker()
         if _updated_to:
             hudlog(f"[sys] self-updated to v{_updated_to}")
+            # v7.1: the Command Center ALSO shows it, once —
+            # a banner under its top bar, so he can SEE the
+            # update landed even if he missed the spoken
+            # line (his 2026-11-16 complaint: updates were
+            # invisible). The marker is already popped, so
+            # neither announcement can ever repeat.
+            if _dashboard is not None:
+                try:
+                    _dashboard.set_update_notice(_updated_to)
+                except Exception:
+                    pass
             hudstatus("speaking")
             speaker.say(f"I have updated myself to version "
                         f"{_updated_to}, sir.", lang="en")
@@ -1881,7 +1898,7 @@ def main():
             hudlog("[wake] wake word heard")
             _stage("heard")
             _ack_t0 = time.monotonic()
-            say(ack, lang=ack_lang)
+            say(ack, lang=ack_lang, fixed=True)
             _ack_s = time.monotonic() - _ack_t0
             # Ears 2.0: a one-breath command ("Nalox কেমন আছো")
             # arrives WITH the wake segment — no second recording.
@@ -1919,7 +1936,7 @@ def main():
                         "every transcription path returned "
                         "empty — answered with the "
                         "could-not-hear line")
-                say(_missed_command_line(brain, cfg))
+                say(_missed_command_line(brain, cfg), fixed=True)
                 hudstatus("listening")
                 continue
             run_command(command, cmd_lang, _rec_s, _tr_s)

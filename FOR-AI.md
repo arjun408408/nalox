@@ -316,3 +316,83 @@ faster-whisper base/small on this VM; large-v3-turbo was
 NOT VM-tested). Tests: test_v70 (new) + the full battery.
 Everything else is frozen at v6.14 (brain, providers,
 Bengali-only replies, phone, Telegram, exit codes).
+
+## v7.1 "Hearing That Never Falls Behind" (2026-11-16)
+
+Built from WAKE-SLOWNESS-DIAGNOSIS.md (root cause PROVEN
+from the first synced field log: wake escalations to the
+command model triggered the lazy 1.6 GB big-model load
+inside the command worker's serial loop; while it loaded,
+2-thread tiny wake decodes blew the 8 s deadline →
+cooldown episodes → the v6.13 anti-chain force-respawned
+the HEALTHY wake worker while the 3-job mic queue stayed
+pinned and drop-oldest discarded the owner's speech.
+Recovery tracked the load FINISHING, never the respawn).
+Fixes F1–F6 (ears.py / updater.py): (F1) wake escalations
+(triggers a/b/c) retry with the resident escalation model
+— new config wake_escalation_model, default "small" —
+never the big model; command quality is unchanged (a
+match's remainder is still re-heard cloud-first with the
+REAL command model; listen_for_command untouched).
+(F2) the anti-chain respawn now requires a TRUE STALL:
+zero completed decodes in WAKE_STALL_WINDOW_S (60 s),
+tracked via _TxWorkerClient._last_completion_at (any
+result-shaped message in _classify counts, stale ones
+included); a slow-but-completing lane gets
+WAKE_EXTENDED_COOLDOWN_S (60 s) instead — no respawn, no
+logbook ERROR. Gate ears_antichain_require_stall
+(default ON; OFF = exact v6.13/v7.0 behaviour). (F3) the
+wake consumer drops segments older than
+ears_wake_segment_max_age_s (default 10 s, 0 = off) with
+a throttled log line — wake-listening segments only;
+commands are never dropped. (F4) no escalation when the
+first pass never ran (request() records _last_submitted;
+last_request_submitted(); a fail-fast None = not
+submitted). (F5) a big load's START is flagged at the
+load site (_big_load_started) and announced as a
+"big-model-loading" notice at the next notice point —
+before the ready sentinel for a preload load, AFTER the
+paying job's result for a lazy one (never before the
+result: the v6.13 discipline, a notice must not displace
+a job's answer in a bounded reader). The parent logs
+"[ears] big local model loading…" (throttled) — load
+windows are measured now, not inferred. (F6) the
+self-updater stops
+the install's own adb server (kill-server, lazily) before
+copying platform-tools, and a sharing/lock copy failure
+(WinError 32/33 / PermissionError) fails the WHOLE apply
+NAMING the file — never a silent skip (a skipped binary
+would strand a half-updated install that version.txt
+could never detect); the no-marker-on-failure discipline
+is untouched. Two patterns RE-IMPLEMENTED from the
+jarvis-hector study (techniques only — that repo has NO
+license): (1) the fixed-line TTS disk cache (voice.py):
+say(..., fixed=True) at exactly four nalox.py call sites
+(boot greeting, wake ack, could-not-hear line, mic
+warning); synthesized once per (text, engine, voice,
+speed) and stored in the engine's NATIVE format under
+cache/tts (ElevenLabs as WAV via _write_wav — no MP3
+decoder ships with the install; the MP3 engines as MP3),
+played through the same interruptible players (barge-in
+identical), breaker-neutral (no _record_good, no breaker
+notes); cache/ is updater-deny-listed + git-ignored and
+never ships. (2) the startup mic probe (ears.py
+pick_input_device): auto mode only (an explicit
+mic_device is never probed), one-shot per process — a
+silent default (peak < 0.001 over 0.5 s) is replaced by
+the loudest working input with ONE status line.
+Dashboard (the owner's order — updates were invisible):
+the header carries a permanent VERSION BADGE from
+version.txt (dashboard.running_version — the same source
+as the boot line); the first Command Center open after
+an update shows a ONE-TIME banner (set_update_notice,
+fed by the popped updater marker in nalox.py; a UI
+element, never a chat line — chat purity untouched); a
+2 px accent strip under the top bar follows the status
+colour; the SYSTEM panel gains a GPU row (guarded
+nvidia-smi, 10 s cache, "—" when absent). New config keys
+(DEFAULTS + patch-if-absent): wake_escalation_model,
+ears_antichain_require_stall, ears_wake_segment_max_age_s.
+Tests: test_v71 (new) + the full battery. Frozen as ever:
+brain/providers, Bengali-only replies, phone app,
+Telegram, exit codes.

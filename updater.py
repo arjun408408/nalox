@@ -96,7 +96,11 @@ _NEVER_FILES = {"config.json", "custom_commands.json",
 _NEVER_SUFFIXES = (".flag", ".lock", ".db", ".sqlite",
                    ".sqlite3")
 _NEVER_DIRS = {"logs", "captures", "leads", "demos",
-               "__pycache__", ".venv", ".git"}
+               "__pycache__", ".venv", ".git",
+               # v7.1: the fixed-line TTS cache — his
+               # machine's own rendered audio, never shipped
+               # or overwritten by an update.
+               "cache"}
 
 # repo -> (version, monotonic time) of the last failed
 # download/apply, so a broken version is not retried until
@@ -294,6 +298,43 @@ def _pip_install(stage_root, base_dir):
         return False
 
 
+def _kill_adb_server(base_dir):
+    """v7.1 (F6): stop the adb server running from the
+    install's bundled platform-tools, so its binaries are
+    unlocked for the copy in apply_update. The server is
+    spawned by phone_control.py from THIS tree; left
+    running, it holds adb.exe / AdbWinApi.dll /
+    AdbWinUsbApi.dll open and the copy dies mid-apply with
+    WinError 32 (field 2026-11-16 00:39 IST). Best-effort:
+    any failure is ignored — the copy guard below names
+    the file if it is still locked. The server respawns on
+    the next phone command."""
+    try:
+        adb = os.path.join(base_dir, "platform-tools",
+                           "adb.exe")
+        if os.path.exists(adb):
+            subprocess.run([adb, "kill-server"], timeout=10,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def _raise_locked(rel, exc):
+    """v7.1 (F6): a copy blocked by a sharing/lock error
+    fails the WHOLE apply, naming the exact file. Skipping
+    the file instead would strand a half-updated install
+    the version check could never detect (version.txt
+    would already match), so the apply stays
+    all-or-nothing: the raise keeps the caller's
+    no-success-marker discipline intact and the version is
+    retried on the next cycle."""
+    log.warning("update: file locked during apply: %s (%s)",
+                rel, exc)
+    raise RuntimeError(
+        f"file locked during apply: {rel} ({exc})")
+
+
 def apply_update(zip_bytes, base_dir=BASE_DIR):
     """Apply a downloaded zipball to base_dir, UPDATE.bat
     style. Returns the list of relative paths copied. Raises
@@ -307,16 +348,35 @@ def apply_update(zip_bytes, base_dir=BASE_DIR):
                     "requirements changed but pip install "
                     "failed — update aborted, nothing applied")
         applied = []
+        _adb_killed = False
         for root, _dirs, files in os.walk(stage_root):
             for name in files:
                 full = os.path.join(root, name)
                 rel = os.path.relpath(full, stage_root)
                 if not _wanted(rel):
                     continue
+                rel_fwd = rel.replace(os.sep, "/")
+                # v7.1 (F6): the platform-tools binaries
+                # are locked by the running adb server —
+                # stop it once, lazily, before the first
+                # one is copied (see _kill_adb_server).
+                if not _adb_killed \
+                        and rel_fwd.startswith(
+                            "platform-tools/"):
+                    _adb_killed = True
+                    _kill_adb_server(base_dir)
                 dest = os.path.join(base_dir, rel)
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
-                shutil.copy2(full, dest)
-                applied.append(rel.replace(os.sep, "/"))
+                try:
+                    shutil.copy2(full, dest)
+                except PermissionError as exc:
+                    _raise_locked(rel_fwd, exc)
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) \
+                            in (32, 33):
+                        _raise_locked(rel_fwd, exc)
+                    raise
+                applied.append(rel_fwd)
         if not applied:
             raise ValueError("zipball contained nothing to apply")
         # UPDATE.bat parity: patch_config.py flips only its

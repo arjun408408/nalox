@@ -336,6 +336,38 @@ _VOICE_ENGINES = ("elevenlabs", "edge-tts", "google-cloud-tts",
                   "google-tts", "pyttsx3", "powershell")
 _VOICE_CLASSES = ("bn", "hi", "en")
 
+# ------------------------------------------------------------- v7.1
+# FIXED-LINE TTS CACHE (pattern re-implemented from a study
+# of jarvis-hector — technique only, no code copied).
+# Nalox's FIXED lines — the boot greeting, the wake ack
+# "Yes Sir, I'm here.", the Bengali could-not-hear line,
+# the mic-warning line — are the same strings every day,
+# yet v7.0 re-synthesized them through the network chain
+# on every boot (paying ElevenLabs' 402 crawl and hotspot
+# latency for the two lines he hears most). Now a fixed
+# line is synthesized ONCE per (text, engine, voice,
+# speed) and replayed from disk: instant, offline, immune
+# to the 402 and to hotspot slowness. The first-ever play
+# goes through the normal chain and populates the cache on
+# success; only say(..., fixed=True) call sites take part
+# (nalox.py marks exactly the fixed lines) — dynamic brain
+# replies are NEVER cached. Files live in the install
+# folder's cache/tts dir: USER DATA — never shipped in
+# packs (updater deny-list), never in git (.gitignore).
+# Each engine's audio is stored in its NATIVE format —
+# ElevenLabs as WAV (its PCM samples via _write_wav; no
+# MP3 decoder ships with the install, so its playback
+# stays the samples path) and the MP3 engines as MP3 —
+# so cached playback rides the exact interruptible
+# players normal playback uses, and barge-in/stop cuts it
+# identically. Cache hits are BREAKER-NEUTRAL: they are
+# not recorded as engine successes or failures anywhere.
+TTS_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "cache", "tts")
+_FIXED_CACHE_MAX_CHARS = 200
+_FIXED_CACHE_ENGINES = ("elevenlabs", "edge-tts",
+                        "google-cloud-tts", "google-tts")
+
 
 def _load_voice_state():
     """The persisted voice health, or a clean empty state.
@@ -496,6 +528,11 @@ class Speaker:
         self._reply_gen = 0
         self._prefetch_next = None
         self._prefetch_slot = None
+        # v7.1: True only inside a say(..., fixed=True) —
+        # the fixed-line TTS cache reads/stores then (see
+        # the TTS_CACHE_DIR note). Per-reply state like
+        # _reply_skip: set by say(), cleared in its finally.
+        self._fixed_active = False
         self._apply_vstate()
 
     # ------------------------------------------------ v6.7 D state
@@ -1037,6 +1074,13 @@ class Speaker:
         # scaled rate (22050 × speed). At 0.8–1.3 the pitch shift is
         # mild and it works uniformly for every playback path.
         play_rate = int(22050 * self.speed())
+        # v7.1: a fixed line's rendering joins the disk
+        # cache — the samples exactly as they are about to
+        # be played (the helper itself refuses the robot
+        # path, whose rendering is a different sound).
+        self._cache_store_fixed(
+            "elevenlabs", text, voice_id,
+            wav_samples=pcm, wav_rate=play_rate)
         try:
             return self._play_samples_interruptible(pcm, play_rate)
         except Exception as exc:
@@ -1091,6 +1135,19 @@ class Speaker:
                 time.sleep(EDGE_RETRY_BACKOFF_SECONDS)
         if retried:
             self._log_edge_retry_ok()
+        # v7.1: a fixed line's MP3 joins the disk cache
+        # before playback (read back from the temp file the
+        # synthesis just wrote).
+        if self._fixed_active and not self.robot_on():
+            try:
+                with open(tmp, "rb") as fh:
+                    _mp3 = fh.read()
+            except Exception:
+                _mp3 = None
+            if _mp3:
+                self._cache_store_fixed(
+                    "edge-tts", text, voice_name,
+                    mp3_bytes=_mp3)
         return self._play_mp3_interruptible(tmp)
 
     def _log_edge_retry_ok(self):
@@ -1126,6 +1183,11 @@ class Speaker:
                                       text)
         if audio is None:
             audio = self._synth_google_cloud(text, lang)
+        # v7.1: a fixed line's MP3 joins the disk cache.
+        self._cache_store_fixed(
+            "google-cloud-tts", text,
+            google_cloud_voice(google_tts_lang(text, lang))[1],
+            mp3_bytes=audio)
         tmp = os.path.join(tempfile.gettempdir(),
                            "nalox_google_cloud.mp3")
         with open(tmp, "wb") as fh:
@@ -1195,6 +1257,10 @@ class Speaker:
         audio = self._take_prefetched("google-tts", text)
         if audio is None:
             audio = self._synth_google(text, lang)
+        # v7.1: a fixed line's MP3 joins the disk cache.
+        self._cache_store_fixed(
+            "google-tts", text, google_tts_lang(text, lang),
+            mp3_bytes=audio)
         tmp = os.path.join(tempfile.gettempdir(), "nalox_google.mp3")
         with open(tmp, "wb") as fh:
             fh.write(audio)
@@ -1317,6 +1383,131 @@ class Speaker:
             raise slot["exc"]
         return slot["audio"]
 
+    # ---------- v7.1: fixed-line TTS cache ----------
+    def _fixed_cache_voice(self, engine, text, lang, lclass,
+                           is_bengali):
+        """The voice `engine` would speak THIS text with —
+        the cache key's voice component — or None when the
+        engine is not eligible for this line at all. Mirrors
+        _try_engine's identity gates (keys, the edge-tts
+        language rule); breaker/stickiness state is health,
+        not identity, and plays no part here."""
+        if engine == "elevenlabs":
+            if not (self.cfg.get("elevenlabs_api_key")
+                    or "").strip():
+                return None
+            voice = (self.cfg.get("elevenlabs_voice_id")
+                     or "").strip()
+            return voice or None
+        if engine == "edge-tts":
+            want_edge = is_bengali or bool(
+                self.cfg.get("use_edge_tts"))
+            if not want_edge:
+                return None
+            if is_bengali:
+                return self.cfg.get("bn_voice",
+                                    "bn-BD-PradeepNeural")
+            return self.cfg.get("edge_tts_voice",
+                                "en-US-ChristopherNeural")
+        if engine == "google-cloud-tts":
+            if not (self.cfg.get("google_tts_api_key")
+                    or "").strip():
+                return None
+            return google_cloud_voice(lclass)[1]
+        if engine == "google-tts":
+            return lclass
+        return None
+
+    def _fixed_cache_path(self, engine, voice, text):
+        """Content-hash path for one (engine, voice, speed,
+        text) rendering — the engine's native format."""
+        key = hashlib.sha256(
+            f"{engine}\n{voice}\n{self.speed():.2f}\n{text}"
+            .encode("utf-8")).hexdigest()
+        ext = ".wav" if engine == "elevenlabs" else ".mp3"
+        return os.path.join(TTS_CACHE_DIR, key + ext)
+
+    def _fixed_cache_lookup(self, text, lang, lclass,
+                            is_bengali):
+        """(engine, path) of a cached rendering of this
+        fixed line, or None. The language's remembered
+        engine goes first (the voice he actually hears),
+        then the canonical chain order."""
+        if len(text) > _FIXED_CACHE_MAX_CHARS:
+            return None
+        order = []
+        pref = (self._vstate.get("last_good") or {}).get(
+            lclass)
+        if pref in _FIXED_CACHE_ENGINES:
+            order.append(pref)
+        for engine in _VOICE_ENGINES:
+            if engine in _FIXED_CACHE_ENGINES \
+                    and engine not in order:
+                order.append(engine)
+        for engine in order:
+            voice = self._fixed_cache_voice(
+                engine, text, lang, lclass, is_bengali)
+            if not voice:
+                continue
+            path = self._fixed_cache_path(engine, voice,
+                                          text)
+            try:
+                if os.path.isfile(path) \
+                        and os.path.getsize(path) > 0:
+                    return engine, path
+            except Exception:
+                continue
+        return None
+
+    def _play_fixed_cached(self, engine, path, text):
+        """Play a cached fixed line through the engine's
+        own interruptible player — barge-in/stop cuts it
+        exactly like a live synthesis. Logged as tts-cache
+        and recorded NOWHERE else: a hit is neither an
+        engine success nor a failure (breaker-neutral)."""
+        if engine == "elevenlabs":
+            samples, rate = self._read_wav(path)
+            try:
+                result = self._play_samples_interruptible(
+                    samples, rate)
+            except Exception:
+                result = self._play_samples_winsound(
+                    samples, rate)
+        else:
+            result = self._play_mp3_interruptible(path)
+        self._spoken("tts-cache", text, result)
+        return result
+
+    def _cache_store_fixed(self, engine, text, voice,
+                           mp3_bytes=None, wav_samples=None,
+                           wav_rate=None):
+        """Populate the fixed-line cache after a successful
+        live synthesis (v7.1). Only inside a fixed say and
+        never on the robot path (a robotized rendering is a
+        different sound, and the robot path never reads the
+        cache). Never raises — a cache failure must not
+        cost the line that was just spoken."""
+        if not self._fixed_active or self.robot_on():
+            return
+        if not text or len(text) > _FIXED_CACHE_MAX_CHARS:
+            return
+        try:
+            path = self._fixed_cache_path(engine, voice,
+                                          text)
+            if os.path.isfile(path) \
+                    and os.path.getsize(path) > 0:
+                return
+            os.makedirs(TTS_CACHE_DIR, exist_ok=True)
+            if mp3_bytes is not None:
+                if not mp3_bytes:
+                    return
+                with open(path, "wb") as fh:
+                    fh.write(mp3_bytes)
+            elif wav_samples is not None:
+                self._write_wav(path, wav_samples, wav_rate)
+        except Exception:
+            pass
+
     # ---------- result bookkeeping ----------
     def _spoken(self, path, text, result):
         note = " (interrupted)" if result == "interrupted" else ""
@@ -1328,7 +1519,7 @@ class Speaker:
         _lb("ERROR", f"Voice path {path} failed: {exc}")
 
     # ---------- public ----------
-    def say(self, text, lang=None, on_chunk=None):
+    def say(self, text, lang=None, on_chunk=None, fixed=False):
         """Speak one line. Returns "done" or "interrupted".
 
         "interrupted" means Arjun barged in (voice.stop() was
@@ -1347,6 +1538,19 @@ class Speaker:
         loop at once — later chunks are never fired, so the
         bubble freezes at exactly what was spoken. Without
         on_chunk the behaviour is byte-for-byte the old one.
+
+        v7.1 FIXED LINES: fixed=True marks one of Nalox's
+        genuinely fixed strings (the boot greeting, the wake
+        ack, the could-not-hear line, the mic warning — the
+        call sites live in nalox.py). A fixed line is served
+        from the TTS disk cache when a rendering exists and
+        populates the cache when the live chain synthesizes
+        it (see the TTS_CACHE_DIR note). The cache unit is
+        the spoken chunk: the marked lines are single
+        sentences, and a chunk of a fixed line is itself a
+        fixed string. Dynamic replies never pass fixed=True
+        — that discipline lives at the call sites, which is
+        why there are exactly four of them.
         """
         if not text:
             return "done"
@@ -1357,6 +1561,9 @@ class Speaker:
         # its remaining chunks.
         self._reply_skip = set()
         self._edge_retry_noted = False
+        # v7.1: the fixed-line cache arms for THIS call
+        # only (cleared in the finally below).
+        self._fixed_active = bool(fixed)
         # v6.14: a new reply invalidates every prefetch
         # trace of the old one — the generation bump makes
         # any leftover slot unconsumable, even by an
@@ -1401,6 +1608,9 @@ class Speaker:
             # nobody will ever read.
             self._prefetch_next = None
             self._prefetch_slot = None
+            # v7.1: the fixed-line cache disarms with the
+            # reply, exactly like the prefetch state.
+            self._fixed_active = False
             _speak_end()
             # v4.6: overrun evidence — a say() past its budget is
             # a stuck engine path; the speaking-flag watchdog
@@ -1579,6 +1789,22 @@ class Speaker:
         lclass = google_tts_lang(text, lang)
         tried = set()
         with self._lock:
+            # v7.1: a FIXED line with a cached rendering
+            # plays from disk — before the re-probe and the
+            # whole chain, so a cached greeting never pays a
+            # doomed ElevenLabs 402 round-trip to rediscover
+            # what it already knows. Breaker-neutral (no
+            # _record_good, no breaker notes); a playback
+            # failure falls through to the live chain.
+            if self._fixed_active and not robot:
+                _hit = self._fixed_cache_lookup(
+                    text, lang, lclass, is_bengali)
+                if _hit is not None:
+                    try:
+                        return self._play_fixed_cached(
+                            _hit[0], _hit[1], text)
+                    except Exception:
+                        pass
             if self._el_probe_armed:
                 self._el_probe_armed = False
                 _el_key = (self.cfg.get("elevenlabs_api_key")

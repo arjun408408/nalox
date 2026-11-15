@@ -148,6 +148,23 @@ Commands this session (logbook's session counter) and
 Uptime rows. The top bar also gains ⚙ Settings and 📋 Log
 buttons wired to the HUD's OWN handlers, so nothing the
 owner needs lives only on the plain window any more.
+
+v7.1 — HE CAN SEE THE UPDATE. The owner's complaint
+(2026-11-16): every version looks identical, and he once
+tested the wrong version without knowing. The header now
+carries a permanent VERSION BADGE read from version.txt
+(running_version — the same source as nalox.py's boot
+line, never a hard-coded string), and the first Command
+Center open after an update lands shows a ONE-TIME
+banner under the top bar ("✅ Updated to vX.Y — …"),
+driven by the updater's popped marker via
+set_update_notice() and cleared as it renders — a UI
+element, never a chat line (chat purity untouched).
+Polish, bounded: a 2 px accent strip under the top bar
+follows the live status colour, and the SYSTEM panel
+gains a GPU row (guarded nvidia-smi read, "—" when
+unavailable). Layout, panels and behaviours are
+otherwise exactly as they were.
 """
 import logging
 import math
@@ -199,6 +216,10 @@ BUBBLE_YOU = "#16355f"
 BUBBLE_NALOX = "#0c2f38"
 BUBBLE_ERROR = "#3d1524"
 PANEL_STRIP = "#2563eb"
+# v7.1: the one-time update banner's deep-green ground
+# (its text rides the ONLINE green from STATUS_TEXT).
+NOTICE_BG = "#0d2b1a"
+NOTICE_FG = "#4ade80"
 
 STATUS_TEXT = {
     "listening": ("● Listening", ACCENT),
@@ -427,6 +448,62 @@ def disk_percent(path=None):
         return None
 
 
+# v7.1: GPU utilization for the SYSTEM panel — a guarded
+# nvidia-smi read, cached for GPU_REFRESH_S (the panel
+# ticks every second and must not spawn a process every
+# tick). None when the tool/driver is absent — the row
+# then shows "—", exactly like an unavailable battery.
+GPU_REFRESH_S = 10.0
+_GPU_CACHE = {"at": 0.0, "pct": None}
+
+
+def gpu_percent():
+    """GPU utilization % via nvidia-smi, or None. Never
+    raises, never blocks past the tool's own timeout."""
+    now = time.monotonic()
+    if now - _GPU_CACHE["at"] < GPU_REFRESH_S:
+        return _GPU_CACHE["pct"]
+    _GPU_CACHE["at"] = now
+    pct = None
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3)
+        lines = (out.stdout or "").strip().splitlines()
+        if lines:
+            pct = max(0, min(100,
+                             int(float(lines[0].strip()))))
+    except Exception:
+        pct = None
+    _GPU_CACHE["pct"] = pct
+    return pct
+
+
+def running_version(base_dir=None):
+    """The running version, read from version.txt (v7.1) —
+    the SAME file nalox.py's boot line reads, so the
+    header badge can never drift from the shipped
+    version. "?" when the file is unreadable."""
+    try:
+        with open(os.path.join(base_dir or BASE_DIR,
+                               "version.txt"),
+                  encoding="utf-8") as fh:
+            return fh.read().strip() or "?"
+    except Exception:
+        return "?"
+
+
+def update_notice_text(version):
+    """The one-time update banner's line (v7.1): the
+    version from the updater's marker + this release's
+    headline in the owner's words. Pure."""
+    version = str(version or "?").strip() or "?"
+    return (f"✅ Updated to v{version} — শোনা আর আটকাবে না, "
+            "greeting সঙ্গে সঙ্গে বলবে")
+
+
 def collect_stats(prev_cpu_sample):
     """One stats snapshot. Returns (stats, new_cpu_sample).
 
@@ -434,12 +511,14 @@ def collect_stats(prev_cpu_sample):
     battery (percent or None), charging (bool). Never raises.
     """
     stats = {"cpu": None, "ram": None, "disk": None,
-             "battery": None, "charging": False}
+             "battery": None, "charging": False,
+             "gpu": None}
     sample = _win_filetimes()
     if sample is not None and prev_cpu_sample is not None:
         stats["cpu"] = cpu_percent_from(prev_cpu_sample, sample)
     stats["ram"] = ram_percent_from(_win_memory())
     stats["disk"] = disk_percent()
+    stats["gpu"] = gpu_percent()
     stats["battery"], stats["charging"] = battery_from(_win_power())
     return stats, (sample if sample is not None else prev_cpu_sample)
 
@@ -713,6 +792,17 @@ class Dashboard:
         self._phone_label = None
         self._cmds_label = None
         self._uptime_label = None
+        # v7.1: the version badge + the one-time update
+        # banner + the status accent strip. _update_notice
+        # is any-thread state (set by nalox.py when the
+        # updater marker pops); the widgets are Tk-thread
+        # only, and the pending text is consumed by
+        # _tk_apply_update_notice exactly once.
+        self._update_notice = None
+        self._version_label = None
+        self._notice_bar = None
+        self._notice_label = None
+        self._top_strip = None
 
     # ------------------------------------------------ public API
     def attach(self, hud):
@@ -1226,6 +1316,41 @@ class Dashboard:
         self._brain_text = str(text)
         self._send(("brain", str(text)))
 
+    def set_update_notice(self, version):
+        """v7.1: queue the one-time update banner. Called
+        by nalox.py when the updater's marker pops at boot
+        — the marker is already deleted by then, so this
+        can never repeat. The banner renders at the next
+        build / visible tick and clears itself as it
+        renders (see _tk_apply_update_notice). A UI
+        element only: nothing enters the chat model.
+        Never raises."""
+        try:
+            self._update_notice = update_notice_text(version)
+        except Exception:
+            pass
+
+    def _tk_apply_update_notice(self):
+        """Tk thread: render the pending update banner
+        ONCE (v7.1). The pending text is cleared BEFORE
+        rendering, so no later build, show or tick can
+        ever repeat it — the banner shows on the first
+        Command Center open after the update and never
+        again."""
+        text = self._update_notice
+        if not text or self._notice_bar is None:
+            return
+        self._update_notice = None
+        try:
+            import tkinter as tk
+            self._notice_label = tk.Label(
+                self._notice_bar, text=text, bg=NOTICE_BG,
+                fg=NOTICE_FG, font=("Segoe UI", 11, "bold"))
+            self._notice_label.pack(fill="x", padx=16,
+                                    pady=5)
+        except Exception:
+            pass
+
     def stop(self):
         try:
             self._gen += 1  # cancel any pending show
@@ -1463,6 +1588,18 @@ class Dashboard:
         tk.Label(top, text="COMMAND CENTER", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 10)).pack(side="left", padx=(10, 0),
                                               pady=(8, 0))
+        # v7.1 VERSION BADGE: the running version, read
+        # from version.txt at build time (running_version —
+        # the same source as the boot line, never a
+        # hard-coded string). The owner could not SEE which
+        # version was running and once tested the wrong
+        # one; the badge sits in the header permanently.
+        self._version_label = tk.Label(
+            top, text="v" + running_version(), bg=AMBER,
+            fg="#231a04", font=("Segoe UI", 10, "bold"),
+            padx=7, pady=1)
+        self._version_label.pack(side="left", padx=(10, 0),
+                                 pady=(6, 0))
         close_btn = tk.Button(
             top, text="✕", command=self.hide, bg=PANEL, fg=MUTED,
             activebackground=PANEL_EDGE, activeforeground=FG,
@@ -1531,6 +1668,20 @@ class Dashboard:
             font=("Segoe UI", 12, "bold"))
         self._status_label.pack(side="right", padx=(0, 16))
 
+        # v7.1 polish: a 2 px accent strip under the top
+        # bar that follows the live status colour (the same
+        # STATUS_TEXT colour the status pill uses — sky for
+        # Listening, amber for Awake, violet for Speaking),
+        # refreshed on the SYSTEM tick.
+        self._top_strip = tk.Frame(root, bg=fg0, height=2)
+        self._top_strip.pack(fill="x", side="top")
+        # v7.1: the one-time UPDATE NOTICE banner slot — an
+        # empty frame (zero height while empty) under the
+        # strip; _tk_apply_update_notice fills it exactly
+        # once after an update lands.
+        self._notice_bar = tk.Frame(root, bg=NOTICE_BG)
+        self._notice_bar.pack(fill="x", side="top")
+
         # ---------------- body: SYSTEM | ORB | CHAT ----------------
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True)
@@ -1551,7 +1702,8 @@ class Dashboard:
         tk.Label(left, text="SYSTEM", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 11, "bold")).pack(
                      anchor="w", padx=16, pady=(16, 10))
-        for key, label in (("cpu", "CPU"), ("ram", "RAM"),
+        for key, label in (("cpu", "CPU"), ("gpu", "GPU"),
+                           ("ram", "RAM"),
                            ("disk", "Disk"), ("battery", "Battery")):
             row = tk.Frame(left, bg=PANEL)
             row.pack(fill="x", padx=16, pady=(0, 4))
@@ -1669,6 +1821,10 @@ class Dashboard:
                 break
             except Exception:
                 self._orb_logo_imgs = []
+        # v7.1: a notice queued before this build (the
+        # updater marker pops during boot, the window may
+        # build after) renders with the window.
+        self._tk_apply_update_notice()
 
     # --------------------------------------- v5.8: his own commands
     def _build_cc_panel(self, tk, parent):
@@ -2206,7 +2362,7 @@ class Dashboard:
                 self._clock_label.configure(
                     text=time.strftime("%H:%M:%S"))
             stats, self._cpu_sample = collect_stats(self._cpu_sample)
-            for key in ("cpu", "ram", "disk", "battery"):
+            for key in ("cpu", "gpu", "ram", "disk", "battery"):
                 widgets = self._stat_widgets.get(key)
                 if widgets is None:
                     continue
@@ -2301,6 +2457,16 @@ class Dashboard:
                 text, fg = STATUS_TEXT.get(
                     self._status_state, STATUS_TEXT["idle"])
                 self._status_label.configure(text=text, fg=fg)
+                # v7.1: the accent strip follows the same
+                # status colour.
+                if self._top_strip is not None:
+                    try:
+                        self._top_strip.configure(bg=fg)
+                    except Exception:
+                        pass
+            # v7.1: a pending update banner renders on the
+            # first visible tick (and clears itself).
+            self._tk_apply_update_notice()
         except Exception:
             pass
         try:
