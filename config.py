@@ -217,8 +217,9 @@ DEFAULTS = {
     # own arjun408408/nalox; an empty TOKEN = self-update
     # off (no network calls at all). Both are set in
     # Settings → Updates; the token is a fine-grained PAT
-    # with read access to that one repo, pasted LOCALLY,
-    # never in chat. ---
+    # with Contents: Read and write on that one repo (write
+    # since v6.9: logsync.py sends the log home with it),
+    # pasted LOCALLY, never in chat. ---
     "github_repo": "arjun408408/nalox",
     "github_token": "",
     "auto_update": True,

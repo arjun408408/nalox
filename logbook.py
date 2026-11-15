@@ -40,6 +40,22 @@ _loaded = False
 # never inflate the count.
 _session_commands = 0
 
+# v6.9: ERROR hooks — callables invoked (guarded, no args)
+# whenever an ERROR line is written. logsync.py registers
+# its dirty-flag setter here so an error asks for an early
+# log upload without logbook knowing anything about GitHub.
+_error_hooks = []
+
+
+def register_error_hook(callback):
+    """Register a no-arg callable fired on every ERROR log
+    line (v6.9, for logsync). Guarded; never raises."""
+    try:
+        if callable(callback) and callback not in _error_hooks:
+            _error_hooks.append(callback)
+    except Exception:
+        pass
+
 
 def session_command_count():
     """Commands heard since this process started (v6.2)."""
@@ -140,6 +156,15 @@ def log(category, text):
             except Exception:
                 pass  # the page regeneration below is guarded too
             _write_page()
+        if cat == "ERROR":
+            # v6.9: notify the error hooks (logsync's dirty
+            # flag) OUTSIDE the lock and fully guarded — a
+            # hook can never slow down or break logging.
+            for _hook in list(_error_hooks):
+                try:
+                    _hook()
+                except Exception:
+                    pass
     except Exception:
         pass
 

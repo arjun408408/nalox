@@ -1389,6 +1389,18 @@ def main():
     except Exception as exc:
         log.warning("Self-update checker failed to start: %s", exc)
 
+    # v6.9 LOG SYNC (logsync.py): the diagnostics log uploads
+    # itself to the logs branch of the same private repo
+    # (~75 s after boot, every 10 min, early on errors), so
+    # Muse can check it without Arjun screenshotting
+    # anything. Fully dormant until the Updates token exists;
+    # the thread never blocks anything and never speaks.
+    try:
+        import logsync as _logsync_mod
+        _logsync_mod.start_background(cfg)
+    except Exception as exc:
+        log.warning("Log sync failed to start: %s", exc)
+
     # v6.2 START SURFACE (the owner's sharpened rule): EVERY
     # start lands on the Command Center — autostart at login,
     # a manual launch, the post-update restart — once Nalox

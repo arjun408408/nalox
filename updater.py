@@ -15,7 +15,9 @@ touches his data:
 
 Config (Settings → Updates writes these; all local):
     github_repo   "owner/name" of the private repo
-    github_token  a read-only token for that repo
+    github_token  a token for that repo (Contents: Read and
+                  write since v6.9 — logsync.py sends the
+                  diagnostics log home with the same token)
     auto_update   master switch for the scheduled checks
 
 Flow: at boot (~60 s in, background thread) and then every
@@ -83,7 +85,11 @@ _NEVER_FILES = {"config.json", "custom_commands.json",
                 # v6.7: persisted engine/brain health — his
                 # machine's own state, never shipped or
                 # overwritten by an update.
-                "voice_state.json", "brain_state.json"}
+                "voice_state.json", "brain_state.json",
+                # v6.9: the log-sync state (last sync time +
+                # status) — same rule: his machine's own
+                # state, never shipped or overwritten.
+                "logsync_state.json"}
 _NEVER_SUFFIXES = (".flag", ".lock", ".db", ".sqlite",
                    ".sqlite3")
 _NEVER_DIRS = {"logs", "captures", "leads", "demos",

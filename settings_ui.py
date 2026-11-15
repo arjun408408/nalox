@@ -1063,11 +1063,11 @@ def _build(tk, parent, cfg):
                       "উঠলেই Nalox সেটা নিজে download করে "
                       "লাগিয়ে restart নেবে — UPDATE.bat আর "
                       "চালাতে হবে না। Repo-র নাম (owner/name) "
-                      "আর একটা read-only token নিচে বসাও। "
+                      "আর একটা token নিচে বসাও। "
                       "Token পাবে: GitHub → Settings → "
                       "Developer settings → Fine-grained "
                       "tokens → শুধু এই repo-র Contents: "
-                      "Read-only। Token শুধু এই laptop-এই "
+                      "Read and write। Token শুধু এই laptop-এই "
                       "থাকবে — chat-এ কখনো পাঠিও না।",
              bg=CARD, fg=MUTED, font=("Segoe UI", 8),
              wraplength=430, justify="left").pack(
@@ -1076,6 +1076,32 @@ def _build(tk, parent, cfg):
                      cfg.get("github_repo"))
     upd_token = field(fr, "GitHub token", cfg.get("github_token"),
                       show="*")
+    # v6.9: the same token also powers LOG SYNC (logsync.py)
+    # — Nalox sends its diagnostics log to the repo's logs
+    # branch so Muse can check it; that is why the token
+    # now needs write access, not just read.
+    tk.Label(fr, text="This token also sends Nalox's log to "
+                      "Muse for checking — it needs Contents: "
+                      "Read and write.",
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8),
+             wraplength=430, justify="left").pack(
+                 anchor="w", padx=10, pady=(0, 2))
+
+    def _logsync_status_text():
+        try:
+            import logsync
+            state = logsync.read_state()
+            if state.get("status") == "sent" \
+                    and state.get("last_sync_local"):
+                return ("Log sync: last sent "
+                        + str(state["last_sync_local"]))
+        except Exception:
+            pass
+        return "Log sync: off"
+
+    tk.Label(fr, text=_logsync_status_text(),
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(
+                 anchor="w", padx=10, pady=(0, 2))
     upd_auto = check(fr, "Auto-update (start-এ + প্রতি 6 ঘণ্টায় "
                          "নিজে check করবে)",
                      cfg.get("auto_update", True))
