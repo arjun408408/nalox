@@ -60,6 +60,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -126,6 +127,25 @@ def say_budget_seconds(text):
     return max(SAY_BUDGET_MIN_SECONDS,
                SAY_BUDGET_BASE_SECONDS
                + SAY_BUDGET_PER_CHAR_SECONDS * len(text or ""))
+
+
+# ------------------------------------------------- v6.5 live chunks
+# Sentence splitting for LIVE-SYNCED speech: the same terminator
+# set the brain's reply guard uses (. ! ? and the Bengali/Hindi
+# danda ।). Whitespace is normalised first, so joining the
+# chunks with single spaces reproduces the reply text.
+_SPEECH_SPLIT_RE = re.compile(r"(?<=[.!?।])\s+")
+
+
+def speech_chunks(text):
+    """Split a reply into the sentence chunks say() speaks
+    one by one when an on_chunk callback is attached (v6.5).
+    Pure — unit-testable."""
+    body = re.sub(r"\s+", " ", (text or "").strip())
+    if not body:
+        return []
+    return [part.strip() for part in _SPEECH_SPLIT_RE.split(body)
+            if part.strip()]
 
 
 def _speak_begin():
@@ -670,19 +690,47 @@ class Speaker:
         _lb("ERROR", f"Voice path {path} failed: {exc}")
 
     # ---------- public ----------
-    def say(self, text, lang=None):
+    def say(self, text, lang=None, on_chunk=None):
         """Speak one line. Returns "done" or "interrupted".
 
         "interrupted" means Arjun barged in (voice.stop() was
         called) — callers should listen to him right away, and an
         interruption is never counted as a voice failure.
+
+        v6.5 LIVE CHUNKS: with on_chunk attached, the reply is
+        spoken SENTENCE BY SENTENCE and on_chunk(chunk) fires
+        the moment each sentence STARTS — the Command Center's
+        chat bubble grows in step with the voice (the IRIS-reel
+        feel the owner asked for) instead of dumping the whole
+        line at once. Each chunk runs the full voice priority
+        chain on its own, so a mid-reply failover (edge-tts →
+        pyttsx3) simply continues the sequence: no chunk is
+        repeated and none is lost. A stop/barge-in ends the
+        loop at once — later chunks are never fired, so the
+        bubble freezes at exactly what was spoken. Without
+        on_chunk the behaviour is byte-for-byte the old one.
         """
         if not text:
             return "done"
         _speak_begin()
         _started = time.monotonic()
         try:
-            return self._say_impl(text, lang)
+            chunks = speech_chunks(text) if on_chunk else []
+            if not chunks:
+                return self._say_impl(text, lang)
+            result = "done"
+            for chunk in chunks:
+                if _STOP_EVENT.is_set():
+                    result = "interrupted"
+                    break
+                try:
+                    on_chunk(chunk)
+                except Exception:
+                    pass
+                result = self._say_impl(chunk, lang)
+                if result == "interrupted":
+                    break
+            return result
         finally:
             _speak_end()
             # v4.6: overrun evidence — a say() past its budget is

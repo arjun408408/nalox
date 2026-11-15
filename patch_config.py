@@ -86,6 +86,17 @@ PATCH_IF_ABSENT = {
     "github_repo": "arjun408408/nalox",
     "github_token": "",
     "auto_update": True,
+    # v6.5: model candidate lists (see config.py) — added
+    # when absent; a list he edits by hand is preserved.
+    "gemini_models": ["gemini-2.5-flash",
+                      "gemini-2.0-flash",
+                      "gemini-2.5-flash-lite",
+                      "gemini-flash-latest"],
+    "groq_models": ["llama-3.3-70b-versatile",
+                    "openai/gpt-oss-120b",
+                    "llama-3.1-8b-instant",
+                    "qwen/qwen3-32b"],
+    "openrouter_models": [],
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"

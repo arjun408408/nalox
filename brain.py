@@ -709,6 +709,52 @@ _JARVIS_CHARACTER = (
 PROVIDER_TIMEOUT_S = 10.0
 FREELLM_TIMEOUT_S = 10.0
 
+# ------------------------------------------------------------- v6.5
+# MODEL CANDIDATE WALK (provider repair — field log 2026-11-15
+# 18:44 IST: Gemini's key was FINE, Google 404'd the model name
+# "gemini-2.5-flash is no longer available to new users"; Groq
+# 404'd "llama-3.3-70b-versatile" as model_not_found — dead
+# NAMES, not dead keys, and the chain died on them). Providers
+# in _MODEL_WALK_PROVIDERS carry an ordered candidate list
+# (config <prov>_models; the single <prov>_model is the head).
+# A model-not-found failure walks to the next candidate INSIDE
+# the same provider call; the model that finally answers is
+# remembered (persisted to the <prov>_model config key), so
+# the next call goes straight to it. _MODEL_MISS is the
+# sentinel the one-shot impl returns for "that failure was a
+# dead model name — try the next candidate" (it is NOT logged
+# as a provider failure; only a full walk-out is).
+_MODEL_MISS = object()
+
+_MODEL_WALK_PROVIDERS = {
+    "gemini": ("gemini_model", "gemini_models"),
+    "groq": ("groq_model", "groq_models"),
+    "openrouter": ("openrouter_model", "openrouter_models"),
+}
+
+
+def _model_error_snippet(status, resp):
+    """The error snippet when this HTTP failure is a DEAD
+    MODEL NAME (v6.5), else None. Providers phrase it
+    differently — Gemini: "This model models/gemini-2.5-flash
+    is no longer available to new users" (404); Groq:
+    "model_not_found — The model `llama-3.3-70b-versatile`
+    does not exist" (404); OpenRouter: "No endpoints found
+    for …" (404). Auth/rate/quota failures never match: they
+    are provider failures, not walk signals."""
+    if status not in (400, 404):
+        return None
+    snippet = _err_snippet(resp)
+    low = snippet.lower()
+    if "model_not_found" in low or "no endpoints" in low:
+        return snippet
+    if "model" in low and any(marker in low for marker in (
+            "does not exist", "not found", "no longer available",
+            "not available", "invalid", "unknown",
+            "not supported")):
+        return snippet
+    return None
+
 # MODES (config "mode") — the JARVIS character is the base for all
 # three; each mode adds its own working style on top.
 MODES = {
@@ -5027,6 +5073,10 @@ class Brain:
                         "groq_api_key", "openai_api_key",
                         "openrouter_model", "gemini_model",
                         "groq_model",
+                        # v6.5: the model candidate lists ride
+                        # the same hot-reload as the singles.
+                        "gemini_models", "groq_models",
+                        "openrouter_models",
                         "openai_model", "anthropic_model",
                         # v5.1: the cloud-ears switch — Ears reads
                         # the same shared cfg dict, so a Settings
@@ -5168,6 +5218,74 @@ class Brain:
         with self._status_lock:
             check = self._key_checks.get(provider) or {}
         return check.get("state") == "rejected"
+
+    # ------------------------------------------------ v6.5 models
+    def _model_candidates(self, provider):
+        """The ordered model candidates for a walk provider
+        (v6.5): the configured single model FIRST (his Settings
+        choice always gets the first try), then the configured
+        candidate list, de-duplicated, empties dropped. The
+        list may live in config as a JSON list or a comma
+        string — both are accepted. Non-walk providers get
+        just their configured model."""
+        keys = _MODEL_WALK_PROVIDERS.get(provider)
+        if keys is None:
+            return []
+        single_key, list_key = keys
+        # The shipped defaults are the floor: a cfg that never
+        # passed through config.load_config (or predates the
+        # keys) still walks the seeded lists.
+        try:
+            import config as _cfg_mod
+            _defaults = _cfg_mod.DEFAULTS
+        except Exception:
+            _defaults = {}
+        out = []
+        head = str(self.cfg.get(single_key)
+                   or _defaults.get(single_key) or "").strip()
+        if head:
+            out.append(head)
+        raw = self.cfg.get(list_key, _defaults.get(list_key))
+        if isinstance(raw, str):
+            raw = [part for part in re.split(r"[,\n]", raw)]
+        if isinstance(raw, (list, tuple)):
+            for item in raw:
+                name = str(item or "").strip()
+                if name and name not in out:
+                    out.append(name)
+        return out
+
+    def _remember_working_model(self, provider, model, label):
+        """Persist the model that actually answered (v6.5):
+        the live cfg AND config.json on disk (read-modify-
+        write of ONLY that key, patch_config style — his keys
+        and choices are never touched). After this, the first
+        candidate tried is the one that works."""
+        keys = _MODEL_WALK_PROVIDERS.get(provider)
+        if keys is None or not model:
+            return
+        single_key = keys[0]
+        if str(self.cfg.get(single_key) or "").strip() == model:
+            return
+        self.cfg[single_key] = model
+        _lb("BRAIN", f"[brain] {label}: model {model} works — "
+                     "remembered as the default")
+        log.info("[brain] %s working model remembered: %s",
+                 label, model)
+        try:
+            path = self._cfg_path
+            data = {}
+            if path and os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            if isinstance(data, dict):
+                data[single_key] = model
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False,
+                              indent=2)
+        except Exception as exc:
+            log.warning("[brain] could not persist the working "
+                        "%s model: %s", label, exc)
 
     def brain_status_line(self):
         """The one short line the HUD header + boot log show."""
@@ -5337,6 +5455,31 @@ class Brain:
             if resp.status_code == 200:
                 results[prov] = {"state": "ok", "detail": "key OK"}
                 log.info("[brain] %s key check: OK", label)
+                # v6.5: the candidate walk rides validation —
+                # the /models list says which model names this
+                # key may actually use, so a dead head model is
+                # replaced BEFORE the first command pays for
+                # the 404. Best-effort: an unparseable list
+                # changes nothing (the live walk still covers
+                # the call path), and a mismatch never marks
+                # the key itself bad.
+                if prov in _MODEL_WALK_PROVIDERS:
+                    try:
+                        ids = set()
+                        for item in (resp.json().get("data")
+                                     or []):
+                            mid = str(item.get("id") or "")
+                            if mid:
+                                ids.add(mid)
+                                if mid.startswith("models/"):
+                                    ids.add(mid[len("models/"):])
+                        for cand in self._model_candidates(prov):
+                            if cand in ids:
+                                self._remember_working_model(
+                                    prov, cand, label)
+                                break
+                    except Exception:
+                        pass
             elif resp.status_code in (401, 403):
                 detail = (f"HTTP {resp.status_code} — "
                           f"{_err_snippet(resp)}")
@@ -6484,31 +6627,51 @@ class Brain:
             api_key = (self.cfg.get(cfg_key) or "").strip()
             if not api_key or self._provider_rejected(prov):
                 continue
-            try:
-                import requests
-                resp = requests.post(
-                    base_url + "/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}",
-                             "Content-Type": "application/json"},
-                    json={"model": self.cfg.get(model_key, model_default),
-                          "messages": [
-                              {"role": "system",
-                               "content": ("You are Nalox, Arjun's "
-                                           "assistant. Reply with ONLY "
-                                           "the text asked for — no "
-                                           "quotes, no preamble.")},
-                              {"role": "user", "content": prompt}],
-                          "max_tokens": 300},
-                    timeout=PROVIDER_TIMEOUT_S)
-                if resp.status_code == 200:
-                    reply = (resp.json()["choices"][0]["message"]
-                             .get("content") or "").strip()
-                    reply = self._guard_reply(reply, label,
-                                              writing=writing)
-                    if reply:
-                        _lb("BRAIN", f"{label} answered (plain chat)")
-                        return reply
-                else:
+            # v6.5: walk providers try their model candidates
+            # in turn — a dead model name moves to the next
+            # candidate; any other outcome (an answer, a guard
+            # rejection, an HTTP failure, an exception) ends
+            # this provider exactly as before.
+            _walk = prov in _MODEL_WALK_PROVIDERS
+            _candidates = (self._model_candidates(prov) if _walk
+                           else [])
+            if not _candidates:
+                _candidates = [self.cfg.get(model_key,
+                                            model_default)]
+            _last_miss = None
+            for _cand in _candidates:
+                try:
+                    import requests
+                    resp = requests.post(
+                        base_url + "/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}",
+                                 "Content-Type": "application/json"},
+                        json={"model": _cand,
+                              "messages": [
+                                  {"role": "system",
+                                   "content": ("You are Nalox, Arjun's "
+                                               "assistant. Reply with ONLY "
+                                               "the text asked for — no "
+                                               "quotes, no preamble.")},
+                                  {"role": "user", "content": prompt}],
+                              "max_tokens": 300},
+                        timeout=PROVIDER_TIMEOUT_S)
+                    if resp.status_code == 200:
+                        reply = (resp.json()["choices"][0]["message"]
+                                 .get("content") or "").strip()
+                        reply = self._guard_reply(reply, label,
+                                                  writing=writing)
+                        if reply:
+                            if _cand != _candidates[0]:
+                                self._remember_working_model(
+                                    prov, _cand, label)
+                            _lb("BRAIN", f"{label} answered (plain chat)")
+                            return reply
+                        break
+                    if _walk and _model_error_snippet(
+                            resp.status_code, resp) is not None:
+                        _last_miss = _cand
+                        continue
                     # v4.8: was a silent `continue` — a dead key
                     # here starved YouTube replies invisibly too.
                     self._brain_fail(
@@ -6517,12 +6680,20 @@ class Brain:
                         f"{_err_snippet(resp)} (plain chat)",
                         provider=prov,
                         http_status=resp.status_code)
-            except Exception as exc:
-                self._brain_fail(
-                    label,
-                    f"{type(exc).__name__}: {exc} (plain chat)"[:160],
-                    provider=prov)
-                continue
+                    break
+                except Exception as exc:
+                    self._brain_fail(
+                        label,
+                        f"{type(exc).__name__}: {exc} (plain chat)"[:160],
+                        provider=prov)
+                    break
+            else:
+                if _last_miss is not None:
+                    self._brain_fail(
+                        label,
+                        f"no working model — tried "
+                        f"{', '.join(_candidates)} (plain chat)",
+                        provider=prov)
         # Ollama (local), no tools. v4.4: the cached availability
         # decides — no fresh /api/tags probe on this path either.
         try:
@@ -6652,10 +6823,18 @@ class Brain:
         """v6.0 timing wrapper: record the attempt's latency
         + outcome in perflevel under the provider's name
         (the ⚡ Level and the adaptive provider order read
-        it), then run the real loop."""
+        it), then run the real loop.
+
+        v6.5: for a walk provider (Gemini / Groq / OpenRouter)
+        this walks the model candidate list — a dead model
+        name (the impl's _MODEL_MISS) moves to the next
+        candidate inside THIS call; the candidate that answers
+        is remembered as the provider's default. Any other
+        failure stops the walk at once (it is a provider
+        failure, already logged by the impl)."""
         _t0 = time.time()
         try:
-            reply = self._agent_openai_compatible_impl(
+            reply = self._agent_openai_walk(
                 text, base_url, key, model, label=label,
                 provider=provider, timeout=timeout)
         except Exception:
@@ -6669,16 +6848,64 @@ class Brain:
             pass
         return reply
 
+    def _agent_openai_walk(self, text, base_url, key, model,
+                           label="OpenAI-compatible",
+                           provider=None, timeout=PROVIDER_TIMEOUT_S):
+        """One provider call, with the v6.5 candidate walk for
+        walk providers. Non-walk providers (FreeLLMAPI, OpenAI)
+        keep the exact single-model behaviour."""
+        if provider not in _MODEL_WALK_PROVIDERS:
+            return self._agent_openai_compatible_impl(
+                text, base_url, key, model, label=label,
+                provider=provider, timeout=timeout)
+        candidates = self._model_candidates(provider) or [model]
+        last_miss = None
+        for idx, cand in enumerate(candidates):
+            reply = self._agent_openai_compatible_impl(
+                text, base_url, key, cand, label=label,
+                provider=provider, timeout=timeout,
+                model_walk=True)
+            if reply is _MODEL_MISS:
+                last_miss = cand
+                if idx + 1 < len(candidates):
+                    _lb("BRAIN",
+                        f"[brain] {label} model {cand} is gone "
+                        f"— trying {candidates[idx + 1]}")
+                    log.info("[brain] %s model %s gone; trying "
+                             "%s", label, cand,
+                             candidates[idx + 1])
+                continue
+            if reply:
+                if cand != candidates[0]:
+                    self._remember_working_model(
+                        provider, cand, label)
+                return reply
+            return None  # a real provider failure — impl logged it
+        # Every candidate was a dead name: ONE failure line.
+        self._brain_fail(
+            label,
+            f"no working model — tried "
+            f"{', '.join(candidates)} "
+            f"(last dead: {last_miss})",
+            provider=provider)
+        return None
+
     def _agent_openai_compatible_impl(self, text, base_url, key,
                                       model,
                                       label="OpenAI-compatible",
-                                      provider=None, timeout=PROVIDER_TIMEOUT_S):
+                                      provider=None, timeout=PROVIDER_TIMEOUT_S,
+                                      model_walk=False):
         """Tool-using loop against an OpenAI-compatible API (Groq/OpenAI).
 
         v4.8: EVERY failure is logged via _brain_fail (one logbook
         ERROR line: provider + HTTP status/error code, or the
         exception). The pre-v4.8 version returned None in total
         silence — a rejected key looked exactly like no key.
+
+        v6.5: with model_walk=True (the candidate walk is
+        driving), a dead-model-name failure returns _MODEL_MISS
+        WITHOUT logging — the walk owns that story and logs a
+        single failure only if every candidate is dead.
         """
         try:
             import requests
@@ -6696,6 +6923,9 @@ class Brain:
                           "max_tokens": 300},
                     timeout=timeout)
                 if resp.status_code != 200:
+                    if model_walk and _model_error_snippet(
+                            resp.status_code, resp) is not None:
+                        return _MODEL_MISS
                     self._brain_fail(
                         label,
                         f"HTTP {resp.status_code} — "
@@ -6729,6 +6959,9 @@ class Brain:
                 json={"model": model, "messages": messages, "max_tokens": 300},
                 timeout=timeout)
             if resp.status_code != 200:
+                if model_walk and _model_error_snippet(
+                        resp.status_code, resp) is not None:
+                    return _MODEL_MISS
                 self._brain_fail(
                     label,
                     f"HTTP {resp.status_code} — {_err_snippet(resp)}",

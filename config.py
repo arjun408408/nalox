@@ -84,12 +84,33 @@ DEFAULTS = {
     # --- v3 expansion: agent brain (Groq) + news in the briefing ---
     "groq_api_key": "",
     "groq_model": "llama-3.3-70b-versatile",
+    # --- v6.5: MODEL CANDIDATE LISTS — providers retire model
+    # names without asking (field log 2026-11-15 18:44 IST:
+    # Gemini answered a VALID key with 404 "gemini-2.5-flash is
+    # no longer available to new users" and Groq with 404
+    # model_not_found for llama-3.3-70b-versatile — the whole
+    # chain silently died on names, not keys). The single
+    # *_model value above stays the HEAD of the list (his
+    # Settings choice tries first); on a model-not-found error
+    # the brain walks the rest of the list inside the same
+    # provider call, and REMEMBERS the model that worked
+    # (written back to the single *_model key) so later calls
+    # go straight to it. ---
+    "groq_models": ["llama-3.3-70b-versatile",
+                    "openai/gpt-oss-120b",
+                    "llama-3.1-8b-instant",
+                    "qwen/qwen3-32b"],
     # --- v4.8: GEMINI brain (Google AI Studio) — one FREE key,
     # reached through Gemini's OpenAI-compatible endpoint with
     # the same tool loop as Groq/OpenAI. Priority: Claude →
     # Gemini → Groq → OpenAI → Ollama. ---
     "gemini_api_key": "",
     "gemini_model": "gemini-2.5-flash",
+    # v6.5: Gemini candidates (see groq_models above).
+    "gemini_models": ["gemini-2.5-flash",
+                      "gemini-2.0-flash",
+                      "gemini-2.5-flash-lite",
+                      "gemini-flash-latest"],
     # --- v4.9: OPENROUTER brain — ONE key, many models (Claude
     # included), through OpenRouter's OpenAI-compatible API with
     # the same tool loop. Priority: Claude → OpenRouter →
@@ -97,6 +118,9 @@ DEFAULTS = {
     # Claude Sonnet 4.5 reached via OpenRouter. ---
     "openrouter_api_key": "",
     "openrouter_model": "anthropic/claude-sonnet-4.5",
+    # v6.5: OpenRouter candidates — empty by default (his one
+    # configured model is the whole list until he adds more).
+    "openrouter_models": [],
     # --- v5.0: FREELLMAPI brain — Arjun's LOCAL unified router
     # app (FreeLLMAPI, http://127.0.0.1:31415/v1): ONE local
     # "unified key" in front of a ~78-model chain that AUTO-

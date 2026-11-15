@@ -600,6 +600,21 @@ class Dashboard:
         self._brain_text = None
         self._chat = deque(maxlen=MAX_CHAT_LINES)
         self._chat_lock = threading.Lock()
+        # v6.5 LIVE CHAT SYNC: the streaming NALOX bubble —
+        # while a reply is being spoken, its entry in the chat
+        # model is the LAST one and its body grows chunk by
+        # chunk (begin_nalox_reply / append_nalox_chunk /
+        # end_nalox_reply, driven from nalox.py's say() via
+        # voice's on_chunk callback). _tk_stream_text is the
+        # Tk-thread mirror of what the open bubble has
+        # rendered so far (Tk thread only).
+        self._stream_open = False
+        self._stream_parts = []
+        self._tk_stream_text = None
+        # Tk thread only: True when the live bubble already
+        # carries its trailing newline (it was rendered whole
+        # by a rebuild) — _tk_end_stream must not add another.
+        self._tk_stream_has_nl = False
         # Test seam: when True, the state machine runs WITHOUT
         # tkinter (no display calls at all) on a helper thread.
         self._force_headless = False
@@ -1031,6 +1046,57 @@ class Dashboard:
             with self._chat_lock:
                 self._chat.append((who, body))
             self._send(("chat", (who, body)))
+        except Exception:
+            pass
+
+    # --------------------------------------- v6.5 live chat sync
+    def begin_nalox_reply(self):
+        """Open the streaming NALOX bubble for a reply that is
+        about to be spoken (v6.5). The bubble enters the chat
+        model EMPTY; append_nalox_chunk grows it in step with
+        the voice. A stale still-open stream is closed in the
+        model first (its text stays as it was spoken)."""
+        try:
+            with self._chat_lock:
+                self._stream_open = True
+                self._stream_parts = []
+                self._chat.append(("nalox", ""))
+            self._send(("chat_begin", None))
+        except Exception:
+            pass
+
+    def append_nalox_chunk(self, chunk):
+        """Grow the streaming bubble by one spoken sentence
+        (v6.5). The model body is the chunks joined by single
+        spaces — exactly the reply text as spoken. A chunk
+        with no open stream opens one implicitly (a lost
+        begin must never lose the words)."""
+        try:
+            chunk = str(chunk or "").strip()
+            if not chunk:
+                return
+            with self._chat_lock:
+                if not self._stream_open:
+                    self._stream_open = True
+                    self._stream_parts = []
+                    self._chat.append(("nalox", ""))
+                self._stream_parts.append(chunk)
+                body = " ".join(self._stream_parts)
+                if self._chat and self._chat[-1][0] == "nalox":
+                    self._chat[-1] = ("nalox", body)
+            self._send(("chat_chunk", chunk))
+        except Exception:
+            pass
+
+    def end_nalox_reply(self):
+        """Close the streaming bubble (v6.5): the reply is
+        fully spoken (or was interrupted — the bubble keeps
+        exactly the chunks that were spoken)."""
+        try:
+            with self._chat_lock:
+                self._stream_open = False
+                self._stream_parts = []
+            self._send(("chat_end", None))
         except Exception:
             pass
 
@@ -2179,6 +2245,91 @@ class Dashboard:
         for who, body in lines:
             self._append_chat(who, body)
         self._chat_dirty = False
+        # v6.5: a reply still streaming when the window
+        # (re)opens resumes growing in the replayed bubble.
+        if self._stream_open:
+            self._tk_resume_stream()
+
+    # --------------------------------------- v6.5 live chat sync (Tk)
+    def _tk_begin_stream(self):
+        """Open the live bubble in the widget: the name line
+        now, the body growing at the stream mark as chunks
+        land."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            return
+        widget.configure(state="normal")
+        try:
+            widget.insert("end", "Nalox\n", "nalox_name")
+            widget.mark_set("nalox_stream", "end-1c")
+            widget.mark_gravity("nalox_stream", "right")
+            self._tk_stream_text = ""
+            self._tk_stream_has_nl = False
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+
+    def _tk_resume_stream(self):
+        """Re-attach the stream mark to the replayed bubble
+        (the window opened mid-reply): the model's last entry
+        is the streaming bubble, rendered by _append_chat as
+        body + "\\n" — the mark goes between body and that
+        newline."""
+        widget = self._chat_text
+        if widget is None:
+            return
+        try:
+            with self._chat_lock:
+                body = self._chat[-1][1] if self._chat else ""
+            widget.mark_set("nalox_stream", "end-2c")
+            widget.mark_gravity("nalox_stream", "right")
+            self._tk_stream_text = body
+            self._tk_stream_has_nl = True
+        except Exception:
+            self._tk_stream_text = None
+
+    def _tk_stream_chunk(self, chunk):
+        """Append one spoken sentence to the live bubble."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            return
+        widget.configure(state="normal")
+        try:
+            if self._tk_stream_text is None:
+                self._tk_resume_stream()
+            if self._tk_stream_text is None:
+                self._chat_dirty = True
+                return
+            delta = (" " if self._tk_stream_text else "") + chunk
+            widget.insert("nalox_stream", delta, "nalox_bubble")
+            self._tk_stream_text += delta
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+
+    def _tk_end_stream(self):
+        """Close the live bubble: the trailing newline every
+        finished bubble carries (see _append_chat)."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            self._tk_stream_text = None
+            self._tk_stream_has_nl = False
+            return
+        if self._tk_stream_text is None:
+            return  # never rendered live — the model is whole
+        widget.configure(state="normal")
+        try:
+            if not self._tk_stream_has_nl:
+                widget.insert("nalox_stream", "\n", "nalox_bubble")
+            widget.mark_unset("nalox_stream")
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+            self._tk_stream_text = None
+            self._tk_stream_has_nl = False
 
     # ------------------------------------------------ queue pump (Tk thread)
     def _poll(self):
@@ -2204,6 +2355,21 @@ class Dashboard:
                     who, body = payload
                     if self._win_open:
                         self._append_chat(who, body)
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_begin":
+                    if self._win_open:
+                        self._tk_begin_stream()
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_chunk":
+                    if self._win_open:
+                        self._tk_stream_chunk(payload)
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_end":
+                    if self._win_open:
+                        self._tk_end_stream()
                     else:
                         self._chat_dirty = True
                 elif kind == "status":

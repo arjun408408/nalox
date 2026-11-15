@@ -798,18 +798,40 @@ def _bn_name(cfg):
     return "অর্জুন" if cfg.get("user_name") == "Arjun" else cfg.get("user_name", "")
 
 
-def greeting(cfg):
+def greeting(cfg, lang=None):
+    """The boot greeting, in the language Arjun actually
+    talks to Nalox in (v6.5).
+
+    Until v6.4 this keyed off config default_language alone,
+    so a Bengali learned preference still booted in English
+    (field screenshot 2026-11-15 18:54 IST). Now the caller
+    passes the LEARNED preference (brain._pref_lang()) as
+    lang; default_language is only the fallback. The wake
+    line is NOT this function's business — "Yes Sir, I'm
+    here." is his chosen line and never changes."""
     hour = datetime.now().hour
     name = _addr(cfg)
-    if (cfg.get("default_language") or "en").lower().startswith("bn"):
+    lang = (lang or cfg.get("default_language")
+            or "en").lower()
+    if lang.startswith("bn"):
         if hour < 12:
             part = "শুভ সকাল"
         elif hour < 17:
             part = "শুভ বিকেল"
         else:
             part = "শুভ সন্ধ্যা"
-        return (f"{part} {_bn_name(cfg)}! কেমন আছো? আমি ন্যালক্স। "
-                "আজ তোমাকে কীভাবে সাহায্য করতে পারি?")
+        return (f"{part}, {_bn_name(cfg)}! আমি "
+                f"{cfg['assistant_name']}। কেমন আছেন? "
+                "আজ কী করতে পারি?")
+    if lang.startswith("hi"):
+        if hour < 12:
+            part = "शुभ प्रभात"
+        elif hour < 17:
+            part = "शुभ दोपहर"
+        else:
+            part = "शुभ संध्या"
+        return (f"{part}, {name}! मैं {cfg['assistant_name']} हूँ। "
+                "आप कैसे हैं? आज मैं आपकी क्या मदद कर सकता हूँ?")
     if hour < 12:
         part = "Good morning"
     elif hour < 17:
@@ -1360,18 +1382,50 @@ def main():
         back to listening (the follow-up window), Gemini-style.
         The boot greeting does NOT come through here (it calls
         speaker.say directly), so it can never interrupt itself.
+
+        v6.5 LIVE CHAT SYNC: the plain window and the logbook
+        still receive the reply as ONE full "NALOX:" line (the
+        log is unchanged), but the Command Center's chat does
+        NOT — it opens a streaming bubble and grows it sentence
+        by sentence via voice's on_chunk callback, so the text
+        lands in step with the audio (the IRIS feel). The
+        Thinking indicator stays up until the first chunk.
         """
         if not text:
             return "done"
-        hudstatus("speaking")
-        hudlog("NALOX: " + text)
+        if _hud is not None:
+            try:
+                _hud.post("NALOX: " + text)
+            except Exception:
+                pass
+        try:
+            logbook.log("NALOX", "NALOX: " + text)
+        except Exception:
+            pass
+        if _dashboard is not None:
+            try:
+                _dashboard.begin_nalox_reply()
+            except Exception:
+                pass
         outcome = {}
+        _chunk_seen = []
+
+        def _on_chunk(chunk):
+            if not _chunk_seen:
+                _chunk_seen.append(True)
+                hudstatus("speaking")
+            if _dashboard is not None:
+                try:
+                    _dashboard.append_nalox_chunk(chunk)
+                except Exception:
+                    pass
 
         def _speak():
             try:
                 outcome["result"] = speaker.say(
                     text,
-                    lang=lang if lang is not None else brain.last_lang)
+                    lang=lang if lang is not None else brain.last_lang,
+                    on_chunk=_on_chunk)
             except Exception as exc:  # speaker.say is guarded; be safe
                 log.warning("speaker.say raised: %s", exc)
                 outcome["result"] = "done"
@@ -1385,6 +1439,13 @@ def main():
         except Exception as exc:
             log.warning("Barge-in monitor failed: %s", exc)
         worker.join(timeout=40)
+        if _dashboard is not None:
+            try:
+                _dashboard.end_nalox_reply()
+            except Exception:
+                pass
+        if not _chunk_seen:
+            hudstatus("speaking")
         if interrupted or outcome.get("result") == "interrupted":
             hudlog("[barge-in] interrupted by Arjun")
             return "interrupted"
@@ -1490,11 +1551,18 @@ def main():
     # The greeting itself is NOT barge-in monitored (it contains the
     # name "Nalox") and can be switched off in Settings (v4.1).
     try:
-        greet_text = greeting(cfg)
+        # v6.5: the greeting speaks his LEARNED language
+        # preference when one exists (Bengali-only is his
+        # standing order) — default_language is the fallback.
+        try:
+            _greet_lang = brain._pref_lang() or default_lang
+        except Exception:
+            _greet_lang = default_lang
+        greet_text = greeting(cfg, lang=_greet_lang)
         if cfg.get("greet_on_startup", True):
             hudstatus("speaking")
             hudlog("NALOX: " + greet_text)
-            speaker.say(greet_text, lang=default_lang)
+            speaker.say(greet_text, lang=_greet_lang)
         else:
             hudlog("[sys] greeting skipped (turned off in Settings)")
         # v4.3: the boot briefing IS Morning Digest 2.0 — greeting,

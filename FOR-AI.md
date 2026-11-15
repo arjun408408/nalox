@@ -132,7 +132,7 @@ override your defaults whenever they conflict.
 
 Suites live OUTSIDE this tree (owner's workspace:
 `nalox-tests/`), one file per version (`test_v54.py` …
-`test_v62.py`, plus `test_regression54.py`). **Run each suite
+`test_v65.py`, plus `test_regression54.py`). **Run each suite
 in its OWN pristine copy of the tree** (copy the tree, copy
 the suite file into the copy's root, run with python3) —
 the suites are state-sensitive and leak config/prefs state
