@@ -15,7 +15,7 @@ title Nalox Update v6.6
 
 echo.
 echo  ==========================================
-echo    Nalox update v6.9
+echo    Nalox update v6.10
 echo  ==========================================
 echo.
 
@@ -117,7 +117,14 @@ if errorlevel 1 goto reqsame
 echo  Package list changed - installing new packages, please wait...
 copy /y "%~dp0requirements.txt" "%TARGET%\" >nul
 "%TARGET%\.venv\Scripts\python.exe" -m pip install --prefer-binary -r "%TARGET%\requirements.txt"
+if errorlevel 1 goto pipfail
 "%TARGET%\.venv\Scripts\python.exe" -c "import hashlib,pathlib; pathlib.Path(r'%TARGET%\.venv\.nalox_req_hash').write_text(hashlib.md5(pathlib.Path(r'%TARGET%\requirements.txt').read_bytes()).hexdigest())"
+goto restart
+
+:pipfail
+echo  Package install hit a problem - Nalox will still start,
+echo  and the ears ladder keeps the hearing working meanwhile.
+echo  Run UPDATE.bat again later to retry the packages.
 goto restart
 
 :reqsame

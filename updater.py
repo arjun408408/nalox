@@ -89,7 +89,10 @@ _NEVER_FILES = {"config.json", "custom_commands.json",
                 # v6.9: the log-sync state (last sync time +
                 # status) — same rule: his machine's own
                 # state, never shipped or overwritten.
-                "logsync_state.json"}
+                "logsync_state.json",
+                # v6.10: the ears ladder's remembered
+                # resolution — same rule again.
+                "ears_state.json"}
 _NEVER_SUFFIXES = (".flag", ".lock", ".db", ".sqlite",
                    ".sqlite3")
 _NEVER_DIRS = {"logs", "captures", "leads", "demos",

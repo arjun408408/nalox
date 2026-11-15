@@ -2,7 +2,11 @@
 # Python 3.12, so pip never has to compile anything on Arjun's laptop.
 # (On Python 3.14/3.15 several of these have NO wheels at all — e.g.
 # onnxruntime and av — which is why INSTALL.bat insists on 3.12.)
-faster-whisper==1.0.3
+# v6.10: >=1.1.0 is the first line that knows the
+# large-v3-turbo model name — older builds reject it
+# ("Invalid model size"). The ears ladder (ears.py) keeps
+# hearing working on those builds meanwhile.
+faster-whisper>=1.1.0
 sounddevice>=0.4.6
 numpy>=1.26,<3
 pyttsx3>=2.90

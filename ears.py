@@ -242,9 +242,11 @@ transcription stuck" x2 — and his "wake up" never landed):
     there is nothing left to lock.
 """
 import collections
+import json
 import logging
 import math
 import multiprocessing
+import os
 import queue
 import re
 import threading
@@ -738,6 +740,186 @@ _big_model_error = ""
 # scale the constant down.
 BIG_MODEL_RETRY_DELAY_S = 240.0
 
+# ------------------------------------------------------------- v6.10
+# THE TURBO LADDER. Field screenshot 2026-11-15 21:23 IST:
+# the owner's installed faster-whisper is OLD — it rejects
+# the NAME "large-v3-turbo" outright ("Invalid model size
+# 'large-v3-turbo', expected one of: tiny.en, tiny, base.en,
+# base, small.en, small, medium.en, medium, large-v1"), a
+# deterministic validation error, not a download failure.
+# v6.7/v6.8 latched "small" for the session over it and
+# the 240 s retry hit the same wall. Now the big-model
+# load walks a ladder of names — the remembered resolution
+# first (re-validated every boot), then the configured
+# name, then large-v3 / large-v2 / large-v1 / medium —
+# intersected with faster_whisper.utils.available_models()
+# when that API exists, so a name the installed build
+# cannot know is never even attempted. An invalid-size
+# ValueError moves to the next rung; any OTHER failure
+# (download, disk, network) keeps the v6.7/v6.8 semantics
+# exactly: latch, one honest line, the timed retry may
+# heal it. If EVERY rung is name-rejected, the failure is
+# deterministic — the latch says so (_big_model_fail_kind)
+# and the parent does NOT arm the 240 s retry against a
+# wall. The rung that loads is remembered in
+# ears_state.json (the voice_state.json pattern), so the
+# next boot starts at the name that works.
+BIG_MODEL_LADDER = ("large-v3", "large-v2", "large-v1",
+                    "medium")
+_BIG_FAMILY = frozenset((BIG_COMMAND_MODEL,)
+                        + BIG_MODEL_LADDER)
+# WHY the big model last failed: "" (never / cleared),
+# "invalid-size" (every rung name-rejected —
+# deterministic) or "error" (anything else — may heal,
+# the retry stays armed).
+_big_model_fail_kind = ""
+# The ladder rung actually serving the big slot this
+# session ("" until one loads).
+_big_resolved = ""
+# The configured command-model name the ladder serves
+# (config whisper_command_model). _tx_process_main sets
+# it from the worker's cfg snapshot; the default covers
+# in-process callers (tests, tools). The ladder only
+# engages for big-family names — the preview worker's
+# tiny-only slot never touches it.
+_big_slot_name = BIG_COMMAND_MODEL
+
+EARS_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "ears_state.json")
+
+
+def _load_ears_state():
+    """The persisted ears state, or a clean empty state.
+
+    Corrupt / missing / odd-shaped files all read as the
+    clean default — a damaged state file must never cost
+    Nalox its hearing (the voice_state.json rule)."""
+    try:
+        with open(EARS_STATE_PATH, "r",
+                  encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_ears_state(state):
+    """Persist the ears state (guarded — a failed write
+    costs the optimisation, never the hearing)."""
+    try:
+        with open(EARS_STATE_PATH, "w",
+                  encoding="utf-8") as fh:
+            json.dump(state, fh, ensure_ascii=False,
+                      indent=1)
+    except Exception:
+        pass
+
+
+def _available_model_names():
+    """The model names the INSTALLED faster-whisper
+    accepts, or None when the API cannot be read (an old
+    or partial install) — the ladder then relies on
+    per-rung ValueError handling alone. Guarded: this
+    must never break a load."""
+    try:
+        from faster_whisper.utils import available_models
+        return set(available_models())
+    except Exception:
+        pass
+    try:
+        import faster_whisper
+        fn = getattr(faster_whisper, "available_models",
+                     None)
+        if callable(fn):
+            return set(fn())
+    except Exception:
+        pass
+    return None
+
+
+def _faster_whisper_version():
+    """The installed faster-whisper version for the boot
+    diagnostics line — "unknown" when it cannot be read;
+    never raises."""
+    try:
+        import importlib.metadata as _md
+        return _md.version("faster-whisper")
+    except Exception:
+        pass
+    try:
+        import faster_whisper
+        return str(getattr(faster_whisper, "__version__",
+                           "") or "unknown")
+    except Exception:
+        return "unknown"
+
+
+def _is_invalid_size_error(exc):
+    """True for faster-whisper's deterministic name
+    rejection: ValueError("Invalid model size '...',
+    expected one of: ..."). A download / network / disk
+    failure is NOT this, however it is phrased."""
+    return isinstance(exc, ValueError) and \
+        "invalid model size" in str(exc).lower()
+
+
+def _big_candidates():
+    """The ladder rungs for this load, in order: the
+    remembered resolution (re-validated — a name rejected
+    again just walks on), the configured name, then the
+    fixed ladder. When the installed build's accepted set
+    is readable, rungs outside it are dropped first, so
+    an unsupported name is never even attempted."""
+    names = []
+    remembered = _load_ears_state().get(
+        "command_model_resolved")
+    for _n in (remembered, _big_slot_name) \
+            + BIG_MODEL_LADDER:
+        if _n and _n not in names:
+            names.append(_n)
+    avail = _available_model_names()
+    if avail is not None:
+        kept = [n for n in names if n in avail]
+        if kept:
+            return kept
+    return names
+
+
+def _ladder_error_text():
+    """The honest reason when every rung was rejected:
+    the ladder outcome itself, sized for the log line."""
+    return ("ValueError: Invalid model size — ladder "
+            "exhausted (tried %s)"
+            % ", ".join(_big_candidates()))[:160]
+
+
+def _try_load_big(model_cls):
+    """Walk the ladder once for the big slot.
+
+    Returns (model, resolved_name, kind, exc):
+      kind "ok"           — a rung loaded; it serves.
+      kind "invalid-size" — every rung was name-rejected
+                            (deterministic; exc is the
+                            last ValueError).
+      kind "error"        — a rung failed some other way
+                            (download/disk/network); the
+                            walk stops there, exactly the
+                            v6.7/v6.8 latch-and-retry case.
+    Never raises."""
+    last_exc = None
+    for name in _big_candidates():
+        try:
+            model = model_cls(name, device="cpu",
+                              compute_type="int8")
+            return model, name, "ok", None
+        except Exception as exc:
+            if _is_invalid_size_error(exc):
+                last_exc = exc
+                continue
+            return None, None, "error", exc
+    return None, None, "invalid-size", last_exc
+
 
 def _retry_big_model(res_q=None):
     """ONE background retry of the big model load (v6.8).
@@ -752,15 +934,29 @@ def _retry_big_model(res_q=None):
     the parent logs each exactly once. Only ever started
     for a preload-phase failure (see the "upgrade" job in
     _tx_process_main); a decode-phase failure stays latched
-    for the session, as before."""
+    for the session, as before.
+
+    v6.10: the retry walks the same ladder as the preload
+    (_try_load_big) and remembers the rung that loads; the
+    resolved name rides a "big-model-resolved" notice just
+    before the ready notice, so the parent's ready line
+    names the model actually serving."""
     global _big_model_down, _big_model_error
+    global _big_model_fail_kind, _big_resolved
     try:
         from faster_whisper import WhisperModel
-        model = WhisperModel(BIG_COMMAND_MODEL, device="cpu",
-                             compute_type="int8")
-    except Exception as exc:
-        _big_model_error = f"{type(exc).__name__}: {exc}"[:140]
+        model, resolved, kind, exc = _try_load_big(
+            WhisperModel)
+    except Exception as exc:  # the import itself failed
+        model, resolved, kind = None, None, "error"
+    if model is None:
+        if kind == "invalid-size":
+            _big_model_error = _ladder_error_text()
+        else:
+            _big_model_error = (
+                f"{type(exc).__name__}: {exc}")[:140]
         _big_model_down = True
+        _big_model_fail_kind = kind
         if res_q is not None:
             try:
                 res_q.put((0, "notice",
@@ -770,11 +966,17 @@ def _retry_big_model(res_q=None):
                 pass
         return False
     with _models_lock:
-        _models[BIG_COMMAND_MODEL] = model
+        _models[_big_slot_name] = model
+        _models[resolved] = model
     _big_model_down = False
     _big_model_error = ""
+    _big_model_fail_kind = ""
+    _big_resolved = resolved
+    _save_ears_state({"command_model_resolved": resolved})
     if res_q is not None:
         try:
+            res_q.put((0, "notice",
+                       ("big-model-resolved", resolved)))
             res_q.put((0, "notice", "big-model-ready"))
         except Exception:
             pass
@@ -783,38 +985,66 @@ def _retry_big_model(res_q=None):
 
 def _get_model(name):
     global _big_model_down, _big_model_error
-    if name == BIG_COMMAND_MODEL and _big_model_down:
+    global _big_model_fail_kind, _big_resolved
+    if name == _big_slot_name and _big_model_down:
         name = COMMAND_FALLBACK_MODEL
     with _models_lock:
         if name not in _models:
             from faster_whisper import WhisperModel
             log.info("Loading whisper model %s (first run downloads it)...", name)
-            try:
+            if name != _big_slot_name \
+                    or name not in _BIG_FAMILY:
                 _models[name] = WhisperModel(
                     name, device="cpu", compute_type="int8")
-            except Exception as exc:
-                if name != BIG_COMMAND_MODEL:
-                    raise
-                # The big model could not load — latch the
-                # session fallback and serve "small" under the
-                # big name too, so no caller ever retries the
-                # download or hears silence over it. v6.8:
-                # the REASON is kept (and logged) — a preload
-                # failure earns ONE background retry later
-                # (see _retry_big_model); the parent decides.
-                _big_model_down = True
-                _big_model_error = (
-                    f"{type(exc).__name__}: {exc}")[:140]
-                log.warning("[ears] big local model unavailable "
-                            "(%s) — using small for now",
-                            _big_model_error)
-                if COMMAND_FALLBACK_MODEL in _models:
-                    _models[name] = _models[COMMAND_FALLBACK_MODEL]
+            else:
+                # The big slot loads through the v6.10
+                # ladder: the first rung the installed
+                # faster-whisper accepts serves under the
+                # configured name, and is remembered for
+                # the next boot.
+                model, resolved, kind, exc = _try_load_big(
+                    WhisperModel)
+                if model is not None:
+                    _models[name] = model
+                    _models[resolved] = model
+                    _big_resolved = resolved
+                    _big_model_fail_kind = ""
+                    _save_ears_state(
+                        {"command_model_resolved": resolved})
                 else:
-                    _models[name] = WhisperModel(
-                        COMMAND_FALLBACK_MODEL, device="cpu",
-                        compute_type="int8")
-                    _models[COMMAND_FALLBACK_MODEL] = _models[name]
+                    # The big model could not load — latch
+                    # the session fallback and serve "small"
+                    # under the big name too, so no caller
+                    # ever retries the download or hears
+                    # silence over it. v6.8: the REASON is
+                    # kept (and logged) — a preload failure
+                    # earns ONE background retry later (see
+                    # _retry_big_model); the parent decides.
+                    # v6.10: the KIND is kept too — an
+                    # invalid-size exhaustion is
+                    # deterministic and earns NO retry.
+                    _big_model_down = True
+                    _big_model_fail_kind = kind
+                    if kind == "invalid-size":
+                        _big_model_error = \
+                            _ladder_error_text()
+                    else:
+                        _big_model_error = (
+                            f"{type(exc).__name__}: "
+                            f"{exc}")[:140]
+                    log.warning(
+                        "[ears] big local model unavailable "
+                        "(%s) — using small for now",
+                        _big_model_error)
+                    if COMMAND_FALLBACK_MODEL in _models:
+                        _models[name] = \
+                            _models[COMMAND_FALLBACK_MODEL]
+                    else:
+                        _models[name] = WhisperModel(
+                            COMMAND_FALLBACK_MODEL,
+                            device="cpu", compute_type="int8")
+                        _models[COMMAND_FALLBACK_MODEL] = \
+                            _models[name]
         return _models[name]
 
 
@@ -992,7 +1222,7 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     is silenced — two processes writing one rotating log
     would corrupt it, and the parent logs every outcome
     anyway. After preloading the models it posts a
-    (0, "ready", True) sentinel, and it ACKs every job the
+    (0, "ready", diag) sentinel, and it ACKs every job the
     moment it picks it up — the parent's deadline measures
     decode time from that ack, never preload (v6.3). Jobs
     are (job_id, kind, payload):
@@ -1031,6 +1261,15 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     except Exception:
         pass
     cfg = cfg_snapshot or {}
+    # v6.10: the ladder serves the CONFIGURED command-model
+    # name; a fresh worker starts with a clean ladder slate
+    # (in a real spawn the module is fresh anyway — the
+    # reset keeps in-thread test runs honest).
+    global _big_slot_name, _big_resolved, _big_model_fail_kind
+    _big_slot_name = cfg.get("whisper_command_model") \
+        or BIG_COMMAND_MODEL
+    _big_resolved = ""
+    _big_model_fail_kind = ""
     # Preload BEFORE the first job, so model load time never
     # eats a request deadline. Guarded per model: a model
     # that fails here fails per-job instead, same outcome.
@@ -1064,17 +1303,36 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             res_q.put((0, "notice",
                        ("big-model-detail",
                         "preload" if _preload_failed else "decode",
-                        _big_model_error)))
+                        _big_model_error,
+                        _big_model_fail_kind or "error")))
             res_q.put((0, "notice", "big-model-fallback"))
             _notice_sent = True
+        except Exception:
+            pass
+    if _big_resolved:
+        # v6.10: the ladder resolved at preload — tell the
+        # parent which rung serves, so its ready line names
+        # the real model (the notice precedes ready).
+        try:
+            res_q.put((0, "notice",
+                       ("big-model-resolved", _big_resolved)))
         except Exception:
             pass
     # v6.3 READINESS HANDSHAKE: the models are loaded — tell
     # the parent BEFORE the first job is read. The client's
     # request deadlines only ever measure decode time (from
-    # a job's ack), never this preload.
+    # a job's ack), never this preload. v6.10: the sentinel
+    # carries the boot diagnostics (faster-whisper version
+    # + configured vs resolved command model) — the parent
+    # logs them once per spawn, so a field screenshot of
+    # the log explains the ears by itself.
+    _diag = {"fw_version": _faster_whisper_version(),
+             "command_configured": _big_slot_name,
+             "command_resolved":
+                 "" if _big_model_down else
+                 (_big_resolved or _big_slot_name)}
     try:
-        res_q.put((0, "ready", True))
+        res_q.put((0, "ready", _diag))
     except Exception:
         return
     while True:
@@ -1138,7 +1396,8 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             try:
                 res_q.put((0, "notice",
                            ("big-model-detail", "decode",
-                            _big_model_error)))
+                            _big_model_error,
+                            _big_model_fail_kind or "error")))
                 res_q.put((0, "notice", "big-model-fallback"))
                 _notice_sent = True
             except Exception:
@@ -1238,6 +1497,11 @@ class _TxWorkerClient:
         self._big_detail = None
         self._big_retry_at = 0.0
         self._big_retry_sent = False
+        # v6.10: the boot diagnostics line logs once per
+        # spawn; the resolved rung's name (from the worker's
+        # big-model-resolved notice) feeds the ready line.
+        self._diag_logged = False
+        self._big_resolved_name = ""
 
     # ------------------------------------------------ lifecycle
     def _spawn(self):
@@ -1270,6 +1534,8 @@ class _TxWorkerClient:
             self._big_state = "none"
             self._big_detail = None
             self._big_retry_at = 0.0
+            self._diag_logged = False
+            self._big_resolved_name = ""
             return True
         except Exception as exc:
             log.error("[ears] could not start the "
@@ -1325,6 +1591,25 @@ class _TxWorkerClient:
             return "stale", None
         if mkind == "ready":
             self._ready = True
+            # v6.10 boot diagnostics: the sentinel carries
+            # the faster-whisper version + configured vs
+            # resolved command model — log them ONCE per
+            # spawn, so a field screenshot of the log
+            # explains the ears by itself.
+            if isinstance(result, dict) \
+                    and not self._diag_logged:
+                self._diag_logged = True
+                try:
+                    log.info(
+                        "[ears] faster-whisper %s; command "
+                        "model configured=%s resolved=%s",
+                        result.get("fw_version") or "unknown",
+                        result.get("command_configured")
+                        or BIG_COMMAND_MODEL,
+                        result.get("command_resolved")
+                        or "small (fallback)")
+                except Exception:
+                    pass
             return "ready", None
         if mkind == "notice":
             # v6.7: a one-way worker notice — the worker's
@@ -1342,17 +1627,25 @@ class _TxWorkerClient:
                         else "decode"
                     _reason = result[2] if len(result) > 2 \
                         else ""
+                    _kind = result[3] if len(result) > 3 \
+                        else ""
                     self._big_detail = (_phase, _reason)
-                    if _phase == "preload" \
-                            and not self._big_retry_sent \
+                    if _phase != "preload":
+                        self._big_state = "latched"
+                    elif _kind == "invalid-size":
+                        # v6.10: every ladder rung was
+                        # name-rejected by the installed
+                        # faster-whisper — deterministic.
+                        # The 240 s retry would hit the
+                        # same wall; stay latched.
+                        self._big_state = "latched"
+                    elif not self._big_retry_sent \
                             and self._big_state in ("none",
                                                     "armed"):
                         self._big_state = "armed"
                         self._big_retry_at = (
                             time.monotonic()
                             + BIG_MODEL_RETRY_DELAY_S)
-                    elif _phase != "preload":
-                        self._big_state = "latched"
                 except Exception:
                     pass
             elif isinstance(result, tuple) and result \
@@ -1367,13 +1660,32 @@ class _TxWorkerClient:
                         % (_reason or "unknown error"))
                 except Exception:
                     pass
+            elif isinstance(result, tuple) and result \
+                    and result[0] == "big-model-resolved":
+                # v6.10: the ladder found its rung (at
+                # preload or in the background retry) — the
+                # ready line names the model actually
+                # serving, not the configured hope.
+                _rname = result[1] if len(result) > 1 \
+                    else ""
+                if _rname:
+                    self._big_resolved_name = _rname
+                self._big_state = "done"
+                try:
+                    self._throttle.emit(
+                        "big-model-ready",
+                        "[ears] big local model ready — using "
+                        + (_rname or BIG_COMMAND_MODEL))
+                except Exception:
+                    pass
             elif result == "big-model-ready":
                 self._big_state = "done"
                 try:
                     self._throttle.emit(
                         "big-model-ready",
                         "[ears] big local model ready — using "
-                        "large-v3-turbo")
+                        + (self._big_resolved_name
+                           or BIG_COMMAND_MODEL))
                 except Exception:
                     pass
             elif result == "big-model-fallback":

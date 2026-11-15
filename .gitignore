@@ -15,6 +15,7 @@ updated_to.txt
 voice_state.json
 brain_state.json
 logsync_state.json
+ears_state.json
 
 # Logs & diagnostics
 nalox_log.txt
