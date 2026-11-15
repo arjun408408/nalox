@@ -240,6 +240,48 @@ transcription stuck" x2 — and his "wake up" never landed):
   - The v6.0 decode locks / model rotation are RETIRED:
     inside the worker, decodes are strictly serial, so
     there is nothing left to lock.
+
+v6.12 — WAKE LANE (field log 2026-11-15 21:36–21:45 IST:
+"[ears] wake transcription paused briefly (worker slow)"
+~15x in one session, ~2 min after a fresh boot — the owner
+heard Nalox go deaf): ONE serial worker preloads ALL the
+models and serves wake + command + big-model jobs under
+one call lock, so whenever it is busy with big-model work
+(v6.10's ladder now really downloads/loads large-v1, ~3 GB
+on CPU, inside that same worker, plus the 240 s retry job),
+wake decodes queue behind it, miss their deadline, trip
+the wake cooldown, and repeat. The brain was never the
+problem. v6.12 splits the lanes structurally:
+  - WAKE LANE — a dedicated worker process that loads
+    ONLY the small wake models (tiny first pass + the
+    v6.4 "base" near-miss retry; nothing larger, EVER —
+    the big family is refused at the job door and in
+    _get_model). It accepts ONLY wake/raw jobs. No
+    command job, big-model load or big-model retry can
+    be queued into it, so nothing can starve the wake
+    word again.
+  - COMMAND LANE — a second worker process (small +
+    the v6.10 big-model ladder). The big model loads
+    LAZILY there, on first real need — never as a boot
+    preload; boot preload is the small model only. The
+    240 s big-model retry (_maybe_big_retry) lives on
+    this lane's client only. Wake-segment ESCALATIONS
+    (the one retry with the command model) are the one
+    wake_pass kind this lane serves — they are command-
+    model work, and routing them here is what keeps
+    them out of the wake lane.
+  - THREAD CAPS — each process constructs WhisperModel
+    with an explicit cpu_threads (wake 2, command 4,
+    preview 2; config ears_wake_threads /
+    ears_command_threads / ears_preview_threads), so
+    simultaneous decodes cannot thrash his 8-core
+    Ryzen 7 1700.
+  - The two lanes spawn / die / restart independently;
+    Ears.stop() closes both. _TxWorkerClient's default
+    lane is "combined" (the pre-v6.12 single-worker
+    behaviour, preload and all) so direct callers and
+    the older suites keep their exact semantics; Ears
+    itself always builds the two split lanes.
 """
 import collections
 import json
@@ -910,8 +952,7 @@ def _try_load_big(model_cls):
     last_exc = None
     for name in _big_candidates():
         try:
-            model = model_cls(name, device="cpu",
-                              compute_type="int8")
+            model = _construct_model(model_cls, name)
             return model, name, "ok", None
         except Exception as exc:
             if _is_invalid_size_error(exc):
@@ -983,9 +1024,84 @@ def _retry_big_model(res_q=None):
     return True
 
 
+# ------------------------------------------------------------- v6.12
+# LANE + THREAD STATE (worker-process side). _tx_process_main
+# stamps these from its lane + cfg snapshot at spawn; the
+# defaults are the pre-split "combined" behaviour for
+# in-process callers (tests, tools).
+_PROCESS_LANE = "combined"
+_MODEL_CPU_THREADS = 4
+_LANE_DEFAULT_THREADS = {"wake": 2, "command": 4,
+                         "preview": 2, "combined": 4}
+_LANE_THREAD_KEYS = {"wake": "ears_wake_threads",
+                     "command": "ears_command_threads",
+                     "preview": "ears_preview_threads",
+                     "combined": "ears_command_threads"}
+# The models a WAKE-lane process may ever construct: the
+# tiny first pass (+ whatever wake_model is configured to)
+# and the "base" near-miss retry. The big family — and the
+# "small" command model — are NOT wake models.
+_WAKE_LANE_MODELS = frozenset(("tiny", "base"))
+
+
+class _LaneRefused(Exception):
+    """A job offered to the wrong lane's worker (v6.12).
+
+    Raised and caught inside _tx_process_main's dispatch:
+    the job answers None and no model is touched. It is a
+    routing guarantee, not an error."""
+
+
+def _lane_threads(lane, cfg):
+    """The cpu_threads cap for one lane's process: the
+    config override (ears_*_threads) when it is a positive
+    int, else the lane default (wake 2 / command 4 /
+    preview 2 / combined 4). Never raises."""
+    try:
+        val = int((cfg or {}).get(
+            _LANE_THREAD_KEYS.get(lane, "")) or 0)
+    except Exception:
+        val = 0
+    if val > 0:
+        return val
+    return _LANE_DEFAULT_THREADS.get(lane, 4)
+
+
+def _construct_model(model_cls, name):
+    """Construct one WhisperModel with this process's
+    cpu_threads cap — but ONLY when the class's __init__
+    names cpu_threads explicitly (the real faster-whisper
+    does; the suites' fakes do not, and passing it to them
+    would raise TypeError and double-count their recorded
+    attempts on a retry)."""
+    try:
+        import inspect
+        _params = inspect.signature(
+            model_cls.__init__).parameters
+        _has = "cpu_threads" in _params
+    except Exception:
+        _has = False
+    if _has:
+        return model_cls(name, device="cpu",
+                         compute_type="int8",
+                         cpu_threads=int(_MODEL_CPU_THREADS))
+    return model_cls(name, device="cpu", compute_type="int8")
+
+
 def _get_model(name):
     global _big_model_down, _big_model_error
     global _big_model_fail_kind, _big_resolved
+    # v6.12: the WAKE and PREVIEW lanes must never construct
+    # the big model — that construction (a ~3 GB load on
+    # CPU) is exactly the starvation this release removes.
+    # The job doors refuse such jobs first; this is the
+    # second line, so no code path in those processes can
+    # ever pay it.
+    if _PROCESS_LANE in ("wake", "preview") \
+            and name in _BIG_FAMILY:
+        raise RuntimeError(
+            "big model %r is forbidden in the %s lane"
+            % (name, _PROCESS_LANE))
     if name == _big_slot_name and _big_model_down:
         name = COMMAND_FALLBACK_MODEL
     with _models_lock:
@@ -994,8 +1110,8 @@ def _get_model(name):
             log.info("Loading whisper model %s (first run downloads it)...", name)
             if name != _big_slot_name \
                     or name not in _BIG_FAMILY:
-                _models[name] = WhisperModel(
-                    name, device="cpu", compute_type="int8")
+                _models[name] = _construct_model(
+                    WhisperModel, name)
             else:
                 # The big slot loads through the v6.10
                 # ladder: the first rung the installed
@@ -1040,9 +1156,9 @@ def _get_model(name):
                         _models[name] = \
                             _models[COMMAND_FALLBACK_MODEL]
                     else:
-                        _models[name] = WhisperModel(
-                            COMMAND_FALLBACK_MODEL,
-                            device="cpu", compute_type="int8")
+                        _models[name] = _construct_model(
+                            WhisperModel,
+                            COMMAND_FALLBACK_MODEL)
                         _models[COMMAND_FALLBACK_MODEL] = \
                             _models[name]
         return _models[name]
@@ -1214,7 +1330,7 @@ def _hb_echo_loop(hb_req_q, hb_res_q):
 
 
 def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
-                     cfg_snapshot):
+                     cfg_snapshot, lane="combined"):
     """The transcription worker process's whole life.
 
     Runs in the CHILD (spawn: this module is re-imported
@@ -1265,7 +1381,12 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # name; a fresh worker starts with a clean ladder slate
     # (in a real spawn the module is fresh anyway — the
     # reset keeps in-thread test runs honest).
+    # v6.12: the process knows its LANE and its cpu_threads
+    # cap (globals the model constructors read).
     global _big_slot_name, _big_resolved, _big_model_fail_kind
+    global _PROCESS_LANE, _MODEL_CPU_THREADS
+    _PROCESS_LANE = lane or "combined"
+    _MODEL_CPU_THREADS = _lane_threads(_PROCESS_LANE, cfg)
     _big_slot_name = cfg.get("whisper_command_model") \
         or BIG_COMMAND_MODEL
     _big_resolved = ""
@@ -1275,12 +1396,37 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # that fails here fails per-job instead, same outcome.
     # v6.4: WAKE_RETRY_MODEL (the near-miss retry) preloads
     # too, so a first near-miss never pays its load either.
+    # v6.12: the preload list is PER LANE —
+    #   wake:     ONLY the small wake models (tiny first
+    #             pass, the configured wake names, "base");
+    #             the command/big models are never named
+    #             here, so they can never load here.
+    #   preview:  "tiny" only.
+    #   command:  the SMALL command model only — the big
+    #             model is LAZY now (first real command /
+    #             file / escalation job loads it through
+    #             the ladder); no boot preload may delay
+    #             anything with a ~3 GB load again.
+    #   combined: the pre-v6.12 list, unchanged (direct
+    #             callers / older suites).
     _preload = []
-    for _name in (cfg.get("wake_model") or "tiny",
-                  cfg.get("whisper_command_model")
-                  or BIG_COMMAND_MODEL,
-                  cfg.get("whisper_wake_model") or "tiny",
-                  WAKE_RETRY_MODEL):
+    if _PROCESS_LANE == "wake":
+        _preload_names = (cfg.get("wake_model") or "tiny",
+                          cfg.get("whisper_wake_model")
+                          or "tiny",
+                          WAKE_RETRY_MODEL)
+    elif _PROCESS_LANE == "preview":
+        _preload_names = ("tiny",)
+    elif _PROCESS_LANE == "command":
+        _preload_names = (COMMAND_FALLBACK_MODEL,)
+    else:
+        _preload_names = (cfg.get("wake_model") or "tiny",
+                          cfg.get("whisper_command_model")
+                          or BIG_COMMAND_MODEL,
+                          cfg.get("whisper_wake_model")
+                          or "tiny",
+                          WAKE_RETRY_MODEL)
+    for _name in _preload_names:
         if _name and _name not in _preload:
             _preload.append(_name)
     for _name in _preload:
@@ -1326,11 +1472,20 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # + configured vs resolved command model) — the parent
     # logs them once per spawn, so a field screenshot of
     # the log explains the ears by itself.
+    # v6.12: the diag names the LANE; on the command lane
+    # the big model is lazy, so nothing is "resolved" at
+    # boot (the resolved notice arrives with the first
+    # real load, exactly as the retry's did in v6.10).
+    if _PROCESS_LANE in ("wake", "preview", "command"):
+        _resolved_at_boot = ""
+    else:
+        _resolved_at_boot = (_big_resolved or _big_slot_name)
     _diag = {"fw_version": _faster_whisper_version(),
              "command_configured": _big_slot_name,
              "command_resolved":
                  "" if _big_model_down else
-                 (_big_resolved or _big_slot_name)}
+                 _resolved_at_boot,
+             "lane": _PROCESS_LANE}
     try:
         res_q.put((0, "ready", _diag))
     except Exception:
@@ -1355,6 +1510,36 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             return
         result = None
         try:
+            # v6.12 JOB DOORS — the lane split is enforced
+            # HERE, in the worker, not just by the parent's
+            # routing: a wake-lane process refuses command /
+            # file / upgrade jobs outright, and refuses any
+            # decode whose model is outside the small wake
+            # set; a preview process serves tiny "raw" only.
+            # A refused job answers None ("nothing heard") —
+            # the shape every caller already handles.
+            if _PROCESS_LANE == "wake" and kind not in (
+                    "ping", "wake_pass", "raw"):
+                result = None
+                raise _LaneRefused(kind)
+            if _PROCESS_LANE == "preview" and kind not in (
+                    "ping", "raw"):
+                result = None
+                raise _LaneRefused(kind)
+            if _PROCESS_LANE in ("wake", "preview") \
+                    and kind in ("wake_pass", "raw"):
+                _want = payload[1] if isinstance(
+                    payload, (tuple, list)) \
+                    and len(payload) > 1 else None
+                _allowed = _WAKE_LANE_MODELS | {
+                    cfg.get("wake_model") or "tiny",
+                    cfg.get("whisper_wake_model") or "tiny"}
+                if _PROCESS_LANE == "preview":
+                    _allowed = {"tiny"}
+                if _want is not None and _want not in _allowed:
+                    result = None
+                    raise _LaneRefused(
+                        "%s model %r" % (kind, _want))
             if kind == "ping":
                 result = ("pong", payload)
             elif kind == "wake_pass":
@@ -1408,12 +1593,16 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             return
 
 
-def _spawn_tx_process(cfg):
+def _spawn_tx_process(cfg, lane="combined"):
     """Default worker factory: (proc, req_q, res_q, hb_req_q,
     hb_res_q) for one fresh spawn-context worker — the job
     queues plus the v6.4 heartbeat pair. The test suite
     injects its own factory into _TxWorkerClient to simulate
-    wedges and crashes without real processes."""
+    wedges and crashes without real processes.
+
+    v6.12: the LANE rides into the worker (see
+    _tx_process_main) and into the process name, so a task
+    manager / log ever shows which lane a worker is."""
     ctx = multiprocessing.get_context("spawn")
     req_q = ctx.Queue()
     res_q = ctx.Queue()
@@ -1421,10 +1610,22 @@ def _spawn_tx_process(cfg):
     hb_res_q = ctx.Queue()
     proc = ctx.Process(target=_tx_process_main,
                        args=(req_q, res_q, hb_req_q, hb_res_q,
-                             dict(cfg or {})),
-                       daemon=True, name="nalox-ears-worker")
+                             dict(cfg or {}), lane),
+                       daemon=True,
+                       name="nalox-ears-%s" % (lane or "worker"))
     proc.start()
     return proc, req_q, res_q, hb_req_q, hb_res_q
+
+
+def _call_factory(factory, cfg, lane):
+    """Call a worker factory with the lane when it accepts
+    one (the default factory does), else with cfg alone —
+    the suites' injected factories keep their v6.2-era
+    one-argument shape."""
+    try:
+        return factory(cfg, lane)
+    except TypeError:
+        return factory(cfg)
 
 
 class _TxWorkerClient:
@@ -1463,8 +1664,17 @@ class _TxWorkerClient:
     thread that only echoes marks a zombie — restart.
     """
 
-    def __init__(self, cfg, process_factory=None):
+    def __init__(self, cfg, process_factory=None,
+                 lane="combined"):
         self._cfg = dict(cfg or {})
+        self.cfg = self._cfg
+        # v6.12: which lane this client drives ("wake" /
+        # "command" / "preview" / "combined" — the default
+        # keeps the pre-split single-worker semantics for
+        # direct callers). The lane is handed to the worker
+        # at spawn; the big-model retry machinery below is
+        # armed on the command/combined lanes only.
+        self.lane = lane or "combined"
         self._factory = process_factory or _spawn_tx_process
         self._call_lock = threading.Lock()
         self._proc = None
@@ -1524,7 +1734,8 @@ class _TxWorkerClient:
         try:
             (self._proc, self._req_q, self._res_q,
              self._hb_req_q, self._hb_res_q) = \
-                self._factory(self._cfg)
+                _call_factory(self._factory, self._cfg,
+                              self.lane)
             self._ready = False
             self._start_logged = False
             # v6.8: a fresh worker re-runs its own preload —
@@ -1600,14 +1811,29 @@ class _TxWorkerClient:
                     and not self._diag_logged:
                 self._diag_logged = True
                 try:
-                    log.info(
-                        "[ears] faster-whisper %s; command "
-                        "model configured=%s resolved=%s",
-                        result.get("fw_version") or "unknown",
-                        result.get("command_configured")
-                        or BIG_COMMAND_MODEL,
-                        result.get("command_resolved")
-                        or "small (fallback)")
+                    if result.get("lane"):
+                        log.info(
+                            "[ears] faster-whisper %s; "
+                            "command model configured=%s "
+                            "resolved=%s (lane %s)",
+                            result.get("fw_version")
+                            or "unknown",
+                            result.get("command_configured")
+                            or BIG_COMMAND_MODEL,
+                            result.get("command_resolved")
+                            or "small (fallback)",
+                            result.get("lane"))
+                    else:
+                        log.info(
+                            "[ears] faster-whisper %s; "
+                            "command model configured=%s "
+                            "resolved=%s",
+                            result.get("fw_version")
+                            or "unknown",
+                            result.get("command_configured")
+                            or BIG_COMMAND_MODEL,
+                            result.get("command_resolved")
+                            or "small (fallback)")
                 except Exception:
                     pass
             return "ready", None
@@ -1928,6 +2154,12 @@ class _TxWorkerClient:
         by _classify during ordinary waits. Best-effort: any
         failure just leaves the state "sent" — no second
         try, ever."""
+        # v6.12: the retry lives on the COMMAND lane only
+        # (combined keeps the legacy behaviour) — a wake /
+        # preview client never sends an upgrade job, so the
+        # big load can never land in those processes.
+        if self.lane not in ("command", "combined"):
+            return
         if self._big_state != "armed" or self._big_retry_sent:
             return
         if time.monotonic() < self._big_retry_at:
@@ -2912,6 +3144,19 @@ PREVIEW_INTERVAL_S = 0.7    # min seconds between preview decodes
 PREVIEW_DEADLINE_S = 2.5    # a preview decode never waits longer
 
 
+def _make_tx_client(cfg, lane):
+    """Build one lane's _TxWorkerClient (v6.12).
+
+    The lane keyword is passed when the class accepts it;
+    a stand-in class with the old one-argument __init__
+    (the suites swap one in for the preview tests) still
+    builds exactly as before."""
+    try:
+        return _TxWorkerClient(cfg, lane=lane)
+    except TypeError:
+        return _TxWorkerClient(cfg)
+
+
 class _PreviewPump:
     """One recording's preview engine (v6.7 F): a thread +
     a dedicated tiny-model worker process feeding partial
@@ -2920,10 +3165,13 @@ class _PreviewPump:
 
     def __init__(self, sink):
         self._sink = sink
-        self._client = _TxWorkerClient(
+        # v6.12: the preview worker is its own lane too
+        # (tiny-only, cpu_threads from ears_preview_threads).
+        self._client = _make_tx_client(
             {"wake_model": "tiny",
              "whisper_command_model": "tiny",
-             "whisper_wake_model": "tiny"})
+             "whisper_wake_model": "tiny"},
+            "preview")
         self._lock = threading.Lock()
         self._latest = None
         self._stop_evt = threading.Event()
@@ -3038,11 +3286,64 @@ class Ears:
         self._tx_worker = None
         self._tx_lock = threading.Lock()
         self._tx_seq = 0
-        self._tx_client = _TxWorkerClient(cfg)
+        # v6.12: TWO lane clients — the wake lane (tiny/base
+        # only, wake/raw jobs only) and the command lane
+        # (small + lazy big ladder, command/file/upgrade +
+        # wake escalations). They spawn, die and restart
+        # independently. _tx_client (the property below)
+        # reads as the COMMAND client; assigning it (the
+        # suites' stub pattern) points BOTH lanes at the
+        # one stub, preserving the pre-split test semantics.
+        self.__dict__["_command_client"] = _make_tx_client(
+            cfg, "command")
+        self.__dict__["_wake_client"] = _make_tx_client(
+            cfg, "wake")
         self._wake_event = threading.Event()
         # v6.7 F: the live hearing preview sink (nalox.py
         # wires it to the Command Center; None = no previews).
         self._preview_sink = None
+
+    # ---- v6.12 lane access --------------------------------
+    @property
+    def _tx_client(self):
+        """The COMMAND-lane client (the pre-v6.12 name for
+        the one worker; every command/file caller keeps
+        working unchanged)."""
+        return self.__dict__.get("_command_client")
+
+    @_tx_client.setter
+    def _tx_client(self, value):
+        # An external assignment (the suites stub the worker
+        # this way) replaces BOTH lanes with the one object,
+        # exactly the single-worker world those suites test.
+        self.__dict__["_command_client"] = value
+        self.__dict__["_wake_client"] = value
+
+    def _wake_lane_client(self):
+        return self.__dict__.get("_wake_client") \
+            or self._tx_client
+
+    def _command_lane_client(self):
+        return self.__dict__.get("_command_client")
+
+    def _client_for_model(self, model_name):
+        """Route one decode by the model it needs (v6.12):
+        the big family / the configured command model /
+        "small" go to the COMMAND lane; the small wake
+        models (tiny/base) go to the WAKE lane. When both
+        lanes are one object (a stub), it answers either
+        way."""
+        wake = self._wake_lane_client()
+        cmd = self._command_lane_client()
+        if wake is cmd or cmd is None:
+            return cmd or wake
+        cmd_model = (self.cfg.get("whisper_command_model")
+                     or BIG_COMMAND_MODEL)
+        if model_name in _BIG_FAMILY \
+                or model_name == cmd_model \
+                or model_name == COMMAND_FALLBACK_MODEL:
+            return cmd
+        return wake
 
     def set_preview_sink(self, sink):
         """Wire the live hearing preview (v6.7 F): an object
@@ -3082,10 +3383,18 @@ class Ears:
 
     def stop(self):
         self._stop.set()
-        try:
-            self._tx_client.close()
-        except Exception:
-            pass
+        # v6.12: close BOTH lane workers (once each — the
+        # two attributes can hold one shared stub).
+        _seen = set()
+        for _client in (self._command_lane_client(),
+                        self._wake_lane_client()):
+            if _client is None or id(_client) in _seen:
+                continue
+            _seen.add(id(_client))
+            try:
+                _client.close()
+            except Exception:
+                pass
 
     # ---------- adaptive energy gate (v4.2; v4.3 retuned) ----------
     def gate_threshold(self):
@@ -3301,7 +3610,11 @@ class Ears:
         backoff, which the wake policy treats exactly like an
         empty decode (its one retry then gets a fresh worker).
         Never raises, never blocks past the deadline."""
-        got = self._tx_client.request(
+        # v6.12: tiny/base first passes ride the WAKE lane;
+        # an escalation naming the command model rides the
+        # COMMAND lane — the big load can never block a
+        # first pass again.
+        got = self._client_for_model(model_name).request(
             "wake_pass", (audio, model_name, kwargs),
             WAKE_TX_DEADLINE)
         if got is None:
@@ -3330,7 +3643,7 @@ class Ears:
         """One plain decode in the worker process (barge-in
         windows), under WAKE_TX_DEADLINE. ("", "en") on any
         worker failure. Never raises."""
-        got = self._tx_client.request(
+        got = self._client_for_model(model_name).request(
             "raw", (audio, model_name, None, None),
             WAKE_TX_DEADLINE)
         if got is None:

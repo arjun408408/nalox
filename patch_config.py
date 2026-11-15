@@ -114,6 +114,11 @@ PATCH_IF_ABSENT = {
     # added empty when absent; the layer stays off until
     # he pastes a key (SETUP-GOOGLE-VOICE.txt).
     "google_tts_api_key": "",
+    # v6.12: ears thread caps (see config.py) — added when
+    # absent; a value he sets by hand is preserved.
+    "ears_wake_threads": 2,
+    "ears_command_threads": 4,
+    "ears_preview_threads": 2,
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"

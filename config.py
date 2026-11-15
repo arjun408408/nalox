@@ -39,6 +39,16 @@ DEFAULTS = {
     # patch_config migrates installs still holding a shipped
     # default ("small" from v4.3, "base" from v4.5). ---
     "wake_model": "tiny",
+    # --- v6.12: EARS THREAD CAPS — each transcription
+    # worker process constructs its WhisperModels with an
+    # explicit cpu_threads, so the wake lane, the command
+    # lane and the preview process decoding at the same
+    # moment cannot thrash his 8-core / 16-thread Ryzen 7
+    # 1700. Wake stays light (it must answer instantly),
+    # command gets the most, preview stays light. ---
+    "ears_wake_threads": 2,
+    "ears_command_threads": 4,
+    "ears_preview_threads": 2,
     # --- v5.1: CLOUD EARS — the COMMAND transcription may go
     # to the cloud first (Gemini audio, then Groq Whisper),
     # because the local small model still garbles Arjun's
