@@ -9,7 +9,19 @@ DEFAULTS = {
     "user_name": "Arjun",
     "assistant_name": "Nalox",
     "whisper_wake_model": "tiny",
-    "whisper_command_model": "small",
+    # --- v6.7: the LOCAL command fallback gets the big ears.
+    # Cloud ears still hear commands FIRST (Gemini audio →
+    # Groq whisper); this model is what hears him when the
+    # cloud is down or times out, and "small" garbled his
+    # Bengali too often. large-v3-turbo is ~1.6 GB on first
+    # download; if it cannot load (offline, disk, anything),
+    # ears falls back to "small" for the session with ONE
+    # log line — hearing never breaks over a download. The
+    # owner lifted the CPU constraint explicitly (2026-11-15
+    # 19:51 IST), so heaviness is spent where it buys hearing
+    # accuracy. patch_config migrates installs still holding
+    # the shipped "small" default; a hand-set value is kept. ---
+    "whisper_command_model": "large-v3-turbo",
     # --- v4.3 Ears 2.0: the model that transcribes wake SEGMENTS
     # (auto language). v4.5: "base" by default — roughly 3x faster
     # than "small" on CPU, and wake only has to catch the name +
@@ -135,6 +147,14 @@ DEFAULTS = {
     # --- v4.1: NO headlines at boot — news only when Arjun asks ---
     "briefing_news": False,
     "ollama_model": "llama3.1",
+    # --- v6.7: OLLAMA candidate list — the offline brain gets
+    # the same candidate walk as the cloud providers (v6.5
+    # machinery): the configured ollama_model above stays the
+    # HEAD (tried first), then these in order; a name Ollama
+    # answers 404 for (not pulled yet) walks to the next, and
+    # the model that answers is remembered as ollama_model.
+    # qwen3:8b is the one SETUP-OLLAMA.txt tells him to pull. ---
+    "ollama_models": ["qwen3:8b", "qwen2.5:7b", "llama3.1:8b"],
     "ollama_url": "http://localhost:11434",
     "openai_api_key": "",
     "openai_model": "gpt-4o-mini",

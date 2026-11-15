@@ -1,0 +1,53 @@
+Nalox — Offline Brain Setup / Ollama (একবারই লাগবে / one time only)
+====================================================================
+এটা OPTIONAL — না করলেও Nalox চলবে। কিন্তু এটা করে রাখলে
+ইন্টারনেট না থাকলেও, সব cloud AI (FreeLLMAPI / Gemini / Groq)
+একসঙ্গে down হলেও Nalox তোমার কথার উত্তর দিতে পারবে — কারণ
+তখন brain টা চলবে তোমার নিজের laptop-এর ভেতরেই, সম্পূর্ণ FREE,
+কোনো key লাগে না। মোট ৫-১০ মিনিট লাগবে (model download-এর
+সময়টা ইন্টারনেটের speed-এর ওপর নির্ভর করে)।
+
+Follow these 3 steps once, on your laptop:
+
+1) Ollama install করো
+   - Browser-এ যাও: ollama.com
+   - "Download" → Windows version টা download করে install করো
+     (সাধারণ next-next install, কোনো account লাগে না)।
+   - Install হলে Ollama নিজে থেকেই background-এ চলতে থাকে —
+     system tray-তে ওর icon দেখতে পাবে।
+
+2) Brain-এর model টা নামাও (একটাই command)
+   - Start menu-তে "PowerShell" বা "Terminal" খোলো।
+   - ঠিক এই লাইনটা লিখে Enter চাপো:
+
+         ollama pull qwen3:8b
+
+   - প্রায় 5 GB download হবে — শেষ হলে "success" লিখবে।
+     এই একবারই ইন্টারনেট লাগবে; এরপর থেকে model টা তোমার
+     laptop-এই থাকবে, ইন্টারনেট ছাড়াই চলবে।
+
+3) Nalox restart করো
+   - Nalox-এর tray icon → Restart (অথবা Nalox বন্ধ করে আবার
+     চালু করো)।
+   - Log-এ (📋 Log) এই লাইনটা এলেই বুঝবে হয়ে গেছে:
+         [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+
+ব্যস! এরপর থেকে সব cloud brain down হলেও Nalox চুপ করে
+থাকবে না — laptop-এর ভেতরের brain দিয়ে উত্তর দেবে,
+বাংলাতেই (তোমার শেখানো ভাষাতেই)।
+
+জরুরি কথা / Notes:
+- Model টা laptop-এ জায়গা নেবে (~5 GB) আর উত্তর দিতে
+  cloud-এর চেয়ে একটু বেশি সময় নিতে পারে — ওটা শেষ ভরসা
+  (last resort), প্রতিদিনের brain না।
+- অন্য model চাইলে Settings-এ না গিয়ে PowerShell-এ
+  `ollama pull qwen2.5:7b` বা `ollama pull llama3.1:8b`
+  চালালেই Nalox নিজে খুঁজে নেবে — কোনটা আছে সেটা ও নিজেই
+  চেষ্টা করে দেখে (model walk)।
+- Ollama uninstall করলে বা বন্ধ রাখলেও কোনো ক্ষতি নেই —
+  Nalox আগের মতোই cloud brain দিয়ে চলবে।
+
+(English summary: Install Ollama from ollama.com, run
+`ollama pull qwen3:8b` once in PowerShell, restart Nalox.
+Free, no account, no key. Afterwards Nalox keeps answering —
+in Bengali — even with no internet and every cloud AI down.)

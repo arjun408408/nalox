@@ -15,7 +15,7 @@ title Nalox Update v6.6
 
 echo.
 echo  ==========================================
-echo    Nalox update v6.6
+echo    Nalox update v6.7
 echo  ==========================================
 echo.
 
@@ -96,6 +96,7 @@ if exist "%~dp0assets" xcopy /y /e /q "%~dp0assets" "%TARGET%\assets\" >nul
 if exist "%~dp0platform-tools" xcopy /y /e /q "%~dp0platform-tools" "%TARGET%\platform-tools\" >nul
 if exist "%~dp0phone-app" xcopy /y /e /q "%~dp0phone-app" "%TARGET%\phone-app\" >nul
 if exist "%~dp0SETUP-YOUTUBE.txt" copy /y "%~dp0SETUP-YOUTUBE.txt" "%TARGET%\" >nul
+if exist "%~dp0SETUP-OLLAMA.txt" copy /y "%~dp0SETUP-OLLAMA.txt" "%TARGET%\" >nul
 
 :copied
 echo  Patching settings - plain voice (robot off for good),

@@ -76,6 +76,7 @@ greeting Arjun could make out only the word "sir". Three fixes:
 """
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -234,6 +235,73 @@ GOOGLE_TTS_MAX_CHARS = 180  # the endpoint's per-request limit
 ENGINE_BREAK_SECONDS = 300.0
 ENGINE_BREAK_FAILURES = 2
 
+# ------------------------------------------------------------- v6.7 D
+# VOICE HEALTH PERSISTS ACROSS RESTARTS (voice_state.json,
+# beside this file — USER DATA: never shipped in packs,
+# deny-listed in the updater, git-ignored). v6.6's breakers
+# were session-only, so every fresh boot re-paid the whole
+# failure crawl before reaching the engine that works
+# (field 2026-11-15 19:52 IST: ElevenLabs 402 → edge-tts
+# slow-fail → google-tts, ~10 s of tax on the GREETING of
+# every boot). Now the state survives: the last engine that
+# WORKED per language class (bn/hi/en — google_tts_lang's
+# classes) and the parked-until WALL times of broken
+# engines. A new Speaker loads it, starts each language at
+# its last working engine, and keeps parked engines parked
+# until their time is up. ElevenLabs is the one exception:
+# its persisted 401/402 block is restored WITH an armed
+# one-time re-probe — the first utterance of the boot tries
+# it once (a 402 is fast) in case he bought credits; a
+# success clears the block and reclaims first place.
+VOICE_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "voice_state.json")
+_VOICE_ENGINES = ("elevenlabs", "edge-tts", "google-tts",
+                  "pyttsx3", "powershell")
+_VOICE_CLASSES = ("bn", "hi", "en")
+
+
+def _load_voice_state():
+    """The persisted voice health, or a clean empty state.
+
+    Corrupt / missing / odd-shaped files all read as the
+    clean default — a damaged state file must never cost
+    Nalox its voice."""
+    try:
+        with open(VOICE_STATE_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return {}
+        state = {}
+        last_good = data.get("last_good")
+        if isinstance(last_good, dict):
+            state["last_good"] = {
+                k: v for k, v in last_good.items()
+                if k in _VOICE_CLASSES and v in _VOICE_ENGINES}
+        parked = data.get("parked_until")
+        if isinstance(parked, dict):
+            state["parked_until"] = {
+                k: float(v) for k, v in parked.items()
+                if k in _VOICE_ENGINES
+                and isinstance(v, (int, float))}
+        el = data.get("eleven_down")
+        if isinstance(el, dict) and el.get("fp"):
+            state["eleven_down"] = {
+                "status": int(el.get("status") or 0),
+                "fp": str(el["fp"])}
+        return state
+    except Exception:
+        return {}
+
+
+def _save_voice_state(state):
+    """Persist the voice health (guarded — a failed write
+    costs the optimisation, never the speech)."""
+    try:
+        with open(VOICE_STATE_PATH, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
 
 def google_tts_lang(text, lang=None):
     """The tl= language for a Google TTS request (v6.6): the
@@ -325,6 +393,84 @@ class Speaker:
         self._reply_skip = set()
         self._net_fails = {}
         self._net_down_until = {}
+        # v6.7 D: persisted voice health (voice_state.json) —
+        # the last working engine per language class + parked
+        # engines survive the restart, so a fresh boot starts
+        # where the last session learned to start. The
+        # ElevenLabs persisted block restores with an armed
+        # one-time re-probe (see _say_impl step 0).
+        self._vstate = _load_voice_state()
+        self._el_persisted = None
+        self._el_probe_armed = False
+        self._apply_vstate()
+
+    # ------------------------------------------------ v6.7 D state
+    _boot_line_done = False
+
+    def _apply_vstate(self):
+        """Fold the persisted health into this session: live
+        parks become session parks (wall → monotonic), the
+        ElevenLabs block restores + arms its re-probe, and
+        the ONE boot line names the engine a language will
+        start with."""
+        now = time.time()
+        for engine, until in (self._vstate.get("parked_until")
+                              or {}).items():
+            if until > now:
+                self._net_down_until[engine] = (
+                    time.monotonic() + (until - now))
+        el = self._vstate.get("eleven_down")
+        if el:
+            self._el_persisted = (el["status"], el["fp"])
+            self._eleven_down = self._el_persisted
+            self._el_probe_armed = True
+        last_good = self._vstate.get("last_good") or {}
+        if last_good and not Speaker._boot_line_done:
+            Speaker._boot_line_done = True
+            for lclass in _VOICE_CLASSES:
+                engine = last_good.get(lclass)
+                if engine:
+                    line = (f"[voice] starting with {engine} "
+                            f"(worked last time)")
+                    log.info(line)
+                    _lb("VOICE", line)
+                    break
+
+    def _persist_vstate(self):
+        _save_voice_state(self._vstate)
+
+    def _record_good(self, engine, lclass):
+        """A real success (v6.7 D): this engine becomes its
+        language class's remembered starter, its park clears,
+        and an ElevenLabs success clears the persisted block
+        (it has reclaimed its place).
+
+        ONLY the network engines are ever recorded: the
+        offline last resorts (pyttsx3 / PowerShell) "work"
+        precisely when the network is having a bad evening —
+        remembering one of them would start every later
+        boot on the worst voice and never retry the good
+        ones."""
+        if engine not in ("elevenlabs", "edge-tts",
+                          "google-tts"):
+            return
+        changed = False
+        last_good = self._vstate.setdefault("last_good", {})
+        if last_good.get(lclass) != engine:
+            last_good[lclass] = engine
+            changed = True
+        parked = self._vstate.setdefault("parked_until", {})
+        if engine in parked:
+            del parked[engine]
+            changed = True
+        if engine == "elevenlabs":
+            self._eleven_down = None
+            self._el_persisted = None
+            if "eleven_down" in self._vstate:
+                del self._vstate["eleven_down"]
+                changed = True
+        if changed:
+            self._persist_vstate()
 
     def stop(self):
         """Interrupt the current utterance (barge-in)."""
@@ -383,6 +529,12 @@ class Speaker:
             if until is None or time.monotonic() >= until:
                 self._net_down_until[engine] = (
                     time.monotonic() + ENGINE_BREAK_SECONDS)
+                # v6.7 D: the park persists (wall clock) so
+                # the next boot does not re-pay this engine.
+                self._vstate.setdefault(
+                    "parked_until", {})[engine] = (
+                        time.time() + ENGINE_BREAK_SECONDS)
+                self._persist_vstate()
                 line = f"[voice] {label} unavailable — skipping it for a while"
                 log.error(line)
                 _lb("ERROR", line)
@@ -392,12 +544,23 @@ class Speaker:
         failure count and any expired park reset."""
         self._net_fails[engine] = 0
         self._net_down_until.pop(engine, None)
+        # v6.7 D: a success also clears the persisted park.
+        parked = self._vstate.get("parked_until") or {}
+        if engine in parked:
+            del parked[engine]
+            self._persist_vstate()
 
     def _trip_elevenlabs(self, status, key):
         """Trip the breaker + log the ONE clear line. Later calls
         skip ElevenLabs silently — no per-utterance spam, no
         per-utterance network delay."""
         self._eleven_down = (status, _key_fingerprint(key))
+        # v6.7 D: the block persists too — restored next boot
+        # WITH the one-time re-probe armed (see _apply_vstate).
+        self._el_persisted = self._eleven_down
+        self._vstate["eleven_down"] = {
+            "status": status, "fp": self._eleven_down[1]}
+        self._persist_vstate()
         reason = ("payment/credits" if status == 402
                   else "key rejected")
         line = (f"[voice] ElevenLabs unavailable ({status} — "
@@ -929,60 +1092,72 @@ class Speaker:
                 _lb("ERROR", f"[voice] say() overran its budget "
                              f"({_took:.0f}s > {_budget:.0f}s)")
 
-    def _say_impl(self, text, lang=None):
-        """The say() body (v4.1 paths), wrapped by say() so the
-        v4.2 speaking counter covers every path and every return."""
-        _STOP_EVENT.clear()
-        lang = (lang or "").strip().lower()
-        is_bengali = lang.startswith("bn")
-        robot = self.robot_on()
-        log.info("Nalox says (%s): %s", lang or "en", text)
-        with self._lock:
-            # 1) ElevenLabs — Arjun's own voice, English + Bengali.
-            # v4.8: skipped entirely once the breaker has tripped
-            # for the current key (401/402) — straight to the
-            # fallback, no request, no log line.
+    def _try_engine(self, engine, text, lang, robot, is_bengali,
+                    force=False):
+        """ONE engine attempt (v6.7 D refactor of the old
+        linear _say_impl): the engine's spoken result
+        ("done"/"interrupted") on success, None when it is
+        ineligible (no key, parked, robot-gated, already
+        failed this reply) or it failed — with exactly the
+        bookkeeping the linear chain always did (spoken
+        lines, breaker notes, failure lines). force=True is
+        the ElevenLabs boot re-probe: it bypasses the
+        persisted/session block for this one attempt."""
+        if engine == "elevenlabs":
+            # 1) ElevenLabs — Arjun's own voice, English +
+            # Bengali. v4.8: skipped entirely once the breaker
+            # has tripped for the current key (401/402).
             _el_key = (self.cfg.get("elevenlabs_api_key")
                        or "").strip()
-            if _el_key and not self._elevenlabs_blocked(_el_key) \
-                    and "elevenlabs" not in self._reply_skip:
-                try:
-                    result = self._speak_elevenlabs(text, robot)
-                    self._spoken("ElevenLabs", text, result)
-                    return result
-                except _ElevenLabsUnavailable as down:
-                    self._trip_elevenlabs(down.status, _el_key)
-                except Exception as exc:
-                    # v6.6: an ordinary failure is also sticky
-                    # for the rest of this reply — later chunks
-                    # don't re-pay it.
-                    self._reply_skip.add("elevenlabs")
-                    self._failed("ElevenLabs", exc)
-            # 2) edge-tts — with the robot effect ON, the pyttsx3-WAV
-            # path below is preferred so the effect applies; edge-tts
-            # is used when robot_voice is off, or use_edge_tts is on.
+            if not _el_key:
+                return None
+            if not force and self._elevenlabs_blocked(_el_key):
+                return None
+            if "elevenlabs" in self._reply_skip:
+                return None
+            try:
+                result = self._speak_elevenlabs(text, robot)
+                self._spoken("ElevenLabs", text, result)
+                return result
+            except _ElevenLabsUnavailable as down:
+                self._trip_elevenlabs(down.status, _el_key)
+            except Exception as exc:
+                # v6.6: an ordinary failure is also sticky
+                # for the rest of this reply.
+                self._reply_skip.add("elevenlabs")
+                self._failed("ElevenLabs", exc)
+            return None
+        if engine == "edge-tts":
+            # 2) edge-tts — with the robot effect ON, the
+            # pyttsx3-WAV path is preferred so the effect
+            # applies; edge-tts is used when robot_voice is
+            # off, or use_edge_tts is on.
             if robot:
                 want_edge = bool(self.cfg.get("use_edge_tts"))
             else:
-                want_edge = is_bengali or bool(self.cfg.get("use_edge_tts"))
-            if want_edge and not self._engine_parked("edge-tts"):
-                if is_bengali:
-                    # v4.9: default is the MALE Bengali edge voice
-                    # (Pradeep) — config.py's default agrees; this
-                    # literal is only the last-resort fallback.
-                    voice_name = self.cfg.get("bn_voice",
-                                              "bn-BD-PradeepNeural")
-                else:
-                    voice_name = self.cfg.get("edge_tts_voice",
-                                              "en-US-ChristopherNeural")
-                try:
-                    result = self._speak_edge(text, voice_name)
-                    self._note_net_success("edge-tts")
-                    self._spoken("edge-tts", text, result)
-                    return result
-                except Exception as exc:
-                    self._failed("edge-tts", exc)
-                    self._note_net_failure("edge-tts", "edge-tts")
+                want_edge = is_bengali or bool(
+                    self.cfg.get("use_edge_tts"))
+            if not want_edge or self._engine_parked("edge-tts"):
+                return None
+            if is_bengali:
+                # v4.9: default is the MALE Bengali edge voice
+                # (Pradeep) — config.py's default agrees; this
+                # literal is only the last-resort fallback.
+                voice_name = self.cfg.get("bn_voice",
+                                          "bn-BD-PradeepNeural")
+            else:
+                voice_name = self.cfg.get("edge_tts_voice",
+                                          "en-US-ChristopherNeural")
+            try:
+                result = self._speak_edge(text, voice_name)
+                self._note_net_success("edge-tts")
+                self._spoken("edge-tts", text, result)
+                return result
+            except Exception as exc:
+                self._failed("edge-tts", exc)
+                self._note_net_failure("edge-tts", "edge-tts")
+            return None
+        if engine == "google-tts":
             # 2b) Google TTS (v6.6) — one more network voice
             # before the offline engines, for EVERY language:
             # it is the layer that guarantees Bengali / Hindi
@@ -991,30 +1166,37 @@ class Speaker:
             # robot path skips it (that path processes pyttsx3
             # WAV samples; an MP3 cannot join it), and a parked
             # engine is skipped without a call.
-            if not robot and not self._engine_parked("google-tts"):
-                try:
-                    result = self._speak_google(text, lang)
-                    self._note_net_success("google-tts")
-                    self._spoken("google-tts", text, result)
-                    return result
-                except Exception as exc:
-                    self._failed("google-tts", exc)
-                    self._note_net_failure("google-tts",
-                                           "Google TTS")
-            # 3) pyttsx3 — fresh engine every time. After two failures
-            # in a row it is skipped: PowerShell speaks instead, so
-            # Nalox never goes silent mid-conversation.
-            if self._pyttsx3_failures < 2:
-                try:
-                    result = self._speak_pyttsx3(text, robot)
-                    self._pyttsx3_failures = 0
-                    self._spoken("pyttsx3", text, result)
-                    return result
-                except Exception as exc:
-                    self._pyttsx3_failures += 1
-                    log.error("pyttsx3 failed (%d in a row): %s",
-                              self._pyttsx3_failures, exc)
-                    self._failed("pyttsx3", exc)
+            if robot or self._engine_parked("google-tts"):
+                return None
+            try:
+                result = self._speak_google(text, lang)
+                self._note_net_success("google-tts")
+                self._spoken("google-tts", text, result)
+                return result
+            except Exception as exc:
+                self._failed("google-tts", exc)
+                self._note_net_failure("google-tts",
+                                       "Google TTS")
+            return None
+        if engine == "pyttsx3":
+            # 3) pyttsx3 — fresh engine every time. After two
+            # failures in a row it is skipped: PowerShell
+            # speaks instead, so Nalox never goes silent
+            # mid-conversation.
+            if self._pyttsx3_failures >= 2:
+                return None
+            try:
+                result = self._speak_pyttsx3(text, robot)
+                self._pyttsx3_failures = 0
+                self._spoken("pyttsx3", text, result)
+                return result
+            except Exception as exc:
+                self._pyttsx3_failures += 1
+                log.error("pyttsx3 failed (%d in a row): %s",
+                          self._pyttsx3_failures, exc)
+                self._failed("pyttsx3", exc)
+            return None
+        if engine == "powershell":
             # 4) PowerShell System.Speech — last resort.
             try:
                 result = self._speak_powershell(text)
@@ -1023,4 +1205,62 @@ class Speaker:
             except Exception as exc:
                 log.error("All TTS paths failed: %s", exc)
                 _lb("ERROR", f"All voice paths failed for: {text} ({exc})")
-                return "done"
+            return None
+        return None
+
+    def _say_impl(self, text, lang=None):
+        """The say() body: engines in canonical order —
+        except where v6.7 D's persisted health says otherwise:
+
+          step 0 — the armed ElevenLabs boot re-probe (once
+          per boot, only when a persisted block exists for
+          THIS key): the block lifts for one attempt; a 402
+          re-trips it, a success clears it for good.
+          step 1 — this language class's remembered engine
+          (the one that worked last session) goes first.
+          step 2 — the canonical chain, skipping anything
+          already tried above.
+
+        Every success is recorded into the persisted state;
+        barge-in/budget semantics are say()'s, unchanged."""
+        _STOP_EVENT.clear()
+        lang = (lang or "").strip().lower()
+        is_bengali = lang.startswith("bn")
+        robot = self.robot_on()
+        log.info("Nalox says (%s): %s", lang or "en", text)
+        lclass = google_tts_lang(text, lang)
+        tried = set()
+        with self._lock:
+            if self._el_probe_armed:
+                self._el_probe_armed = False
+                _el_key = (self.cfg.get("elevenlabs_api_key")
+                           or "").strip()
+                if _el_key and self._el_persisted is not None \
+                        and self._el_persisted[1] == \
+                        _key_fingerprint(_el_key):
+                    self._eleven_down = None
+                    result = self._try_engine(
+                        "elevenlabs", text, lang, robot,
+                        is_bengali, force=True)
+                    tried.add("elevenlabs")
+                    if result is not None:
+                        self._record_good("elevenlabs", lclass)
+                        return result
+            pref = (self._vstate.get("last_good")
+                    or {}).get(lclass)
+            if pref and pref not in tried:
+                result = self._try_engine(pref, text, lang,
+                                           robot, is_bengali)
+                tried.add(pref)
+                if result is not None:
+                    self._record_good(pref, lclass)
+                    return result
+            for engine in _VOICE_ENGINES:
+                if engine in tried:
+                    continue
+                result = self._try_engine(engine, text, lang,
+                                           robot, is_bengali)
+                if result is not None:
+                    self._record_good(engine, lclass)
+                    return result
+            return "done"

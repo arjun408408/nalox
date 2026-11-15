@@ -12,6 +12,8 @@ prefs.json
 *.flag
 *.lock
 updated_to.txt
+voice_state.json
+brain_state.json
 
 # Logs & diagnostics
 nalox_log.txt

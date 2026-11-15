@@ -335,6 +335,38 @@ def hudstatus(state):
 
 
 # ------------------------------------------- v5.5 COMMAND CENTER
+class _DashboardPreviewSink:
+    """ears → Command Center bridge for the live hearing
+    preview (v6.7 F): partial transcriptions stream into the
+    YOU bubble while Arjun speaks; the final transcript
+    finalizes it. The dashboard global is read live (it is
+    created lazily), and every dashboard method is already
+    guarded — a preview can never break listening."""
+
+    def visible(self):
+        try:
+            return bool(_dashboard is not None
+                        and _dashboard.is_visible())
+        except Exception:
+            return False
+
+    def begin(self):
+        if _dashboard is not None:
+            _dashboard.begin_you_preview()
+
+    def update(self, text):
+        if _dashboard is not None:
+            _dashboard.update_you_preview(text)
+
+    def finish(self, text):
+        if _dashboard is None:
+            return
+        if text:
+            _dashboard.end_you_preview(text)
+        else:
+            _dashboard.cancel_you_preview()
+
+
 # v5.5.1: the last companion line _open_dashboard logged, keyed
 # by the dashboard's failure text — a repeated failure with the
 # SAME cause never earns a second line (the dashboard itself
@@ -1030,6 +1062,16 @@ def main():
         _actions_mod.set_step_aside_hook(_step_aside_for_open)
     except Exception as exc:
         log.warning("Step-aside hook not registered: %s", exc)
+
+    # v6.7 F: live hearing preview — while Arjun speaks a
+    # command, his words stream into the Command Center's
+    # YOU bubble (the Gemini-app feel he asked for). The
+    # sink reads the dashboard global live (created lazily);
+    # a hidden or absent dashboard means no previews at all.
+    try:
+        ears.set_preview_sink(_DashboardPreviewSink())
+    except Exception as exc:
+        log.warning("Preview sink not registered: %s", exc)
 
     # Wake feedback (v3.4): the instant the wake word matches, post to
     # the HUD and play a short beep, so Arjun KNOWS Nalox heard him.

@@ -547,6 +547,16 @@ def _build(tk, parent, cfg):
         "https://api.openai.com/v1/models",
         {"Authorization": "Bearer " + openai_key.get().strip()}))
 
+    # Ollama (v6.7 — the OFFLINE brain: no key field at all,
+    # it runs on this laptop and the agent tries it LAST,
+    # when every cloud brain is down. A static pointer to
+    # the one-time setup file is all that belongs here.)
+    tk.Label(fr, text="Offline brain (Ollama): no key needed — "
+                      "one-time setup: SETUP-OLLAMA.txt in the "
+                      "Nalox folder",
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(
+                 anchor="w", padx=10)
+
     # Telegram
     st = conn_header("Telegram (phone bridge)",
                      bool(cfg.get("telegram_bot_token")))

@@ -615,6 +615,20 @@ class Dashboard:
         # carries its trailing newline (it was rendered whole
         # by a rebuild) — _tk_end_stream must not add another.
         self._tk_stream_has_nl = False
+        # v6.7 F LIVE HEARING PREVIEW: while the owner speaks
+        # a command, a YOU bubble is open in the model and its
+        # body is REPLACED by each partial transcription (the
+        # Gemini-app feel: his words appear as he speaks).
+        # The final transcript finalizes the same bubble —
+        # via end_you_preview (the ears sink) or via post()
+        # when the "[heard]" line lands, whichever is first;
+        # the loser is absorbed (_preview_final_body dedupe).
+        # _tk_preview_text mirrors the rendered body (Tk only).
+        self._preview_open = False
+        self._preview_final_body = None
+        self._preview_final_at = 0.0
+        self._tk_preview_text = None
+        self._tk_preview_has_nl = False
         # Test seam: when True, the state machine runs WITHOUT
         # tkinter (no display calls at all) on a helper thread.
         self._force_headless = False
@@ -1044,8 +1058,111 @@ class Dashboard:
             if who not in CHAT_WHO:
                 return
             with self._chat_lock:
+                if who == "you" and self._preview_open:
+                    # v6.7 F: the final "[heard]" line FINALIZES
+                    # the open preview bubble (same bubble, final
+                    # words) instead of adding a second one.
+                    if self._chat and self._chat[-1][0] == "you":
+                        self._chat[-1] = ("you", body)
+                    self._preview_open = False
+                    self._preview_final_body = body
+                    self._preview_final_at = time.monotonic()
+                    self._send(("chat_pend", body))
+                    return
+                if who == "you" and self._preview_final_body \
+                        is not None and \
+                        body == self._preview_final_body and \
+                        time.monotonic() - self._preview_final_at \
+                        < 5.0:
+                    # The preview already finalized this exact
+                    # line (the ears sink beat the log line to
+                    # it) — absorb the duplicate. Time-bounded:
+                    # a genuinely repeated command later is a
+                    # new line, never absorbed.
+                    self._preview_final_body = None
+                    return
+                if who == "you":
+                    self._preview_final_body = None
                 self._chat.append((who, body))
             self._send(("chat", (who, body)))
+        except Exception:
+            pass
+
+    # --------------------------------------- v6.7 F hearing preview
+    def begin_you_preview(self):
+        """Open the live YOU bubble for a command being
+        spoken (v6.7 F): an empty "you" entry enters the
+        model; update_you_preview replaces its body with
+        each partial transcription."""
+        try:
+            with self._chat_lock:
+                if self._preview_open:
+                    # A stale preview (its recording died
+                    # before finishing) — discard it so this
+                    # session starts clean.
+                    if self._chat and \
+                            self._chat[-1][0] == "you":
+                        self._chat.pop()
+                    self._send(("chat_pcancel", None))
+                self._preview_open = True
+                self._preview_final_body = None
+                self._chat.append(("you", ""))
+            self._send(("chat_pbegin", None))
+        except Exception:
+            pass
+
+    def update_you_preview(self, text):
+        """Replace the live bubble's body with the newest
+        partial (v6.7 F). Partials REPLACE — each one is a
+        fresh decode of everything said so far, not a delta."""
+        try:
+            text = str(text or "").strip()
+            if not text:
+                return
+            with self._chat_lock:
+                if not self._preview_open:
+                    return
+                if self._chat and self._chat[-1][0] == "you":
+                    self._chat[-1] = ("you", text)
+            self._send(("chat_pupdate", text))
+        except Exception:
+            pass
+
+    def end_you_preview(self, final_text):
+        """Finalize the live bubble with the FINAL transcript
+        (v6.7 F) — the words the brain will actually receive.
+        The matching "[heard]" log line, when it lands in
+        post(), is absorbed by the _preview_final_body
+        dedupe instead of doubling the bubble."""
+        try:
+            final_text = str(final_text or "").strip()
+            with self._chat_lock:
+                if not self._preview_open:
+                    return
+                self._preview_open = False
+                if final_text:
+                    if self._chat and \
+                            self._chat[-1][0] == "you":
+                        self._chat[-1] = ("you", final_text)
+                    self._preview_final_body = final_text
+                    self._preview_final_at = time.monotonic()
+            self._send(("chat_pend", final_text))
+        except Exception:
+            pass
+
+    def cancel_you_preview(self):
+        """Discard the live bubble (v6.7 F): the recording
+        produced nothing the brain will hear (silence,
+        garbage) — the partial was never a real line, so it
+        leaves no trace in the chat."""
+        try:
+            with self._chat_lock:
+                if not self._preview_open:
+                    return
+                self._preview_open = False
+                if self._chat and self._chat[-1][0] == "you":
+                    self._chat.pop()
+            self._send(("chat_pcancel", None))
         except Exception:
             pass
 
@@ -2249,6 +2366,10 @@ class Dashboard:
         # (re)opens resumes growing in the replayed bubble.
         if self._stream_open:
             self._tk_resume_stream()
+        # v6.7 F: a hearing preview still open resumes
+        # replacing in the replayed bubble.
+        if self._preview_open:
+            self._tk_resume_preview()
 
     # --------------------------------------- v6.5 live chat sync (Tk)
     def _tk_begin_stream(self):
@@ -2331,6 +2452,125 @@ class Dashboard:
             self._tk_stream_text = None
             self._tk_stream_has_nl = False
 
+    # --------------------------------------- v6.7 F hearing preview (Tk)
+    def _tk_begin_preview(self):
+        """Open the live YOU bubble in the widget: the name
+        line now, the body REPLACED at the preview mark as
+        partials land."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            return
+        widget.configure(state="normal")
+        try:
+            widget.mark_set("you_preview_name", "end-1c")
+            widget.mark_gravity("you_preview_name", "left")
+            widget.insert("end", "You\n", "you_name")
+            widget.mark_set("you_preview", "end-1c")
+            widget.mark_gravity("you_preview", "left")
+            self._tk_preview_text = ""
+            self._tk_preview_has_nl = False
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+
+    def _tk_resume_preview(self):
+        """Re-attach the preview marks to the replayed bubble
+        (the window opened mid-command): the model's last
+        entry is the preview, rendered whole by _append_chat
+        as name + body + newline."""
+        widget = self._chat_text
+        if widget is None:
+            return
+        try:
+            with self._chat_lock:
+                body = self._chat[-1][1] if self._chat else ""
+            widget.mark_set(
+                "you_preview_name",
+                f"end-1c-{len(body) + 4}c")
+            widget.mark_gravity("you_preview_name", "left")
+            widget.mark_set("you_preview",
+                            f"end-1c-{len(body)}c")
+            widget.mark_gravity("you_preview", "left")
+            self._tk_preview_text = body
+            self._tk_preview_has_nl = True
+        except Exception:
+            self._tk_preview_text = None
+
+    def _tk_update_preview(self, text):
+        """Replace the live bubble's body with the newest
+        partial transcription."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            return
+        widget.configure(state="normal")
+        try:
+            if self._tk_preview_text is None:
+                self._tk_resume_preview()
+            if self._tk_preview_text is None:
+                self._chat_dirty = True
+                return
+            widget.delete("you_preview", "end-1c")
+            widget.insert("you_preview", text, "you_bubble")
+            self._tk_preview_text = text
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+
+    def _tk_end_preview(self, final_text):
+        """Finalize the live bubble with the FINAL words:
+        the body is set to the final transcript (a post()
+        finalize may already have set it — replacing with
+        the same text is harmless) and the bubble gains its
+        trailing newline."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            self._tk_preview_text = None
+            self._tk_preview_has_nl = False
+            return
+        if self._tk_preview_text is None:
+            return  # never rendered live — the model is whole
+        widget.configure(state="normal")
+        try:
+            if final_text and final_text != self._tk_preview_text:
+                widget.delete("you_preview", "end-1c")
+                widget.insert("you_preview", final_text,
+                              "you_bubble")
+                self._tk_preview_text = final_text
+            if not self._tk_preview_has_nl:
+                widget.insert("end-1c", "\n", "you_bubble")
+            widget.mark_unset("you_preview")
+            widget.mark_unset("you_preview_name")
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+            self._tk_preview_text = None
+            self._tk_preview_has_nl = False
+
+    def _tk_cancel_preview(self):
+        """Remove the live bubble entirely (nothing was
+        finally heard — the partial leaves no trace)."""
+        widget = self._chat_text
+        if widget is None:
+            self._chat_dirty = True
+            self._tk_preview_text = None
+            self._tk_preview_has_nl = False
+            return
+        if self._tk_preview_text is None:
+            return
+        widget.configure(state="normal")
+        try:
+            widget.delete("you_preview_name", "end-1c")
+            widget.mark_unset("you_preview")
+            widget.mark_unset("you_preview_name")
+            widget.see("end")
+        finally:
+            widget.configure(state="disabled")
+            self._tk_preview_text = None
+            self._tk_preview_has_nl = False
+
     # ------------------------------------------------ queue pump (Tk thread)
     def _poll(self):
         """after() chain on the HUD root: drain the queue into
@@ -2370,6 +2610,26 @@ class Dashboard:
                 elif kind == "chat_end":
                     if self._win_open:
                         self._tk_end_stream()
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_pbegin":
+                    if self._win_open:
+                        self._tk_begin_preview()
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_pupdate":
+                    if self._win_open:
+                        self._tk_update_preview(payload)
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_pend":
+                    if self._win_open:
+                        self._tk_end_preview(payload)
+                    else:
+                        self._chat_dirty = True
+                elif kind == "chat_pcancel":
+                    if self._win_open:
+                        self._tk_cancel_preview()
                     else:
                         self._chat_dirty = True
                 elif kind == "status":

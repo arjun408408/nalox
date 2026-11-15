@@ -69,6 +69,7 @@ FAILED_RETRY_S = 6 * 3600    # a failed version waits a cycle
 # copied — that whitelist IS the user-data protection.
 _COPY_FILE_SUFFIXES = (".py",)
 _COPY_FILES = {"version.txt", "SETUP-YOUTUBE.txt",
+               "SETUP-OLLAMA.txt",
                "UPDATE-README.txt", "README.md", "FOR-AI.md",
                ".gitignore"}
 _COPY_DIRS = ("skills", "assets", "platform-tools", "phone-app")
@@ -77,7 +78,11 @@ _COPY_DIRS = ("skills", "assets", "platform-tools", "phone-app")
 _NEVER_FILES = {"config.json", "custom_commands.json",
                 "prefs.json", MARKER_NAME, "nalox_log.txt",
                 "nalox_page.html", "nalox_fault.log",
-                "requirements.txt"}
+                "requirements.txt",
+                # v6.7: persisted engine/brain health — his
+                # machine's own state, never shipped or
+                # overwritten by an update.
+                "voice_state.json", "brain_state.json"}
 _NEVER_SUFFIXES = (".flag", ".lock", ".db", ".sqlite",
                    ".sqlite3")
 _NEVER_DIRS = {"logs", "captures", "leads", "demos",

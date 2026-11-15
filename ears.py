@@ -708,12 +708,53 @@ def _device_name(idx):
         return "system default microphone"
 
 
+# ------------------------------------------------------------- v6.7
+# THE BIG LOCAL FALLBACK. The local command-path model is now
+# large-v3-turbo (config whisper_command_model): cloud ears
+# still hear first, but when the cloud is down THIS model is
+# the hearing, and "small" garbled the owner's Bengali too
+# often. First use downloads ~1.6 GB — if that load fails for
+# ANY reason (offline, disk full, a broken cache), the session
+# falls back to "small" instead of losing hearing entirely:
+# _big_model_down latches, ONE honest line is logged (in the
+# worker the line rides a "notice" message to the parent,
+# whose logging is alive — see _TxWorkerClient._classify),
+# and every later request for the big model is served by the
+# fallback. The wake path never touches this (tiny + base
+# retry, unchanged).
+BIG_COMMAND_MODEL = "large-v3-turbo"
+COMMAND_FALLBACK_MODEL = "small"
+_big_model_down = False
+
+
 def _get_model(name):
+    global _big_model_down
+    if name == BIG_COMMAND_MODEL and _big_model_down:
+        name = COMMAND_FALLBACK_MODEL
     with _models_lock:
         if name not in _models:
             from faster_whisper import WhisperModel
             log.info("Loading whisper model %s (first run downloads it)...", name)
-            _models[name] = WhisperModel(name, device="cpu", compute_type="int8")
+            try:
+                _models[name] = WhisperModel(
+                    name, device="cpu", compute_type="int8")
+            except Exception:
+                if name != BIG_COMMAND_MODEL:
+                    raise
+                # The big model could not load — latch the
+                # session fallback and serve "small" under the
+                # big name too, so no caller ever retries the
+                # download or hears silence over it.
+                _big_model_down = True
+                log.warning("[ears] big local model unavailable "
+                            "— using small")
+                if COMMAND_FALLBACK_MODEL in _models:
+                    _models[name] = _models[COMMAND_FALLBACK_MODEL]
+                else:
+                    _models[name] = WhisperModel(
+                        COMMAND_FALLBACK_MODEL, device="cpu",
+                        compute_type="int8")
+                    _models[COMMAND_FALLBACK_MODEL] = _models[name]
         return _models[name]
 
 
@@ -932,7 +973,8 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # too, so a first near-miss never pays its load either.
     _preload = []
     for _name in (cfg.get("wake_model") or "tiny",
-                  cfg.get("whisper_command_model") or "small",
+                  cfg.get("whisper_command_model")
+                  or BIG_COMMAND_MODEL,
                   cfg.get("whisper_wake_model") or "tiny",
                   WAKE_RETRY_MODEL):
         if _name and _name not in _preload:
@@ -940,6 +982,17 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     for _name in _preload:
         try:
             _get_model(_name)
+        except Exception:
+            pass
+    # v6.7: if the big command model failed to load, _get_model
+    # latched the session fallback to "small" — the worker's
+    # own logging is disabled, so the fact rides a one-way
+    # "notice" to the parent, which logs the honest line once.
+    _notice_sent = False
+    if _big_model_down:
+        try:
+            res_q.put((0, "notice", "big-model-fallback"))
+            _notice_sent = True
         except Exception:
             pass
     # v6.3 READINESS HANDSHAKE: the models are loaded — tell
@@ -990,6 +1043,14 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                 result = _transcribe_file_local(path, model_name)
         except Exception:
             result = None
+        if _big_model_down and not _notice_sent:
+            # v6.7: the fallback latched on a job, not at
+            # preload — tell the parent now (once).
+            try:
+                res_q.put((0, "notice", "big-model-fallback"))
+                _notice_sent = True
+            except Exception:
+                pass
         try:
             res_q.put((job_id, kind, result))
         except Exception:
@@ -1154,6 +1215,21 @@ class _TxWorkerClient:
         if mkind == "ready":
             self._ready = True
             return "ready", None
+        if mkind == "notice":
+            # v6.7: a one-way worker notice. The only one is
+            # the big-model fallback: the worker's logging is
+            # disabled, so the parent logs the honest line —
+            # once (the throttle keys it), and the wait that
+            # absorbed this message is unaffected.
+            if result == "big-model-fallback":
+                try:
+                    self._throttle.emit(
+                        "big-model-fallback",
+                        "[ears] big local model unavailable "
+                        "— using small")
+                except Exception:
+                    pass
+            return "stale", None
         if mkind == "ack":
             return ("ack", None) if rid == job_id \
                 else ("stale", None)
@@ -2301,6 +2377,115 @@ class _ChunkSource:
                 pass
 
 
+# ------------------------------------------------------------- v6.7 F
+# LIVE HEARING PREVIEW — the owner's Gemini-app ask (2026-11-15
+# 19:59 IST): "আমি যা বলবো live লিখে উঠবে" — his words appear
+# in the Command Center WHILE he speaks, not after. During a
+# command recording the in-progress buffer is decoded with
+# the TINY model and the partial replaces the YOU bubble's
+# body (dashboard's preview trio); the FINAL transcript
+# (cloud-first, unchanged) finalizes the same bubble and is
+# the only text the brain ever receives.
+#
+# The hard rule — previews must NEVER delay or starve the
+# final decode — is structural: previews run in their OWN
+# worker process (a second _TxWorkerClient with a tiny-only
+# config) on their own thread, latest-snapshot-wins (a
+# snapshot submitted mid-decode replaces the pending one;
+# nothing queues). The recording loop only drops a reference
+# into a slot — submit() never blocks. CPU is explicitly
+# unconstrained (the owner's 19:51 IST order), so a second
+# tiny-model process is affordable. If the dashboard is
+# hidden, no pump is started at all.
+PREVIEW_INTERVAL_S = 0.7    # min seconds between preview decodes
+PREVIEW_DEADLINE_S = 2.5    # a preview decode never waits longer
+
+
+class _PreviewPump:
+    """One recording's preview engine (v6.7 F): a thread +
+    a dedicated tiny-model worker process feeding partial
+    transcriptions to the sink. All failures are silent —
+    a preview that cannot run simply never appears."""
+
+    def __init__(self, sink):
+        self._sink = sink
+        self._client = _TxWorkerClient(
+            {"wake_model": "tiny",
+             "whisper_command_model": "tiny",
+             "whisper_wake_model": "tiny"})
+        self._lock = threading.Lock()
+        self._latest = None
+        self._stop_evt = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="nalox-preview")
+        self._finished = False
+
+    def start(self):
+        self._thread.start()
+
+    def submit(self, audio):
+        """Offer the newest in-progress audio (latest wins —
+        an unsubmitted older snapshot is simply replaced)."""
+        with self._lock:
+            self._latest = audio
+
+    def _sink_visible(self):
+        try:
+            return bool(self._sink.visible())
+        except Exception:
+            return False
+
+    def _run(self):
+        while not self._stop_evt.is_set():
+            with self._lock:
+                audio, self._latest = self._latest, None
+            if audio is None:
+                self._stop_evt.wait(0.05)
+                continue
+            if not self._sink_visible():
+                continue  # hidden mid-recording — drop it
+            got = None
+            try:
+                got = self._client.request(
+                    "raw", (audio, "tiny", None, None),
+                    PREVIEW_DEADLINE_S)
+            except Exception:
+                got = None
+            if got and not self._stop_evt.is_set():
+                try:
+                    text = (got[0] or "").strip()
+                except Exception:
+                    text = ""
+                if text and not is_garbage(text):
+                    try:
+                        self._sink.update(text)
+                    except Exception:
+                        pass
+            # Pace: at most one decode per interval — a
+            # struggling preview falls behind and drops
+            # snapshots instead of piling up work.
+            self._stop_evt.wait(PREVIEW_INTERVAL_S)
+
+    def sink_finish(self, text):
+        """Stop the previews and hand the sink the outcome:
+        the FINAL transcript ("" = nothing heard → cancel).
+        Never blocks on the worker: the stop flag ends the
+        thread's current wait, and the client is closed
+        (its in-flight request dies with its process)."""
+        if self._finished:
+            return
+        self._finished = True
+        self._stop_evt.set()
+        try:
+            self._client.close()
+        except Exception:
+            pass
+        try:
+            self._sink.finish(text)
+        except Exception:
+            pass
+
+
 class Ears:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -2344,6 +2529,45 @@ class Ears:
         self._tx_seq = 0
         self._tx_client = _TxWorkerClient(cfg)
         self._wake_event = threading.Event()
+        # v6.7 F: the live hearing preview sink (nalox.py
+        # wires it to the Command Center; None = no previews).
+        self._preview_sink = None
+
+    def set_preview_sink(self, sink):
+        """Wire the live hearing preview (v6.7 F): an object
+        with visible() / begin() / update(text) /
+        finish(text) — finish("") cancels the preview."""
+        self._preview_sink = sink
+
+    def _start_preview(self):
+        """Open a preview session for one command recording
+        (v6.7 F): only when a sink is wired AND the dashboard
+        is visible — a hidden dashboard means no wasted work.
+        Returns the running _PreviewPump, or None."""
+        sink = getattr(self, "_preview_sink", None)
+        if sink is None:
+            return None
+        try:
+            if not sink.visible():
+                return None
+            sink.begin()
+        except Exception:
+            return None
+        pump = _PreviewPump(sink)
+        pump.start()
+        return pump
+
+    @staticmethod
+    def _finish_preview(pump, text):
+        """Close a preview session (v6.7 F): a non-empty text
+        finalizes the bubble with the FINAL transcript; an
+        empty one cancels it (nothing was really heard)."""
+        if pump is None:
+            return
+        try:
+            pump.sink_finish(text or "")
+        except Exception:
+            pass
 
     def stop(self):
         self._stop.set()
@@ -2704,7 +2928,7 @@ class Ears:
         took = time.monotonic() - started
 
         command_model = (self.cfg.get("whisper_command_model")
-                         or "small")
+                         or BIG_COMMAND_MODEL)
         peak = self._segment_peak_rms(audio)
         threshold = self.gate_threshold()
         loud = peak >= 3.0 * threshold
@@ -2918,7 +3142,8 @@ class Ears:
         block = int(0.1 * SAMPLE_RATE)
         segmenter = Segmenter()
         model_name = (self.cfg.get("wake_model")
-                      or self.cfg.get("whisper_command_model", "small"))
+                      or self.cfg.get("whisper_command_model",
+                                      BIG_COMMAND_MODEL))
         log.info("Listening for wake word '%s' (Ears 2.0 segments, "
                  "model %s)...", self.cfg["assistant_name"], model_name)
         self._wake_event.clear()
@@ -3118,6 +3343,12 @@ class Ears:
                               min_speech_chunks=2)
         segment = None
         wait_chunks = 0
+        # v6.7 F: live hearing preview — started only when
+        # the Command Center is visible (see _start_preview);
+        # the loop below merely drops snapshots into it.
+        pump = self._start_preview()
+        heard_chunks = []
+        last_submit = 0.0
         with self._open_stream(sd) as stream:
             while not self._stop.is_set():
                 data, _ = stream.read(block)
@@ -3131,16 +3362,28 @@ class Ears:
                         break
                 segment = segmenter.feed(chunk, rms,
                                          self.gate_threshold())
+                if pump is not None and segmenter.active:
+                    heard_chunks.append(chunk)
+                    _now = time.monotonic()
+                    if _now - last_submit >= PREVIEW_INTERVAL_S:
+                        last_submit = _now
+                        try:
+                            pump.submit(
+                                np.concatenate(heard_chunks))
+                        except Exception:
+                            pass
                 if segment is not None:
                     break
         LAST_TIMING["record"] = time.monotonic() - record_start
         if segment is None:
+            self._finish_preview(pump, "")
             LAST_TIMING["transcribe"] = 0.0
             return "", "en"
         threshold = self.gate_threshold()
         speech_s = 0.1 * sum(1 for c in segment
                              if _rms(c) > threshold)
         if speech_s < 0.3:
+            self._finish_preview(pump, "")
             LAST_TIMING["transcribe"] = 0.0
             log.info("Command clip held only %.1fs of speech — "
                      "not transcribing it", speech_s)
@@ -3166,6 +3409,12 @@ class Ears:
             text, lang, ear_src = "", "en", "local"
         LAST_TIMING["transcribe"] = time.monotonic() - _t0
         log.info("Command heard: %r (language: %s)", text, lang)
+        # v6.7 F: the FINAL transcript finalizes the preview
+        # bubble ("" cancels it — nothing was really heard).
+        # The "[heard]" line below still posts as before; the
+        # dashboard absorbs whichever of the two arrives
+        # second, so the bubble never doubles.
+        self._finish_preview(pump, text)
         # v5.1: which ear produced this text is always on the
         # record — cloud:gemini / cloud:groq / local — so a
         # Bengali garble is diagnosable from the log page.

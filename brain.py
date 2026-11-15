@@ -725,6 +725,87 @@ FREELLM_TIMEOUT_S = 10.0
 FREELLM_COOLDOWN_S = 300.0
 MODEL_WALK_BUDGET_S = 12.0
 
+# ------------------------------------------------------------- v6.7
+# OLLAMA, A REAL LAST RESORT. The owner lifted the CPU
+# constraint (2026-11-15 19:51 IST), so the offline brain is
+# now worth making dependable: Ollama joins the model
+# candidate walk (config ollama_models; a name that was never
+# pulled answers 404 and the walk moves on; the model that
+# answers is remembered), and its per-call timeout is
+# OLLAMA_TIMEOUT_S — far more generous than the cloud cap,
+# because a cold local model loads slowly and Ollama is the
+# LAST provider in the chain: a slow true answer beats the
+# fallback line (his answer-everything rule). Boot validation
+# notes the offline brain once when it answers.
+OLLAMA_TIMEOUT_S = 30.0
+
+# ------------------------------------------------------------- v6.7 E
+# THE ANSWERING BRAIN IS REMEMBERED ACROSS RESTARTS
+# (brain_state.json, beside this file — USER DATA: never
+# shipped in packs, deny-listed in the updater, git-ignored).
+# v6.5 remembers the working MODEL inside config.json, but
+# WHICH provider answered died with the session, so every
+# boot's first commands re-walked the chain from the top
+# (field 2026-11-15 19:59 IST: replies still felt "অনেক
+# late" on a fresh boot). Now every agent-path success
+# persists (provider, model, wall time); the NEXT PROCESS
+# gives that provider the first attempt of its first
+# command — still through every guard — and boot validation
+# checks it first so the truthful brain line is fast. Two
+# disciplines keep it honest:
+#   * previous-process only: a state THIS process wrote is
+#     never re-read as "last session" (this process already
+#     knows its own chain works; the file is for the next
+#     boot);
+#   * freshness: state older than BRAIN_STATE_MAX_AGE_S
+#     (7 days) is ignored — a week-old winner is a rumour.
+# A failed remembered attempt falls straight into the
+# normal chain, and the next success anywhere re-remembers.
+BRAIN_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "brain_state.json")
+BRAIN_STATE_MAX_AGE_S = 7 * 24 * 3600
+_REM_LOAD_LOCK = threading.Lock()
+_BRAIN_STATE_WRITTEN_BY_US = False
+_BRAIN_PROVIDERS = ("freellm", "anthropic", "openrouter",
+                    "gemini", "groq", "openai", "ollama")
+
+
+def _load_brain_state():
+    """The previous process's (provider, model), or None:
+    nothing saved, state too old, odd shape, or the file is
+    THIS process's own writing (see the note above)."""
+    if _BRAIN_STATE_WRITTEN_BY_US:
+        return None
+    try:
+        with open(BRAIN_STATE_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return None
+        provider = str(data.get("provider") or "").strip()
+        if provider not in _BRAIN_PROVIDERS:
+            return None
+        ts = float(data.get("ts") or 0)
+        if not ts or time.time() - ts > BRAIN_STATE_MAX_AGE_S:
+            return None
+        return provider, str(data.get("model") or "").strip()
+    except Exception:
+        return None
+
+
+def _save_brain_state(provider, model):
+    """Persist the answering provider + model (guarded — a
+    failed write costs the head start, never the answer)."""
+    global _BRAIN_STATE_WRITTEN_BY_US
+    _BRAIN_STATE_WRITTEN_BY_US = True
+    try:
+        with open(BRAIN_STATE_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"provider": provider,
+                       "model": model or "",
+                       "ts": time.time()}, fh,
+                      ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
 # ------------------------------------------------------------- v6.5
 # MODEL CANDIDATE WALK (provider repair — field log 2026-11-15
 # 18:44 IST: Gemini's key was FINE, Google 404'd the model name
@@ -746,6 +827,8 @@ _MODEL_WALK_PROVIDERS = {
     "gemini": ("gemini_model", "gemini_models"),
     "groq": ("groq_model", "groq_models"),
     "openrouter": ("openrouter_model", "openrouter_models"),
+    # v6.7: the offline brain walks too (see OLLAMA_TIMEOUT_S).
+    "ollama": ("ollama_model", "ollama_models"),
 }
 
 
@@ -5453,7 +5536,17 @@ class Brain:
         except Exception:
             return
         results = {}
-        for prov, field, url, label in self._KEY_CHECKS:
+        _checks = list(self._KEY_CHECKS)
+        # v6.7 E: the remembered provider is validated FIRST,
+        # so the truthful brain line settles on the likely
+        # answerer immediately instead of after the whole
+        # list. (Stable sort — every other provider keeps
+        # its relative order.)
+        _rem = self._remembered_state()
+        if _rem:
+            _checks.sort(
+                key=lambda c: 0 if c[0] == _rem[0] else 1)
+        for prov, field, url, label in _checks:
             key = (self.cfg.get(field) or "").strip()
             if not key:
                 continue
@@ -5573,6 +5666,58 @@ class Brain:
                 "Claude's. Move it in Settings → Brain.")
             log.error("[brain] hint: the rejected Claude key may "
                       "be a Groq key pasted into the wrong field")
+        # v6.7: the offline brain gets its one boot note.
+        self._note_ollama_at_boot()
+
+    def _note_ollama_at_boot(self):
+        """Note the OFFLINE brain once per Brain instance (v6.7).
+
+        If Ollama answers on its local port, ONE logbook line
+        names the model Nalox will fall back to when every
+        cloud brain is down — the first walk candidate that is
+        actually pulled, else the first pulled model. If it
+        does not answer, ONE quiet file-log line and nothing
+        more: Ollama is optional (SETUP-OLLAMA.txt), never a
+        nag. Best-effort throughout — a note must never break
+        validation."""
+        if getattr(self, "_ollama_noted", False):
+            return
+        self._ollama_noted = True
+        quiet = ("[brain] Ollama not detected — the offline "
+                 "brain is off (optional, see SETUP-OLLAMA.txt)")
+        try:
+            import requests
+            url = (self.cfg.get("ollama_url")
+                   or "http://localhost:11434").rstrip("/")
+            url = url.replace("://localhost", "://127.0.0.1")
+            resp = requests.get(url + "/api/tags", timeout=1.5)
+            if resp.status_code != 200:
+                log.info(quiet)
+                return
+            installed = []
+            try:
+                for item in (resp.json().get("models") or []):
+                    name = str(item.get("name") or "").strip()
+                    if name:
+                        installed.append(name)
+            except Exception:
+                pass
+            model = None
+            for cand in self._model_candidates("ollama"):
+                if any(n == cand or n.startswith(cand + ":")
+                       for n in installed):
+                    model = cand
+                    break
+            if model is None:
+                model = (installed[0] if installed
+                         else self.cfg.get("ollama_model",
+                                           "llama3.1"))
+            _lb("BRAIN", f"[BRAIN] Offline brain (Ollama) "
+                         f"ready: {model}")
+            log.info("[brain] offline brain (Ollama) ready: %s",
+                     model)
+        except Exception:
+            log.info(quiet)
 
     def _brain_fail(self, label, reason, provider=None,
                     http_status=None):
@@ -6302,6 +6447,101 @@ class Brain:
         except Exception:
             return False
 
+    # ------------------------------------------------ v6.7 E state
+    def _remembered_state(self):
+        """The previous process's (provider, model), loaded
+        once per Brain instance (see _load_brain_state).
+        Double-checked locking: the constructor's validation
+        thread and the first command can arrive together."""
+        if getattr(self, "_rem_loaded", False):
+            return getattr(self, "_rem_state", None)
+        with _REM_LOAD_LOCK:
+            if not getattr(self, "_rem_loaded", False):
+                self._rem_state = _load_brain_state()
+                self._rem_loaded = True
+        return getattr(self, "_rem_state", None)
+
+    def _remember_provider(self, provider, model):
+        """An agent-path success: persist who answered (v6.7
+        E) so the NEXT boot starts there."""
+        if provider:
+            _save_brain_state(provider, model or "")
+
+    _REMEMBERED_BASES = {
+        "openrouter": "https://openrouter.ai/api/v1",
+        "gemini": ("https://generativelanguage.googleapis.com"
+                   "/v1beta/openai"),
+        "groq": "https://api.groq.com/openai/v1",
+        "openai": "https://api.openai.com/v1",
+    }
+
+    def _try_remembered(self, text):
+        """The first-command head start (v6.7 E): the provider
+        that answered in the PREVIOUS session gets this
+        instance's first agent attempt — through the same
+        gates (key present, not validation-rejected,
+        FreeLLMAPI reachable + not demoted) and the same
+        guards as the chain. Once per instance: a failure
+        falls into the normal chain below, and FreeLLMAPI's
+        demotion bookkeeping runs exactly as its chain
+        attempt's would."""
+        if getattr(self, "_rem_tried", False):
+            return None
+        self._rem_tried = True
+        st = self._remembered_state()
+        if not st:
+            return None
+        prov, model = st
+        label = self._PROVIDER_LABELS.get(prov, prov)
+        try:
+            if prov == "freellm":
+                key = (self.cfg.get("freellm_api_key")
+                       or "").strip()
+                if not key or self._provider_rejected("freellm") \
+                        or not self._freellm_available():
+                    return None
+                reply = self._agent_openai_compatible(
+                    text, self._freellm_base(), key,
+                    model or (self.cfg.get("freellm_model",
+                                           "auto") or "auto"),
+                    label="FreeLLMAPI", provider="freellm",
+                    timeout=FREELLM_TIMEOUT_S)
+                if reply:
+                    _lb("BRAIN", "FreeLLMAPI answered (remembered)")
+                    return reply
+                self._freellm_note_failure()
+                return None
+            if prov == "anthropic":
+                if (self.cfg.get("anthropic_api_key")
+                        or "").strip() \
+                        and not self._provider_rejected("anthropic"):
+                    reply = self._agent_anthropic(text)
+                    if reply:
+                        _lb("BRAIN", "Claude answered (remembered)")
+                    return reply
+                return None
+            if prov == "ollama":
+                reply = self._agent_ollama(text)
+                if reply:
+                    _lb("BRAIN", "Ollama answered (remembered)")
+                return reply
+            field = self._PROVIDER_KEY_FIELDS.get(prov)
+            base = self._REMEMBERED_BASES.get(prov)
+            if field and base:
+                key = (self.cfg.get(field) or "").strip()
+                if not key or self._provider_rejected(prov):
+                    return None
+                reply = self._agent_openai_compatible(
+                    text, base, key,
+                    model or self.cfg.get(prov + "_model", ""),
+                    label=label, provider=prov)
+                if reply:
+                    _lb("BRAIN", f"{label} answered (remembered)")
+                return reply
+        except Exception:
+            return None
+        return None
+
     def _agent_reply(self, text):
         """Try each LLM provider in priority order; None if none work.
 
@@ -6355,6 +6595,13 @@ class Brain:
         # fallback judges THIS call, not an ancient one.
         with self._status_lock:
             self._last_agent_fail = None
+        # v6.7 E: the remembered provider (last session's
+        # answerer) gets the first attempt of this boot —
+        # see _try_remembered. Once only; the normal chain
+        # below is otherwise exactly as it was.
+        reply = self._try_remembered(text)
+        if reply:
+            return reply
         # v5.0 order: FreeLLMAPI → Claude → OpenRouter → Gemini
         # → Groq → OpenAI → Ollama. A provider whose key
         # validation already REJECTED is skipped instantly (7b)
@@ -6484,6 +6731,13 @@ class Brain:
             reply = self._agent_anthropic_impl(text)
         except Exception:
             reply = None
+        if reply:
+            # v6.7 E: remember who answered (next boot's head
+            # start).
+            self._remember_provider(
+                "anthropic",
+                self.cfg.get("anthropic_model",
+                             "claude-sonnet-4-5"))
         try:
             import perflevel
             perflevel.record_provider(
@@ -6786,31 +7040,45 @@ class Brain:
                         provider=prov)
         # Ollama (local), no tools. v4.4: the cached availability
         # decides — no fresh /api/tags probe on this path either.
+        # v6.7: the candidate walk + the generous local timeout
+        # ride along here too — a writing task deserves the same
+        # dependable last resort as a spoken command.
         try:
             import requests
             url = self.cfg.get(
                 "ollama_url", "http://localhost:11434").rstrip("/")
             if self._ollama_available():
-                resp = requests.post(
-                    url + "/api/chat",
-                    json={"model": self.cfg.get("ollama_model",
-                                                 "llama3.1"),
-                          "messages": [
-                              {"role": "system",
-                               "content": ("You are Nalox, Arjun's "
-                                           "assistant. Reply with ONLY "
-                                           "the text asked for — no "
-                                           "quotes, no preamble.")},
-                              {"role": "user", "content": prompt}],
-                          "stream": False},
-                    timeout=PROVIDER_TIMEOUT_S)
-                reply = ((resp.json().get("message") or {})
-                         .get("content") or "").strip()
-                reply = self._guard_reply(reply, "Ollama",
-                                          writing=writing)
-                if reply:
-                    _lb("BRAIN", "Ollama answered (plain chat)")
-                    return reply
+                _candidates = self._model_candidates("ollama") or [
+                    self.cfg.get("ollama_model", "llama3.1")]
+                for _cand in _candidates:
+                    resp = requests.post(
+                        url + "/api/chat",
+                        json={"model": _cand,
+                              "messages": [
+                                  {"role": "system",
+                                   "content": ("You are Nalox, Arjun's "
+                                               "assistant. Reply with ONLY "
+                                               "the text asked for — no "
+                                               "quotes, no preamble.")},
+                                  {"role": "user", "content": prompt}],
+                              "stream": False},
+                        timeout=OLLAMA_TIMEOUT_S)
+                    if resp.status_code != 200:
+                        if _model_error_snippet(
+                                resp.status_code, resp) is not None:
+                            continue  # not pulled — next candidate
+                        break  # a real failure — same as before
+                    reply = ((resp.json().get("message") or {})
+                             .get("content") or "").strip()
+                    reply = self._guard_reply(reply, "Ollama",
+                                              writing=writing)
+                    if reply:
+                        if _cand != _candidates[0]:
+                            self._remember_working_model(
+                                "ollama", _cand, "Ollama")
+                        _lb("BRAIN", "Ollama answered (plain chat)")
+                        return reply
+                    break  # guard rejected it — provider failure
         except Exception:
             pass
         return None
@@ -6832,7 +7100,15 @@ class Brain:
         owns that story — so the reachability probe stays silent.
         A server that IS there but refuses the chat call is a real
         failure and is logged like every other provider's.
-        """
+
+        v6.7: the candidate walk (see OLLAMA_TIMEOUT_S) — the
+        configured model tries first, then config ollama_models;
+        a name Ollama has not pulled answers 404 ("model …
+        not found") and the walk moves to the next candidate
+        inside THIS call; the model that answers is remembered
+        as the default. Every candidate gets the generous local
+        timeout: Ollama is the last provider standing between
+        the owner and the fallback line."""
         try:
             import requests
         except Exception:
@@ -6844,8 +7120,52 @@ class Brain:
                 return None
         except Exception:
             return None
+        candidates = self._model_candidates("ollama") or [
+            self.cfg.get("ollama_model", "llama3.1")]
+        last_miss = None
+        for idx, cand in enumerate(candidates):
+            reply = self._agent_ollama_impl(text, url, cand)
+            if reply is _MODEL_MISS:
+                last_miss = cand
+                if idx + 1 < len(candidates):
+                    _lb("BRAIN",
+                        f"[brain] Ollama model {cand} is not "
+                        f"pulled — trying {candidates[idx + 1]}")
+                    log.info("[brain] Ollama model %s not "
+                             "pulled; trying %s",
+                             cand, candidates[idx + 1])
+                continue
+            if reply:
+                if cand != candidates[0]:
+                    self._remember_working_model(
+                        "ollama", cand, "Ollama")
+                # v6.7 E: remember who answered (next boot's
+                # head start).
+                self._remember_provider("ollama", cand)
+                return reply
+            return None  # a real failure — the impl logged it
+        # Every candidate was a name Ollama has not pulled:
+        # ONE failure line for the whole walk.
+        self._brain_fail(
+            "Ollama",
+            f"no working model — tried {', '.join(candidates)} "
+            f"(last not pulled: {last_miss}) — pull one with "
+            f"SETUP-OLLAMA.txt",
+            provider="ollama")
+        return None
+
+    def _agent_ollama_impl(self, text, url, model):
+        """One Ollama model attempt (v6.7 split of _agent_ollama).
+
+        Returns the reply, None on a real provider failure
+        (already logged via _brain_fail), or _MODEL_MISS when
+        Ollama answered with a dead model name (404 "not
+        found") — the walk owns that story and logs a single
+        failure only if every candidate misses. All guards
+        (language/script/CoT/markup/length) apply via
+        _guard_reply exactly as for the cloud providers."""
         try:
-            model = self.cfg.get("ollama_model", "llama3.1")
+            import requests
             messages = ([{"role": "system", "content": self._system_prompt()}]
                         + self.chat_history[-8:]
                         + [{"role": "user", "content": text}])
@@ -6854,8 +7174,11 @@ class Brain:
                     url + "/api/chat",
                     json={"model": model, "messages": messages,
                           "tools": AGENT_TOOLS, "stream": False},
-                    timeout=PROVIDER_TIMEOUT_S)
+                    timeout=OLLAMA_TIMEOUT_S)
                 if resp.status_code != 200:
+                    if _model_error_snippet(resp.status_code,
+                                            resp) is not None:
+                        return _MODEL_MISS
                     self._brain_fail(
                         "Ollama",
                         f"HTTP {resp.status_code} — "
@@ -6888,8 +7211,11 @@ class Brain:
             resp = requests.post(
                 url + "/api/chat",
                 json={"model": model, "messages": messages, "stream": False},
-                timeout=PROVIDER_TIMEOUT_S)
+                timeout=OLLAMA_TIMEOUT_S)
             if resp.status_code != 200:
+                if _model_error_snippet(resp.status_code,
+                                        resp) is not None:
+                    return _MODEL_MISS
                 self._brain_fail(
                     "Ollama",
                     f"HTTP {resp.status_code} — {_err_snippet(resp)}",
@@ -6945,9 +7271,14 @@ class Brain:
         walk providers. Non-walk providers (FreeLLMAPI, OpenAI)
         keep the exact single-model behaviour."""
         if provider not in _MODEL_WALK_PROVIDERS:
-            return self._agent_openai_compatible_impl(
+            reply = self._agent_openai_compatible_impl(
                 text, base_url, key, model, label=label,
                 provider=provider, timeout=timeout)
+            if reply:
+                # v6.7 E: remember who answered (next boot's
+                # head start).
+                self._remember_provider(provider, model)
+            return reply
         candidates = self._model_candidates(provider) or [model]
         last_miss = None
         _walk_start = time.monotonic()
@@ -6987,6 +7318,10 @@ class Brain:
                 if cand != candidates[0]:
                     self._remember_working_model(
                         provider, cand, label)
+                # v6.7 E: remember who answered (next boot's
+                # head start) — the candidate that answered,
+                # head or walked-to alike.
+                self._remember_provider(provider, cand)
                 return reply
             return None  # a real provider failure — impl logged it
         # Every candidate was a dead name: ONE failure line.

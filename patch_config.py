@@ -21,7 +21,10 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 PATCHES = {
     "robot_voice": False,
     "robot_hz": 30,
-    "whisper_command_model": "small",
+    # v6.7: "whisper_command_model" is NO LONGER force-set
+    # here — it is a migration now (see COMMAND_MODEL_OLD_
+    # DEFAULT below): the shipped "small" default becomes
+    # "large-v3-turbo", and a value he set by hand survives.
     "startup_youtube_check": False,
     "briefing_news": False,
     "full_control": True,
@@ -97,6 +100,13 @@ PATCH_IF_ABSENT = {
                     "llama-3.1-8b-instant",
                     "qwen/qwen3-32b"],
     "openrouter_models": [],
+    # v6.7: an install missing the command-model key gets the
+    # new big default (an existing "small" is migrated below;
+    # anything else is his and is preserved).
+    "whisper_command_model": "large-v3-turbo",
+    # v6.7: Ollama candidate list for the offline brain's
+    # model walk — added when absent; his edits are kept.
+    "ollama_models": ["qwen3:8b", "qwen2.5:7b", "llama3.1:8b"],
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"
@@ -133,6 +143,18 @@ BN_VOICE_NEW_DEFAULT = "bn-BD-PradeepNeural"
 # himself) is treated as user-set and preserved untouched.
 WAKE_LINE_OLD_DEFAULT = "Yes Sir, I'm coming for you."
 WAKE_LINE_NEW_DEFAULT = "Yes Sir, I'm here."
+
+# v6.7 command-model migration, same shape as the wake-model
+# one. Every shipped patch up to v6.6 FORCE-wrote
+# whisper_command_model="small" into config.json (it sat in
+# PATCHES), so an existing "small" is the shipped default,
+# never a deliberate choice — it migrates to the big local
+# fallback "large-v3-turbo" (the owner lifted the CPU
+# constraint, 2026-11-15). ANY other existing value (only
+# reachable by hand-editing the file) is user-set and is
+# preserved untouched.
+COMMAND_MODEL_OLD_DEFAULT = "small"
+COMMAND_MODEL_NEW_DEFAULT = "large-v3-turbo"
 
 
 def main():
@@ -174,6 +196,13 @@ def main():
             f"wake_line={WAKE_LINE_NEW_DEFAULT} "
             "(v5.7: the v5.4 default wake line migrated to the "
             "line Arjun ordered; a user-set value would have "
+            "been kept)")
+    if cfg.get("whisper_command_model") == COMMAND_MODEL_OLD_DEFAULT:
+        cfg["whisper_command_model"] = COMMAND_MODEL_NEW_DEFAULT
+        changed.append(
+            f"whisper_command_model={COMMAND_MODEL_NEW_DEFAULT} "
+            "(v6.7: the shipped 'small' default migrated to the "
+            "big local fallback; a user-set value would have "
             "been kept)")
     if not changed:
         print("[patch] config.json already up to date.")
