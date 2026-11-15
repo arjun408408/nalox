@@ -43,7 +43,9 @@ PATCHES = {
 PATCH_IF_ABSENT = {
     "mode": "jarvis",
     "voice_speed": 1.0,
-    "wake_model": "base",
+    # v6.4: the wake first pass is "tiny" now (see the migration
+    # below) — an install missing the key gets the new default.
+    "wake_model": "tiny",
     # v5.0: FreeLLMAPI brain keys — defaults only when absent;
     # a unified key Arjun already pasted is never touched.
     "freellm_api_key": "",
@@ -86,15 +88,19 @@ PATCH_IF_ABSENT = {
     "auto_update": True,
 }
 
-# v4.5 wake-model migration. The v4.3 patch WROTE wake_model="small"
-# into config.json as its default (PATCH_IF_ABSENT above), and no
-# Settings control exists for this key — so an existing "small" is
-# the old patch's default, never a deliberate user choice, and it
-# migrates to the new "base" default. ANY other existing value
-# ("tiny", "medium", ... — only reachable by hand-editing the file)
-# is treated as user-set and is preserved untouched.
-WAKE_MODEL_OLD_DEFAULT = "small"
-WAKE_MODEL_NEW_DEFAULT = "base"
+# Wake-model migrations. The v4.3 patch WROTE wake_model="small"
+# into config.json as its default (PATCH_IF_ABSENT above), and
+# v4.5 migrated that to "base"; no Settings control exists for
+# this key — so an existing "small" OR "base" is a shipped
+# patch default, never a deliberate user choice. v6.4: the wake
+# first pass becomes "tiny" (faster idle listening on a busy
+# CPU; the retry net — small for garbles, base for near-misses
+# of the name — keeps the accuracy), so BOTH old defaults
+# migrate to "tiny". ANY other existing value ("medium", ... —
+# only reachable by hand-editing the file) is treated as
+# user-set and is preserved untouched.
+WAKE_MODEL_OLD_DEFAULTS = ("small", "base")
+WAKE_MODEL_NEW_DEFAULT = "tiny"
 
 # v4.9 Bengali-voice migration, same shape as the wake-model one
 # above. The old bn_voice default was bn-BD-NabanitaNeural
@@ -137,12 +143,13 @@ def main():
         if key not in cfg:
             cfg[key] = value
             changed.append(f"{key}={value} (new)")
-    if cfg.get("wake_model") == WAKE_MODEL_OLD_DEFAULT:
+    if cfg.get("wake_model") in WAKE_MODEL_OLD_DEFAULTS:
         cfg["wake_model"] = WAKE_MODEL_NEW_DEFAULT
         changed.append(
             f"wake_model={WAKE_MODEL_NEW_DEFAULT} "
-            "(v4.5: old patch default migrated; a user-set value "
-            "would have been kept)")
+            "(v6.4: a shipped patch default migrated to the "
+            "tiny first pass; a user-set value would have "
+            "been kept)")
     if cfg.get("bn_voice") == BN_VOICE_OLD_DEFAULT:
         cfg["bn_voice"] = BN_VOICE_NEW_DEFAULT
         changed.append(

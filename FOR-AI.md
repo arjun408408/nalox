@@ -20,6 +20,17 @@ override your defaults whenever they conflict.
 4. **Trilingual: English (base/primary) + Bengali + Hindi.**
    Nothing else exists in Nalox's world — the language lock
    (`ALLOWED_LANGS = {en, bn, hi}`) is deliberate.
+   **Replies follow the learned language preference — and
+   with pref `bn` they are Bengali ONLY** (v6.4, his explicit
+   escalation: he does not want to speak English with Nalox).
+   Understanding stays trilingual; the reply side is enforced
+   by the language guard in `brain._guard_reply`
+   (`_reply_wrong_language`: a predominantly-Latin reply
+   under a bn/hi preference is a provider failure and the
+   cascade moves on; if all providers fail it, the honest
+   fallback speaks the preferred language). Writing tasks
+   (`writing=True`) are exempt — text he asks to be written
+   in English for others stays English.
 5. **Answer FAST and answer EVERYTHING heard, best-effort.**
    Even a wrong hearing beats silence. NEVER silently drop
    speech — in particular, never gate delivery on Whisper's
@@ -76,8 +87,8 @@ override your defaults whenever they conflict.
 | `nalox.py` | Main process: boot, single-instance claim, main loop (wake → command → brain → speak), exit/restart paths, tray/poller/updater wiring, boot surface. Exit codes: 42 deliberate (supervisor stops), 43 duplicate launch, 1/0 restart-style (supervisor relaunches). |
 | `supervisor.py` | Launches `nalox.py` via pythonw (no console), relaunches on crash, honours exit code 42 + `exit_requested.flag` (consumed once), own OS lock. |
 | `start_nalox.vbs` | Silent launcher (pythonw → supervisor). Startup shortcut + Desktop shortcut target. |
-| `ears.py` | Hearing: energy Segmenter + adaptive gate, wake matching (fuzzy, trilingual), command capture, cloud ears (Gemini → Groq → local). **All local faster-whisper decodes run in a worker PROCESS** (`_TxWorkerClient`/`_tx_process_main`, spawn) under hard deadlines: wake 4 s, command 12 s, file 30 s; timeouts kill + respawn the worker ("[ears] worker restarted (timeout)"). |
-| `brain.py` | The agent: deterministic intents first (wake/dashboard/phone/PC chores/custom commands/memory/prefs), then the LLM tool loop. Provider priority: FreeLLMAPI → Claude → OpenRouter → Gemini → Groq → OpenAI → Ollama, with perflevel-driven adaptive ordering. Reply guards: length cap (writing exempt), script guard ({Latin, Bengali, Devanagari}), CoT/reasoning-leak guard, leaked-tool-call parse-and-execute. |
+| `ears.py` | Hearing: energy Segmenter + adaptive gate, wake matching (fuzzy, trilingual), command capture, cloud ears (Gemini → Groq → local). **All local faster-whisper decodes run in a worker PROCESS** (`_TxWorkerClient`/`_tx_process_main`, spawn) under deadlines measured from the job's ack: wake 8 s, command 12 s, file 30 s. **Liveness is an out-of-band heartbeat** (v6.4: dedicated queues + `_hb_echo_loop`, a worker thread that never touches the models — NEVER judge liveness through the serial job queue; busy ≠ dead). Wake/raw timeouts DROP the request and keep the worker; restarts need a dead heartbeat (≥3 s) or a dead process. Slow command/file decodes are waited out to hard caps (30 s / 45 s), late results used. Wake first pass = config `wake_model` (default **tiny**); a loud near-miss of the name (edit distance exactly 2, `_wake_near_miss`) retries once on `WAKE_RETRY_MODEL` ("base"); loud garbles retry once on the command model. |
+| `brain.py` | The agent: deterministic intents first (wake/dashboard/phone/PC chores/custom commands/memory/prefs), then the LLM tool loop. Provider priority: FreeLLMAPI → Claude → OpenRouter → Gemini → Groq → OpenAI → Ollama, with perflevel-driven adaptive ordering. Reply guards: length cap (writing exempt), script guard ({Latin, Bengali, Devanagari}), CoT/reasoning-leak guard, leaked-tool-call parse-and-execute, language guard (v6.4: under a bn/hi preference a wrong-language conversational reply is a provider failure; writing exempt). |
 | `voice.py` | Speech: ElevenLabs → edge-tts (20 s bound) → pyttsx3 → SAPI; barge-in support; speaking flag + watchdog. |
 | `dashboard.py` | The Command Center: Toplevel hosted on the HUD's Tk root (ONE interpreter — never create a second `tk.Tk()`), orb/SYSTEM/CHAT, opening ceremony (v6.2), big ⚡ Level header, custom-command builder. Show mechanics are v6.1's (no confirm round-trip; real window state is the truth; generation-based hide). |
 | `hud.py` | The plain app window: built WITHDRAWN (v6.2), X = hide, buttons (Log/Settings/Command Center/Hide/Restart/Exit). Owns the single Tk root/thread; `run_on_tk` hosts the dashboard. |

@@ -775,6 +775,39 @@ def _get_model(name):
 #      never stay dead. And identical [ears] restart lines
 #      are throttled (first + a summary count), so neither
 #      the log nor the chat mirror can flood again.
+#
+# v6.4 — BUSY IS NOT DEAD. v6.3's field log (2026-11-15
+# 18:33–18:38) showed the cascade's ghost: no more 4 s kill
+# loop, wake + commands worked — but "[ears] worker
+# restarted (timeout)" still landed every 1–2 idle minutes.
+# Root cause, in code terms: mechanism 2 was UNSOUND. The
+# ping rode the SAME serial job queue as the decodes, and
+# the worker's single main loop cannot even READ a ping
+# while a decode is running — so any decode still in flight
+# 1 s (PING_TIMEOUT) past its deadline produced neither a
+# pong nor the late result, and the client killed a healthy,
+# merely busy worker. (Phase 1 had the same flaw in milder
+# form: a job submitted mid-decode is not ACKed until the
+# running decode ends, so ACK_TIMEOUT could expire on a
+# healthy worker too.) The v6.3 suite never saw it because
+# its "slowalive" fake answered pings from a timer thread
+# while "decoding" — a worker that does not exist.
+# v6.4 moves liveness OFF the job queue:
+#   1. OUT-OF-BAND HEARTBEAT — the worker answers heartbeat
+#      tokens on a DEDICATED queue pair, from a thread that
+#      never touches the models. A pong lands within ~1 s
+#      even mid-decode. Liveness = heartbeat ONLY.
+#   2. WAKE NEVER DIES FOR SLOWNESS — a wake/raw request
+#      that overruns is DROPPED (its late result discarded);
+#      the worker is left alone to finish and catch up. A
+#      wake-path restart needs a dead heartbeat (no pong for
+#      HEARTBEAT_DEAD_S) or a dead process.
+#   3. COMMANDS KEEP TRUE-WEDGE RESTARTS — a command/file
+#      decode that hangs with a dead heartbeat restarts the
+#      worker exactly once, as before; one that is merely
+#      slow (heartbeat alive) is waited out to a generous
+#      hard cap and its late result is USED — never killed
+#      mid-flight.
 WAKE_TX_DEADLINE = 8.0
 COMMAND_TX_DEADLINE = 12.0
 FILE_TX_DEADLINE = 30.0
@@ -783,7 +816,11 @@ WORKER_RESTART_WINDOW = 120.0
 WORKER_BACKOFF_S = 60.0
 READY_TIMEOUT = 60.0
 ACK_TIMEOUT = 5.0
-PING_TIMEOUT = 1.0
+HEARTBEAT_TIMEOUT = 1.0
+HEARTBEAT_DEAD_S = 3.0
+COMMAND_HARD_CAP_S = 30.0
+FILE_HARD_CAP_S = 45.0
+WAKE_RETRY_MODEL = "base"
 WAKE_COOLDOWN_AFTER = 2
 WAKE_COOLDOWN_S = 20.0
 LOG_THROTTLE_WINDOW = 60.0
@@ -821,7 +858,32 @@ class _LogThrottle:
         return first
 
 
-def _tx_process_main(req_q, res_q, cfg_snapshot):
+def _hb_echo_loop(hb_req_q, hb_res_q):
+    """The worker's heartbeat responder (v6.4).
+
+    Echoes every token the instant it arrives, on its own
+    thread, and NEVER touches the models or the job queue —
+    that independence is the whole design: the parent reads
+    liveness from this channel only, so a worker buried in a
+    20 s decode still pongs within ~1 s, and "busy" can never
+    again be mistaken for "dead" (the v6.3 ping rode the
+    serial job queue and starved behind the very decode it
+    was judging). None is the poison pill."""
+    while True:
+        try:
+            token = hb_req_q.get()
+        except Exception:
+            return
+        if token is None:
+            return
+        try:
+            hb_res_q.put(token)
+        except Exception:
+            return
+
+
+def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
+                     cfg_snapshot):
     """The transcription worker process's whole life.
 
     Runs in the CHILD (spawn: this module is re-imported
@@ -845,18 +907,37 @@ def _tx_process_main(req_q, res_q, cfg_snapshot):
     A job that raises answers None (the parent reads that as
     "nothing heard"); a job that never answers is killed by
     the parent's deadline. None on the request queue is the
-    poison pill (a clean exit)."""
+    poison pill (a clean exit).
+
+    v6.4: a heartbeat thread (_hb_echo_loop) starts BEFORE
+    preload and answers on the dedicated heartbeat queues
+    for the process's whole life — liveness never queues
+    behind a decode again."""
     try:
         logging.disable(logging.CRITICAL)
+    except Exception:
+        pass
+    try:
+        threading.Thread(target=_hb_echo_loop,
+                         args=(hb_req_q, hb_res_q),
+                         daemon=True,
+                         name="nalox-ears-heartbeat").start()
     except Exception:
         pass
     cfg = cfg_snapshot or {}
     # Preload BEFORE the first job, so model load time never
     # eats a request deadline. Guarded per model: a model
     # that fails here fails per-job instead, same outcome.
-    for _name in (cfg.get("wake_model") or "base",
+    # v6.4: WAKE_RETRY_MODEL (the near-miss retry) preloads
+    # too, so a first near-miss never pays its load either.
+    _preload = []
+    for _name in (cfg.get("wake_model") or "tiny",
                   cfg.get("whisper_command_model") or "small",
-                  cfg.get("whisper_wake_model") or "tiny"):
+                  cfg.get("whisper_wake_model") or "tiny",
+                  WAKE_RETRY_MODEL):
+        if _name and _name not in _preload:
+            _preload.append(_name)
+    for _name in _preload:
         try:
             _get_model(_name)
         except Exception:
@@ -916,18 +997,22 @@ def _tx_process_main(req_q, res_q, cfg_snapshot):
 
 
 def _spawn_tx_process(cfg):
-    """Default worker factory: (proc, req_q, res_q) for one
-    fresh spawn-context worker. The test suite injects its
-    own factory into _TxWorkerClient to simulate wedges and
-    crashes without real processes."""
+    """Default worker factory: (proc, req_q, res_q, hb_req_q,
+    hb_res_q) for one fresh spawn-context worker — the job
+    queues plus the v6.4 heartbeat pair. The test suite
+    injects its own factory into _TxWorkerClient to simulate
+    wedges and crashes without real processes."""
     ctx = multiprocessing.get_context("spawn")
     req_q = ctx.Queue()
     res_q = ctx.Queue()
+    hb_req_q = ctx.Queue()
+    hb_res_q = ctx.Queue()
     proc = ctx.Process(target=_tx_process_main,
-                       args=(req_q, res_q, dict(cfg or {})),
+                       args=(req_q, res_q, hb_req_q, hb_res_q,
+                             dict(cfg or {})),
                        daemon=True, name="nalox-ears-worker")
     proc.start()
-    return proc, req_q, res_q
+    return proc, req_q, res_q, hb_req_q, hb_res_q
 
 
 class _TxWorkerClient:
@@ -944,13 +1029,26 @@ class _TxWorkerClient:
     READY_TIMEOUT (fresh spawn still loading models) or
     ACK_TIMEOUT (worker already ready) — never counted as a
     request timeout. Phase 2 runs the caller's deadline
-    against the decode itself. A phase-2 timeout triggers
-    PING BEFORE KILL: a worker that pongs (or whose late
-    result lands during the grace) is slow-but-alive — the
-    late request is dropped, the worker is KEPT, and the
-    timeout counts toward the wake cooldown. Only a worker
-    that fails the ping, never acks, or is already dead is
-    restarted.
+    against the decode itself.
+
+    v6.4 protocol (busy-is-not-dead — same note): liveness
+    is read ONLY from the out-of-band heartbeat (a dedicated
+    queue pair answered by a worker thread that never
+    touches the models). A phase-2 timeout on the automatic
+    kinds (wake_pass / raw) DROPS the request when the
+    heartbeat is alive — the worker is left alone to finish
+    and catch up — and restarts only when no pong arrives
+    for HEARTBEAT_DEAD_S or the process has exited. A
+    command/file timeout with a live heartbeat is waited
+    out to its hard cap (COMMAND_HARD_CAP_S /
+    FILE_HARD_CAP_S) and the late result is used; with a
+    dead heartbeat it restarts exactly once. A phase-1 (ack)
+    timeout means the worker never even started the job
+    inside its whole budget: a live heartbeat then means
+    "busy with an earlier job" (automatic kinds drop;
+    command/file keep waiting under the hard cap), while a
+    heartbeat silent for a full HEARTBEAT_TIMEOUT on a
+    thread that only echoes marks a zombie — restart.
     """
 
     def __init__(self, cfg, process_factory=None):
@@ -960,6 +1058,9 @@ class _TxWorkerClient:
         self._proc = None
         self._req_q = None
         self._res_q = None
+        self._hb_req_q = None
+        self._hb_res_q = None
+        self._hb_seq = 0
         self._next_id = 0
         self._restart_stamps = []
         self._backoff_until = 0.0
@@ -992,7 +1093,8 @@ class _TxWorkerClient:
             return False
         self._restart_stamps.append(now)
         try:
-            self._proc, self._req_q, self._res_q = \
+            (self._proc, self._req_q, self._res_q,
+             self._hb_req_q, self._hb_res_q) = \
                 self._factory(self._cfg)
             self._ready = False
             self._start_logged = False
@@ -1003,12 +1105,16 @@ class _TxWorkerClient:
             self._proc = None
             self._req_q = None
             self._res_q = None
+            self._hb_req_q = None
+            self._hb_res_q = None
             return False
 
     def _kill(self):
         proc, self._proc = self._proc, None
         self._req_q = None
         self._res_q = None
+        self._hb_req_q = None
+        self._hb_res_q = None
         self._ready = False
         if proc is None:
             return
@@ -1118,41 +1224,146 @@ class _TxWorkerClient:
                 "[ears] wake transcription paused briefly "
                 "(worker slow) — still listening")
 
-    def _timeout_recovery(self, job_id, kind):
-        """Phase 2 expired with no result: PING BEFORE KILL.
+    # ------------------------------------------------ heartbeat (v6.4)
+    def _probe_heartbeat(self, wait_s):
+        """One out-of-band liveness probe: send a fresh token
+        on the heartbeat queue and wait up to `wait_s` for its
+        echo. The worker's heartbeat thread never touches the
+        models, so a live worker echoes in milliseconds EVEN
+        MID-DECODE — the property the v6.3 job-queue ping did
+        not have. Stale echoes from earlier probes are
+        discarded. Only ever called under _call_lock."""
+        proc = self._proc
+        if proc is None or not proc.is_alive():
+            return False
+        if self._hb_req_q is None or self._hb_res_q is None:
+            return False
+        self._hb_seq += 1
+        token = ("hb", self._hb_seq)
+        try:
+            self._hb_req_q.put(token)
+        except Exception:
+            return False
+        end = time.monotonic() + max(0.0, float(wait_s))
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return False
+            try:
+                msg = self._hb_res_q.get(
+                    timeout=min(left, 0.25))
+            except queue.Empty:
+                if not proc.is_alive():
+                    return False
+                continue
+            except Exception:
+                return False
+            if msg == token:
+                return True
+            # A stale echo from an earlier probe — keep
+            # waiting for THIS probe's token.
 
-        A pong — or the late result landing first — proves
-        the worker is slow-but-alive: drop the request, keep
-        the worker, count the timeout. Silence inside the
-        grace means a genuine wedge: restart it."""
+    def _heartbeat_dead(self):
+        """Dead = no pong within HEARTBEAT_DEAD_S. A live
+        worker answers in milliseconds, so the full window
+        only ever burns on a genuinely unresponsive one."""
+        return not self._probe_heartbeat(HEARTBEAT_DEAD_S)
+
+    def _timeout_recovery(self, job_id, kind, phase2_started):
+        """Phase 2 expired with no result (v6.4).
+
+        The heartbeat — never the job queue — decides:
+          * heartbeat DEAD (or the process died): a genuine
+            wedge. Restart exactly once, as v6.3 did.
+          * heartbeat ALIVE, automatic kind (wake/raw): the
+            worker is busy, not dead. DROP the request (its
+            late result is discarded as stale by later pumps)
+            and leave the worker alone to finish and catch
+            up. Wake-path restarts for slowness are gone.
+          * heartbeat ALIVE, command/file: wait out the
+            remainder up to the kind's hard cap and USE the
+            late result. At the cap, give up on this request
+            — the worker is still never killed mid-flight."""
         proc = self._proc
         if proc is None or not proc.is_alive():
             self._restart("crashed")
             return None
-        self._next_id += 1
-        ping_id = self._next_id
-        try:
-            self._req_q.put((ping_id, "ping", "t"))
-        except Exception:
-            self._restart("crashed")
+        if self._heartbeat_dead():
+            self._note_timeout(kind)
+            self._restart("timeout")
             return None
-        ev, val = self._pump(PING_TIMEOUT, job_id, kind,
-                             ping_id=ping_id,
-                             want=("result", "pong"))
-        if ev == "result":
-            # The late answer beat the pong: alive, and the
-            # job actually finished — hand it to the caller.
-            self._note_success()
-            return val
-        if ev == "pong":
+        if kind in _AUTO_KINDS:
             self._note_timeout(kind)
             return None
+        cap = COMMAND_HARD_CAP_S if kind == "command" \
+            else FILE_HARD_CAP_S
+        left = cap - (time.monotonic() - phase2_started)
+        if left > 0:
+            ev, val = self._pump(left, job_id, kind,
+                                  want=("result",))
+            if ev == "result":
+                self._note_success()
+                return val
+            if ev == "died":
+                self._restart("crashed")
+                return None
+        return None
+
+    def _ack_timeout(self, job_id, kind, deadline, submitted):
+        """Phase 1 expired: the worker never ACKed the job
+        inside its whole budget (READY_TIMEOUT fresh /
+        ACK_TIMEOUT ready). A heartbeat probe tells busy
+        from zombie:
+          * probe answers — the process is alive; the job is
+            queued behind an earlier decode (or, fresh, still
+            loading past even READY_TIMEOUT). Automatic kinds
+            drop the now-stale segment and keep the worker;
+            command/file keep waiting for the ack under the
+            hard cap, then run the normal phase 2.
+          * probe silent for HEARTBEAT_TIMEOUT — the echo
+            thread answers in milliseconds when the process
+            is healthy, so a full second of silence after the
+            whole ack budget marks a zombie: restart it."""
+        if not self._probe_heartbeat(HEARTBEAT_TIMEOUT):
+            self._restart("timeout")
+            return None
+        if kind in _AUTO_KINDS:
+            self._note_timeout(kind)
+            return None
+        cap = COMMAND_HARD_CAP_S if kind == "command" \
+            else FILE_HARD_CAP_S
+        while True:
+            left = cap - (time.monotonic() - submitted)
+            if left <= 0:
+                # The whole hard cap spent waiting for an ack
+                # that never came, heartbeat alive throughout:
+                # give up on this request, keep the worker.
+                return None
+            ev, val = self._pump(min(left, 1.0), job_id, kind,
+                                  want=("ack", "result"))
+            if ev == "result":
+                self._note_success()
+                return val
+            if ev == "died":
+                self._restart("crashed")
+                return None
+            if ev == "ack":
+                return self._await_result(job_id, kind, deadline)
+            # slice expired — loop re-checks the cap; the
+            # process-death check rides _pump's 'died'.
+
+    def _await_result(self, job_id, kind, deadline):
+        """Phase 2: the decode deadline runs from the ack."""
+        started = time.monotonic()
+        ev, val = self._pump(deadline, job_id, kind,
+                             want=("result",))
+        if ev == "result":
+            self._note_success()
+            return val
         if ev == "died":
             self._restart("crashed")
             return None
-        self._note_timeout(kind)
-        self._restart("timeout")
-        return None
+        return self._timeout_recovery(job_id, kind, started)
 
     # ------------------------------------------------ requests
     def request(self, kind, payload, deadline):
@@ -1180,17 +1391,24 @@ class _TxWorkerClient:
                 self._kill()
                 return None
             if kind == "ping":
-                # A ping is a liveness probe, not a decode:
-                # the plain deadline applies (v6.2 semantics).
+                # A job-queue ping is a lifecycle proof, not a
+                # decode: the plain deadline applies (v6.2
+                # semantics). v6.4: on a timeout the HEARTBEAT
+                # decides — a busy worker whose ping is still
+                # queued behind a decode is kept, not killed.
                 ev, val = self._pump(deadline, job_id, kind,
                                      want=("result",))
                 if ev == "result":
                     self._note_success()
                     return val
-                self._restart("crashed" if ev == "died"
-                              else "timeout")
+                if ev == "died":
+                    self._restart("crashed")
+                elif not self._probe_heartbeat(
+                        HEARTBEAT_TIMEOUT):
+                    self._restart("timeout")
                 return None
             # ---- phase 1: readiness + ack (NOT the deadline)
+            submitted = time.monotonic()
             if not self._ready:
                 if not self._start_logged:
                     self._start_logged = True
@@ -1214,19 +1432,12 @@ class _TxWorkerClient:
                 return None
             if ev == "timeout":
                 # Never picked the job up inside its start
-                # budget — the worker is broken, not slow.
-                self._restart("timeout")
-                return None
+                # budget — busy or zombie; the heartbeat
+                # decides (see _ack_timeout).
+                return self._ack_timeout(job_id, kind, deadline,
+                                         submitted)
             # ---- phase 2: the decode deadline runs from the ack
-            ev, val = self._pump(deadline, job_id, kind,
-                                 want=("result",))
-            if ev == "result":
-                self._note_success()
-                return val
-            if ev == "died":
-                self._restart("crashed")
-                return None
-            return self._timeout_recovery(job_id, kind)
+            return self._await_result(job_id, kind, deadline)
 
 
 def _lang_of(info):
@@ -1793,6 +2004,33 @@ def looks_like_wake_word(text):
         if len(token) >= 4 and (_levenshtein(token, "nalox") <= 1
                                 or _levenshtein(token, "nalax") <= 1):
             return True  # (c) one typo away from the name
+    return False
+
+
+def _wake_near_miss(text):
+    """True if the text ALMOST contains the wake word (v6.4).
+
+    A token the fuzzy matcher scores as close-but-not-wake:
+    at least 4 letters and at MINIMUM edit distance EXACTLY
+    2 from "nalox" / "nalax". Distance 0–1 already wakes via
+    looks_like_wake_word's rules (and its substring / "lox"
+    tail rules catch more — "mellox" wakes on its tail), so
+    a near-miss is what is left: the fast tiny model's
+    typical manglings of a name it nearly heard — "malos",
+    "nelos", "balos". Callers only consult this when
+    looks_like_wake_word is already False; a hit earns ONE
+    retry with the stronger WAKE_RETRY_MODEL ("base")."""
+    if not text:
+        return False
+    cleaned = re.sub(r"[^a-z ]", " ", text.lower())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return False
+    for token in cleaned.split():
+        if len(token) >= 4 and min(
+                _levenshtein(token, "nalox"),
+                _levenshtein(token, "nalax")) == 2:
+            return True
     return False
 
 
@@ -2388,6 +2626,18 @@ class Ears:
         dominant no-match segments never retry: they were almost
         certainly not addressed to Nalox, and the fast path stays
         fast.
+
+        v6.4 — the first pass is now the TINY model by default
+        (config wake_model default "tiny": the cheapest ears
+        that can catch the name, ~3x faster again than base on
+        a busy CPU — every idle second of wake listening runs
+        on it). RETRY, trigger (d): a clean loud segment with
+        no wake match whose text is a NEAR-MISS (a token at
+        edit distance exactly 2 from the name — _wake_near_miss)
+        earns the one retry with WAKE_RETRY_MODEL ("base").
+        Triggers (a)/(b)/(c) are unchanged and keep the command
+        model ("small"); the one-retry budget is shared — any
+        trigger that fires spends it.
         """
         kwargs = dict(beam_size=1, language=None, word_timestamps=False)
         kwargs.update(_DECODE_GUARDS)
@@ -2408,12 +2658,27 @@ class Ears:
                          or "small")
         peak = self._segment_peak_rms(audio)
         threshold = self.gate_threshold()
-        can_retry = (command_model != model_name
-                     and peak >= 3.0 * threshold)
+        loud = peak >= 3.0 * threshold
+        can_retry = (command_model != model_name and loud)
+        # v6.4: the near-miss retry runs on WAKE_RETRY_MODEL
+        # ("base") — stronger than the tiny first pass, faster
+        # than going straight to the command model.
+        can_retry_base = (WAKE_RETRY_MODEL != model_name and loud)
 
         def _retry_with_command_model():
             """The one small-model retry; (text, lang, nsp) or None."""
             got2 = self._wake_pass(audio, command_model, kwargs)
+            if got2 is None:
+                return None
+            t2, l2, n2 = got2
+            if t2 and not is_garbage(t2):
+                return t2, l2, n2
+            return None
+
+        def _retry_with_base_model():
+            """The one base-model retry (v6.4 trigger (d));
+            (text, lang, nsp) or None, same cleanliness rule."""
+            got2 = self._wake_pass(audio, WAKE_RETRY_MODEL, kwargs)
             if got2 is None:
                 return None
             t2, l2, n2 = got2
@@ -2462,6 +2727,22 @@ class Ears:
             took = time.monotonic() - started
             if got is not None:
                 text, lang, no_speech = got
+        # v6.4 trigger (d): clean, loud, no wake match — but a
+        # token sits at edit distance exactly 2 from the name
+        # (_wake_near_miss): the tiny first pass ALMOST heard
+        # him. One retry with WAKE_RETRY_MODEL ("base"), whose
+        # sharper ears usually resolve the name outright.
+        if not retried and can_retry_base \
+                and not looks_like_wake_word(text) \
+                and _wake_near_miss(text):
+            retried = True
+            log.info("Wake segment near-miss by %s (%r — close "
+                     "to the name, no match) — retrying once "
+                     "with %s", model_name, text, WAKE_RETRY_MODEL)
+            got = _retry_with_base_model()
+            took = time.monotonic() - started
+            if got is not None:
+                text, lang, no_speech = got
         log.info("Heard segment: %r (lang %s, no_speech %.2f, %.1fs)",
                  text, lang, no_speech, took)
         _post_heard(text)
@@ -2501,8 +2782,9 @@ class Ears:
         EARS 2.0 (v4.3) — SEGMENT-BASED WAKE. 0.1 s chunks stream
         past an energy Segmenter fed by the adaptive gate; only a
         completed speech segment is transcribed, with the wake
-        model (v4.5: "base" by default — fast; a loud segment it
-        garbles is retried once with the command model) and
+        model (v6.4: "tiny" by default — fastest; a loud segment
+        it garbles is retried once with the command model, and a
+        near-miss of the name once with "base") and
         auto-detected language. Silence costs
         nothing and can invent nothing. Self-hearing protection is
         unchanged: while Nalox speaks the mic is drained and the

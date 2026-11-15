@@ -1175,6 +1175,58 @@ def _reply_script_ok(text):
     return foreign / len(letters) <= 0.3
 
 
+def _reply_wrong_language(text, pref):
+    """v6.4 LANGUAGE GUARD: True when a conversational reply
+    breaks the owner's reply-language rule.
+
+    The owner's escalation (2026-11-15 18:45 IST): he speaks
+    Bengali to Nalox; Nalox understood but the BRAIN replies
+    kept coming out in English — "বাংলাটা skip করে শুধু
+    ইংলিশ বলছে". v6.3's prompt directive ("Bengali by
+    default, mirror English") is a wish the FreeLLMAPI
+    free-chain models routinely ignore, so v6.4 enforces it
+    as a guard with the same contract as the script/CoT
+    guards: a failing reply is a PROVIDER FAILURE and the
+    cascade moves on.
+
+    The rule, driven by the learned preference:
+      pref "bn" — replies are Bengali ONLY. A reply whose
+        letters are >70% Latin with <10% Bengali is an
+        English answer wearing a Bengali conversation: fail.
+        A reply dominated by Devanagari (>50%) with <10%
+        Bengali is equally not Bengali: fail.
+      pref "hi" — the mirror (Devanagari is home; Bengali
+        dominance fails it the same way).
+      pref "en" / none — no rule; always passes.
+    A reply with no letters passes (nothing to judge), and a
+    MOSTLY-Bengali reply with a few English words (app names,
+    "YouTube", technical terms) passes easily — the Latin
+    share stays far under 70%. Writing tasks never reach
+    this guard (see _guard_reply's writing exemption)."""
+    if pref not in ("bn", "hi"):
+        return False
+    letters = [ch for ch in (text or "") if ch.isalpha()]
+    if not letters:
+        return False
+    latin = bengali = devanagari = 0
+    for ch in letters:
+        o = ord(ch)
+        if 0x0980 <= o <= 0x09FF:
+            bengali += 1
+        elif 0x0900 <= o <= 0x097F:
+            devanagari += 1
+        elif o < 0x0250:
+            latin += 1
+    n = float(len(letters))
+    home = bengali if pref == "bn" else devanagari
+    other_indic = devanagari if pref == "bn" else bengali
+    if latin / n > 0.7 and home / n < 0.10:
+        return True
+    if other_indic / n > 0.5 and home / n < 0.10:
+        return True
+    return False
+
+
 # ------------------------------------------------- v5.6: CoT guard
 # The recycle-bin incident (2026-11-15 14:21): a reasoning
 # model inside the FreeLLMAPI chain answered "clean my
@@ -5502,6 +5554,19 @@ class Brain:
         path and the tool's short result becomes the reply;
         otherwise it is a provider failure (None → next
         provider). See _parse_leaked_tool_call.
+
+        v6.4 LANGUAGE GUARD, same contract: with a learned
+        bn/hi preference, a conversational reply that is not
+        in the owner's language (an English answer to his
+        Bengali, from a chain model that ignored the system
+        directive) is a provider failure — logged
+        [lang-guard], None returned, cascade moves on; if
+        every provider fails it, _chat_fallback speaks its
+        honest line in the preferred language. Like the
+        length cap, this guard is SKIPPED for writing=True:
+        an email or YouTube reply he asked to be written in
+        English for others is written in English. See
+        _reply_wrong_language.
         """
         leaked = _parse_leaked_tool_call(reply) if reply else None
         if leaked is not None:
@@ -5540,6 +5605,17 @@ class Brain:
                          "— internal reasoning, not an answer; "
                          "trying the next provider")
             return None
+        if reply and not writing \
+                and _reply_wrong_language(reply,
+                                          self._pref_lang()):
+            log.warning("[lang-guard] %s reply rejected "
+                        "(not in the owner's reply language): "
+                        "%r", label, reply[:90])
+            _lb("BRAIN", f"[lang-guard] {label} reply "
+                         "rejected — wrong language for the "
+                         "owner's preference; trying the next "
+                         "provider")
+            return None
         if reply and not writing and _reply_over_cap(reply):
             if user_text is not None \
                     and not _looks_like_question(user_text):
@@ -5565,6 +5641,16 @@ class Brain:
         if reply:
             return reply
         user = self._addr()
+        # v6.4: with a learned bn/hi preference, EVERY local
+        # fallback below speaks the preferred language too —
+        # Bengali-only replies (see _reply_wrong_language):
+        # when every provider failed the language guard, the
+        # honest line Arjun hears is Bengali, never the
+        # English the utterance happened to be in. Without a
+        # bn/hi preference the utterance's language rules, as
+        # before.
+        _pref = self._pref_lang()
+        eff_lang = _pref if _pref in ("bn", "hi") else None
         # v4.8 HONEST FALLBACK: a key IS configured but the brain
         # just failed (rejected key / unreachable provider). The
         # v4.5 line below would claim "haven't learned yet" — a
@@ -5575,7 +5661,7 @@ class Brain:
         if self._cloud_configured() and self._brain_unreachable():
             label = self._PROVIDER_LABELS.get(
                 self.brain_status.get("mode", ""), "Groq")
-            qlang = _text_lang(text, self.lang)
+            qlang = eff_lang or _text_lang(text, self.lang)
             if qlang == "bn":
                 return (f"আমার brain-এর connection-এ সমস্যা হচ্ছে, "
                         f"{self._addr_bn()} — Settings-এ {label} "
@@ -5592,7 +5678,7 @@ class Brain:
         # what Nalox CAN do. Silence or a bare error is never the
         # answer to something Arjun actually asked.
         if _looks_like_question(text):
-            qlang = _text_lang(text, self.lang)
+            qlang = eff_lang or _text_lang(text, self.lang)
             if qlang == "bn":
                 user_bn = self._addr_bn()
                 return (f"সেটা আমি এখনো শিখিনি, {user_bn}। তবে app "
@@ -5606,45 +5692,54 @@ class Brain:
                     "command.")
         # v4.4: SHORT JARVIS-style fallback. The v4.3 sentence
         # took ~7 s to speak; a miss should cost ~2 s.
-        if self.lang == "bn":
+        final_lang = eff_lang or self.lang
+        if final_lang == "bn":
             user_bn = self._addr_bn()
             return f"ওটা ঠিক ধরতে পারলাম না, {user_bn}।"
-        if self.lang == "hi":
+        if final_lang == "hi":
             return f"वो मैं ठीक से समझ नहीं पाया, {user}।"
         return f"That one I couldn't quite catch, {user}."
 
     def _language_directive(self):
-        """The agent's working-language rule (v6.3), driven by
-        the learned language preference — _pref_lang() reads
-        cfg + prefs.json and handle()'s hot-reload keeps both
+        """The agent's working-language rule, driven by the
+        learned language preference — _pref_lang() reads cfg
+        + prefs.json and handle()'s hot-reload keeps both
         current, so a preference learned by voice (or edited
         in Settings) changes this directive with NO restart.
 
-        The owner's order (2026-11-15 18:22 IST): the UI and
-        logs stay English, but Nalox's WORKING language with
-        him is his mother tongue. With pref bn, Bengali is
-        the default; English/Hindi are mirrored when HE uses
-        them; short or ambiguous utterances default to
-        Bengali. en/hi prefs mirror the same shape. With no
-        preference, the v4.3 English-primary rule stands."""
+        v6.3 shape (2026-11-15 18:22 IST): Bengali by default
+        with pref bn, mirroring English/Hindi when he used
+        them. SUPERSEDED for the reply side by the owner's
+        escalation (18:45 IST): "আমি ইংলিশ বলতে চাই না ওর
+        সঙ্গে" — understanding stays trilingual, but with
+        pref bn the REPLIES are Bengali ONLY, even when he
+        speaks English; pref hi mirrors with Hindi only.
+        _reply_wrong_language enforces the same rule as a
+        guard, because the free-chain models ignore
+        directives. With pref en / no preference, the v4.3
+        English-primary rule stands."""
         pref = self._pref_lang()
         if pref == "bn":
             return (" Language: Bengali is your default "
                     "working language with Arjun — it is his "
-                    "mother tongue. Reply in Bengali by "
-                    "default. When he speaks English, reply in "
-                    "English; when he speaks Hindi, reply in "
-                    "Hindi. For short or ambiguous utterances, "
-                    "default to Bengali. English, Bengali and "
-                    "Hindi are your three languages.")
+                    "mother tongue. ALWAYS reply in Bengali "
+                    "(বাংলা), whatever language Arjun speaks. "
+                    "Never reply in English or Hindi in "
+                    "conversation, even when he speaks English "
+                    "or Hindi: understand him in any of your "
+                    "three languages, answer him in Bengali. "
+                    "For short or ambiguous utterances, "
+                    "default to Bengali.")
         if pref == "hi":
-            return (" Language: Hindi is your default working "
-                    "language with Arjun. Reply in Hindi by "
-                    "default. When he speaks English, reply in "
-                    "English; when he speaks Bengali, reply in "
-                    "Bengali. For short or ambiguous utterances, "
-                    "default to Hindi. English, Bengali and "
-                    "Hindi are your three languages.")
+            return (" Language: Hindi is your default "
+                    "working language with Arjun. ALWAYS reply "
+                    "in Hindi (हिन्दी), whatever language Arjun "
+                    "speaks. Never reply in English or Bengali "
+                    "in conversation, even when he speaks "
+                    "English or Bengali: understand him in any "
+                    "of your three languages, answer him in "
+                    "Hindi. For short or ambiguous utterances, "
+                    "default to Hindi.")
         return (" Language: English is your primary language. "
                 "When Arjun speaks Bengali or Hindi, reply in "
                 "that same language with the same character — "

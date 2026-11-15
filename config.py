@@ -15,11 +15,18 @@ DEFAULTS = {
     # than "small" on CPU, and wake only has to catch the name +
     # rough words; a LOUD segment it garbles is retried once with
     # the accurate command model ("small"), which still handles
-    # every actual command recording. "tiny" remains an escape
-    # hatch for very slow machines — same segment pipeline, weaker
-    # ears. The tiny wake model above now only serves the barge-in
-    # interrupt monitor. ---
-    "wake_model": "base",
+    # every actual command recording. v6.4: the first pass drops
+    # to "tiny" — the cheapest ears that can still catch the
+    # name, and on Arjun's busy CPU every idle wake decode runs
+    # on it; the safety net grows a rung instead of shrinking:
+    # a loud GARBLED segment still retries once with "small"
+    # (triggers a/b/c), and a loud NEAR-MISS of the name (a
+    # token at edit distance exactly 2 — "malos", "nelos")
+    # retries once with "base" (trigger d, WAKE_RETRY_MODEL
+    # in ears.py).
+    # patch_config migrates installs still holding a shipped
+    # default ("small" from v4.3, "base" from v4.5). ---
+    "wake_model": "tiny",
     # --- v5.1: CLOUD EARS — the COMMAND transcription may go
     # to the cloud first (Gemini audio, then Groq Whisper),
     # because the local small model still garbles Arjun's
