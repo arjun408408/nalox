@@ -49,6 +49,24 @@ DEFAULTS = {
     "ears_wake_threads": 2,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
+    # --- v7.0: SELF-HEALING WATCHDOGS — the ears watch the
+    # mic STREAM itself (frames + variance from the audio
+    # callback, not just loop iterations): a stream that
+    # stops delivering frames, or delivers perfectly flat
+    # (digital-silence) frames, is restarted with a logbook
+    # ERROR, at most ears_mic_restart_budget times per
+    # ears_mic_restart_window_s; past the budget Nalox says
+    # so out loud once ("স্যার, মাইকে সমস্যা হচ্ছে।") and
+    # keeps retrying as the window slides. The main-loop
+    # liveness watchdog force-stops speech stuck past
+    # watchdog_speaking_s and reports any other stage stuck
+    # past watchdog_stage_s. All values are seconds. ---
+    "ears_mic_no_frames_s": 6.0,
+    "ears_mic_flat_s": 20.0,
+    "ears_mic_restart_budget": 3,
+    "ears_mic_restart_window_s": 600.0,
+    "watchdog_speaking_s": 45.0,
+    "watchdog_stage_s": 90.0,
     # --- v6.13: BIG-MODEL DEVICE (OpenJarvis import #1 —
     # CTranslate2 compute-type probing). The big command
     # model probes CUDA support before loading: "auto" =

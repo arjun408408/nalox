@@ -245,3 +245,74 @@ engine call so breaker bookkeeping counts it exactly once,
 identically to a serial failure. edge-tts and ElevenLabs
 are NOT prefetched (fused synth/play paths; the v6.11 edge
 retry semantics are untouched). Tests: test_v614 (76).
+
+## v7.0 "FINAL — Self-Healing Voice" (2026-11-15)
+
+The owner's closing order: no more drip updates — one final
+version that watches ITSELF. The v6.15 Voice Truth pass had
+proven every existing guard present and the brain fast
+(1.3 s); the remaining failure class was blockage at
+UNINSTRUMENTED points (his field symptom all evening:
+Telegram text instant, voice commands total silence). v7.0
+makes the voice path self-healing + self-reporting; every
+intervention leaves a logbook ERROR, which logsync carries
+home. (1) AUDIO-STREAM HEALTH (ears.py): the _ChunkSource
+callback now feeds _StreamHealth (frame counter +
+per-chunk peak-to-peak window); _MicWatchdog (pure policy
+on the Ears object) is evaluated in the wake loop every
+MIC_WATCH_CHECK_S (5 s): no frames > ears_mic_no_frames_s
+(6 s) → stream reopen + ERROR "[ears] microphone stream
+restarted (no frames)"; frames flowing but perfectly
+constant for ears_mic_flat_s (20 s) → reopen once per
+episode + ERROR "(silent frames)" (variance, not level —
+a live mic in a silent room still has ADC noise; only a
+dead/muted digital stream is perfectly flat). Restarts
+are budgeted (ears_mic_restart_budget 3 per
+ears_mic_restart_window_s 600 s, sliding) and the legacy
+v4.6 _MicHealth reopens share the budget via
+note_external_restart; past the budget, one ERROR + the
+mic-alert callback fires once per session (nalox.py
+speaks "স্যার, মাইকে সমস্যা হচ্ছে।"), and restarts resume
+as the window slides. The watchdog evaluates only inside
+wait_for_wake_word, so command recording / speaking can
+never false-trigger it. (2) MAIN-LOOP LIVENESS
+(nalox.py): _StageWatch stamps stages at loop boundaries
+(listening/heard/transcribing/thinking/speaking); a
+daemon supervisor checks every WATCHDOG_CHECK_S (5 s):
+"speaking" past watchdog_speaking_s (45 s) → voice.stop()
+(the barge-in lever) + ERROR; any other non-listening
+stage past watchdog_stage_s (90 s) → ERROR + recovery
+(transcription stages call the new
+Ears.respawn_transcription_workers(), which reuses the
+lane clients' _restart). Max 1 intervention per stage
+per 2 min; the process is never killed here; "listening"
+is never judged (the stream watchdog owns it). Python
+cannot force-return a wedged main-thread call — every
+stage's underlying calls are individually bounded (see
+3), so the watchdog is observer + the two real levers.
+(3) BLOCKED-CALL AUDIT — no code changed, both paths
+already bounded: wake decodes run through
+_TxWorkerClient._pump (≤0.25 s slices against monotonic
+deadlines; READY_TIMEOUT 60 / ACK_TIMEOUT 5 / decode
+deadline from ack, WAKE_TX_DEADLINE 8 s; every auto-kind
+timeout feeds _note_timeout; command/file hard caps
+30/45 s); every network TTS synth carries a hard timeout
+(google-tts 15 s/piece, google-cloud 15 s, ElevenLabs
+30 s, edge wait_for 20 s, pyttsx3 thread + 30 s deadline,
+PowerShell 60 s + kill; say() logs an ERROR past its
+budget and the speaking flag self-clears at 45 s). One
+documented exception: the DORMANT robot-ON pyttsx3 path
+renders via runAndWait() inline — robot voice is OFF by
+the owner's standing decision (config + patch force it),
+so the path is unreachable in his configuration, and the
+stage watchdog covers "speaking" regardless of engine.
+New config keys (config.py DEFAULTS + patch-if-absent):
+ears_mic_no_frames_s, ears_mic_flat_s,
+ears_mic_restart_budget, ears_mic_restart_window_s,
+watchdog_speaking_s, watchdog_stage_s. Real-audio
+end-to-end results live in
+~/workspace/nalox-tests/real-audio/RESULTS.md (real
+faster-whisper base/small on this VM; large-v3-turbo was
+NOT VM-tested). Tests: test_v70 (new) + the full battery.
+Everything else is frozen at v6.14 (brain, providers,
+Bengali-only replies, phone, Telegram, exit codes).

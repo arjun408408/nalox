@@ -122,6 +122,15 @@ PATCH_IF_ABSENT = {
     # v6.13: big-model device preference (see config.py) —
     # added when absent; his value is preserved.
     "ears_big_device": "auto",
+    # v7.0: self-healing watchdog thresholds (see
+    # config.py) — added when absent; his values are
+    # preserved.
+    "ears_mic_no_frames_s": 6.0,
+    "ears_mic_flat_s": 20.0,
+    "ears_mic_restart_budget": 3,
+    "ears_mic_restart_window_s": 600.0,
+    "watchdog_speaking_s": 45.0,
+    "watchdog_stage_s": 90.0,
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"

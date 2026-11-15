@@ -422,6 +422,197 @@ class _MicHealth:
         self.failures += 1
         return self.failures
 
+
+# --------------------------------------- stream health (v7.0)
+# The v4.6 watchdog above proves the wake LOOP iterates and
+# that chunks reach its queue. It cannot see the failure the
+# owner kept hitting in the field (2026-11-15, all evening):
+# Telegram text answered instantly while voice commands met
+# TOTAL SILENCE — a stream can be "alive" to the loop yet
+# deliver nothing real: the device stalls and the callback
+# stops firing (the queue just starves — the legacy path
+# above eventually reopens, on a 10 s clock with no budget
+# and no logbook ERROR until the third episode), or worse,
+# the driver delivers perfectly FLAT frames (digital
+# silence from a muted/wrong device): chunks arrive, the
+# gate never opens, no wake can ever fire, and NOTHING
+# anywhere logs why. v7.0 instruments the stream itself:
+# the _ChunkSource audio callback feeds a frame counter +
+# per-chunk peak-to-peak window into _StreamHealth, and
+# _MicWatchdog (pure policy, fake-clock testable) judges it
+# every MIC_WATCH_CHECK_S from the wake loop:
+#   * no frames for ears_mic_no_frames_s (6 s) -> restart,
+#     logbook ERROR "[ears] microphone stream restarted
+#     (no frames)";
+#   * frames flowing but every chunk in the last
+#     ears_mic_flat_s (20 s) perfectly constant (variance
+#     zero — a live mic in even a silent room NEVER does
+#     this; ADC noise alone forbids it) -> restart once
+#     per episode, ERROR "(silent frames)";
+#   * restarts are budgeted (ears_mic_restart_budget, 3,
+#     per ears_mic_restart_window_s, 600 s, sliding — the
+#     legacy _MicHealth reopens count too): past the
+#     budget the restart defers, ONE logbook ERROR says
+#     so, nalox.py speaks "স্যার, মাইকে সমস্যা হচ্ছে।"
+#     once per session via the mic-alert callback, and
+#     restarts resume as the window slides.
+# The watchdog evaluates ONLY inside wait_for_wake_word,
+# so it cannot false-trigger during command recording or
+# speaking (the wake loop is not running then; the barge-in
+# monitor's own stream is short-lived and deadline-bound).
+MIC_WATCH_CHECK_S = 5.0     # wake-loop evaluation cadence
+FLAT_PTP_EPSILON = 1e-6     # a chunk at/below this ptp is constant
+
+
+def _frame_ptp(indata):
+    """Peak-to-peak amplitude of one callback buffer (v7.0).
+
+    Zero for a perfectly constant buffer — the dead-stream
+    signature. Guarded: the audio callback must never raise."""
+    try:
+        if indata is None or len(indata) == 0:
+            return 0.0
+        return float(indata.max() - indata.min())
+    except Exception:
+        return 0.0
+
+
+class _StreamHealth:
+    """Frame + variance bookkeeping for ONE mic stream (v7.0).
+
+    Fed by the _ChunkSource audio callback (note_frame) and
+    reset whenever the stream (re)opens (note_opened — the
+    open timestamp doubles as the no-frames grace period, so
+    a stream still starting up is never convicted). Retains
+    the last WINDOW (timestamp, peak-to-peak) pairs — 40 s
+    at the wake loop's 0.1 s blocks. Pure arithmetic under
+    a lock; no I/O."""
+
+    WINDOW = 400
+
+    def __init__(self, window=WINDOW):
+        self._lock = threading.Lock()
+        self.frames = 0
+        self._last_frame_at = None
+        self._window = collections.deque(maxlen=int(window))
+
+    def note_opened(self, now):
+        with self._lock:
+            self._window.clear()
+            self._last_frame_at = float(now)
+
+    def note_frame(self, ptp, now):
+        with self._lock:
+            self.frames += 1
+            self._last_frame_at = float(now)
+            self._window.append((float(now), float(ptp)))
+
+    def seconds_since_frame(self, now):
+        with self._lock:
+            if self._last_frame_at is None:
+                return 0.0
+            return max(0.0, float(now) - self._last_frame_at)
+
+    def flat_for(self, now, span_s):
+        """True when frames demonstrably cover the last
+        span_s AND every chunk inside it was constant.
+
+        Coverage is proven, not assumed: the retained window
+        must reach back past the span, and the span must
+        hold a plausible density of chunks (>= 5/s — the
+        wake loop's callback fires at 10/s), so a couple of
+        stray identical buffers can never convict a stream."""
+        now = float(now)
+        span_s = float(span_s)
+        with self._lock:
+            if not self._window:
+                return False
+            if self._window[0][0] > now - span_s:
+                return False  # history does not reach the span
+            recent = [ptp for ts, ptp in self._window
+                      if ts >= now - span_s]
+            if len(recent) < max(10, int(span_s * 5)):
+                return False  # too sparse to judge
+            return max(recent) <= FLAT_PTP_EPSILON
+
+
+class _MicWatchdog:
+    """Restart policy for a stream that stopped delivering
+    (v7.0). Pure state + arithmetic — the wake loop performs
+    the actual reopen / logging / spoken alert, so the whole
+    policy is unit-testable with a fake clock and a fake
+    health feed. One instance lives on the Ears object, so
+    the restart budget and the once-per-session spoken
+    alert span every wait_for_wake_word call in the
+    process. Thresholds come from config (see config.py)."""
+
+    def __init__(self, cfg=None):
+        cfg = cfg or {}
+
+        def _float(key, default):
+            try:
+                return float(cfg.get(key, default))
+            except Exception:
+                return float(default)
+
+        self.no_frames_s = _float("ears_mic_no_frames_s", 6.0)
+        self.flat_s = _float("ears_mic_flat_s", 20.0)
+        self.window_s = _float("ears_mic_restart_window_s",
+                               600.0)
+        try:
+            self.budget = int(cfg.get("ears_mic_restart_budget",
+                                      3))
+        except Exception:
+            self.budget = 3
+        self._restarts = []       # timestamps inside the window
+        self._flat_acted = False  # flat episode already restarted
+        self._budget_open = False  # exhaustion already reported
+        self.alert_done = False   # spoken alert fired this session
+
+    def _prune(self, now):
+        self._restarts = [t for t in self._restarts
+                          if now - t < self.window_s]
+
+    def note_external_restart(self, now):
+        """Book a restart somebody else performed (the
+        legacy _MicHealth reopen) against the same budget,
+        so the two mechanisms can never take turns forever."""
+        self._prune(float(now))
+        self._restarts.append(float(now))
+
+    def evaluate(self, health, now):
+        """Judge the stream: ("restart", reason) when a
+        restart is due and budgeted, ("budget", reason)
+        ONCE when a due restart first finds the budget
+        exhausted, else None. reason is "no-frames" or
+        "silent-frames". A flat episode restarts at most
+        once until non-flat audio is observed again."""
+        now = float(now)
+        reason = None
+        if health.seconds_since_frame(now) > self.no_frames_s:
+            reason = "no-frames"
+        elif health.flat_for(now, self.flat_s):
+            if self._flat_acted:
+                return None
+            reason = "silent-frames"
+        else:
+            # Real (or no) audio: any flat episode is over.
+            self._flat_acted = False
+        if reason is None:
+            return None
+        self._prune(now)
+        if len(self._restarts) < self.budget:
+            self._restarts.append(now)
+            if reason == "silent-frames":
+                self._flat_acted = True
+            self._budget_open = False
+            return ("restart", reason)
+        if self._budget_open:
+            return None
+        self._budget_open = True
+        return ("budget", reason)
+
+
 # --------------------------------------- garbage filter (v4.2)
 # Phrases Whisper famously hallucinates from silence/applause. A
 # transcription containing one is never a real command from Arjun.
@@ -684,6 +875,32 @@ def _logbook_error(msg):
         logbook.log("ERROR", msg)
     except Exception:
         pass
+
+
+# --------------------------------------- mic alert callback (v7.0)
+# When the stream watchdog's restart budget runs out, the
+# owner deserves to HEAR that his mic is in trouble (once
+# per session) instead of shouting into a dead stream.
+# ears cannot speak — nalox.py registers a callback that
+# speaks the line through the normal speaker.
+_mic_alert_callback = None
+
+
+def set_mic_alert_callback(fn):
+    """Register fn() fired once per session when the mic
+    stream watchdog exhausts its restart budget (v7.0)."""
+    global _mic_alert_callback
+    _mic_alert_callback = fn
+
+
+def _fire_mic_alert():
+    fn = _mic_alert_callback
+    if fn is None:
+        return
+    try:
+        fn()
+    except Exception:
+        pass  # the alert must never break listening
 
 
 # --------------------------------------- manual TALK trigger (v3.7)
@@ -3653,12 +3870,25 @@ class _ChunkSource:
         self._queue = queue.Queue(maxsize=max_chunks)
         self._stream = None
         self.dropped = 0
+        # v7.0: stream health, fed by the audio callback
+        # itself (see _StreamHealth) — the wake loop's
+        # watchdog judges the STREAM from this, not from
+        # its own iterations.
+        self.health = _StreamHealth()
         self._open()
 
     def _open(self):
         import sounddevice as sd
 
         def _cb(indata, frames, time_info, status):
+            # v7.0: count the frame + its peak-to-peak
+            # BEFORE anything else — this is the only
+            # witness that audio truly flows.
+            try:
+                self.health.note_frame(_frame_ptp(indata),
+                                       time.monotonic())
+            except Exception:
+                pass
             try:
                 self._queue.put_nowait(indata.copy())
             except queue.Full:
@@ -3668,6 +3898,11 @@ class _ChunkSource:
             sd, callback=_cb, blocksize=self._block)
         stream.start()
         self._stream = stream
+        # v7.0: a (re)opened stream starts with a clean
+        # health slate — the open time is the no-frames
+        # grace, and a dead predecessor's flat window can
+        # never convict its replacement.
+        self.health.note_opened(time.monotonic())
 
     def read(self, timeout=0.25):
         try:
@@ -3879,6 +4114,12 @@ class Ears:
         # v6.7 F: the live hearing preview sink (nalox.py
         # wires it to the Command Center; None = no previews).
         self._preview_sink = None
+        # v7.0: the mic stream watchdog — ONE per Ears (=
+        # per process), so its restart budget and its
+        # once-per-session spoken alert span every
+        # wait_for_wake_word call. Pure policy; the wake
+        # loop feeds it the _ChunkSource's _StreamHealth.
+        self._mic_watchdog = _MicWatchdog(cfg)
 
     # ---- v6.12 lane access --------------------------------
     @property
@@ -3972,6 +4213,33 @@ class Ears:
                 _client.close()
             except Exception:
                 pass
+
+    def respawn_transcription_workers(self):
+        """Restart BOTH lane workers (v7.0 liveness recovery).
+
+        The nalox.py stage watchdog calls this when the
+        loop has been stuck in a transcription stage past
+        its threshold: the lane clients' own restart path
+        (kill + respawn, the v6.2 machinery) is the lever,
+        reused — no parallel respawn logic. Closed clients
+        are skipped; every failure is swallowed (a recovery
+        attempt must never become a crash). Returns how
+        many distinct workers were restarted."""
+        count = 0
+        seen = set()
+        for client in (self._wake_lane_client(),
+                       self._command_lane_client()):
+            if client is None or id(client) in seen:
+                continue
+            seen.add(id(client))
+            if getattr(client, "_closed", False):
+                continue
+            try:
+                client._restart("unresponsive")
+                count += 1
+            except Exception:
+                pass
+        return count
 
     # ---------- adaptive energy gate (v4.2; v4.3 retuned) ----------
     def gate_threshold(self):
@@ -4539,6 +4807,14 @@ class Ears:
             delays nothing here — and since v6.2 the decode
             itself is deadline-killed in its worker process
             (see _TxWorkerClient).
+          - v7.0: the STREAM itself is watched, not just this
+            loop — the _ChunkSource callback feeds frame +
+            variance health (_StreamHealth) and _MicWatchdog
+            restarts the stream (logbook ERROR) when frames
+            stop or arrive perfectly flat, on a shared budget
+            with the legacy reopen above; past the budget the
+            owner is told out loud, once (see the v7.0 section
+            near _MicHealth).
         """
         block = int(0.1 * SAMPLE_RATE)
         segmenter = Segmenter()
@@ -4551,6 +4827,14 @@ class Ears:
         self._ensure_tx_worker()
         source = _ChunkSource(self, block)
         health = _MicHealth()
+        # v7.0: the stream-health watchdog (policy on the
+        # Ears object; health feed on the source). Evaluated
+        # at the top of the loop every MIC_WATCH_CHECK_S —
+        # this loop iterates at least every 0.25 s in every
+        # state (capture, drain-while-speaking, echo tail),
+        # so the cadence holds everywhere listening is live.
+        watchdog = self._mic_watchdog
+        last_watch_at = 0.0
         last_chunk_at = time.monotonic()
         last_reopen_at = 0.0
         try:
@@ -4563,6 +4847,42 @@ class Ears:
                 if self._wake_event.is_set():
                     self._wake_event.clear()
                     return True
+                _wnow = time.monotonic()
+                if _wnow - last_watch_at >= MIC_WATCH_CHECK_S:
+                    last_watch_at = _wnow
+                    _verdict = watchdog.evaluate(
+                        source.health, _wnow)
+                    if _verdict is not None:
+                        _action, _reason = _verdict
+                        if _action == "restart":
+                            if _reason == "no-frames":
+                                _msg = "[ears] microphone stream restarted (no frames)"
+                            else:
+                                _msg = "[ears] microphone stream restarted (silent frames)"
+                            log.error("%s", _msg)
+                            _logbook_error(_msg)
+                            _fire_status(_msg)
+                            try:
+                                source.reopen()
+                            except Exception as exc:
+                                log.warning("Mic stream reopen "
+                                            "failed: %s", exc)
+                            # The legacy reopen below must not
+                            # immediately re-fire on the fresh
+                            # stream — its clocks restart here.
+                            last_chunk_at = _wnow
+                            last_reopen_at = _wnow
+                        else:  # "budget" — restarts exhausted
+                            _msg = ("[ears] microphone restart "
+                                    "budget exhausted — the "
+                                    "mic stream keeps failing; "
+                                    "still retrying")
+                            log.error("%s", _msg)
+                            _logbook_error(_msg)
+                            _fire_status(_msg)
+                            if not watchdog.alert_done:
+                                watchdog.alert_done = True
+                                _fire_mic_alert()
                 data = source.read(timeout=0.25)
                 now = time.monotonic()
                 if data is None:
@@ -4571,6 +4891,9 @@ class Ears:
                                          last_reopen_at):
                         last_reopen_at = now
                         failures = health.note_reopen()
+                        # v7.0: legacy reopens share the
+                        # stream watchdog's restart budget.
+                        watchdog.note_external_restart(now)
                         if failures >= 3:
                             log.error("[mic] stream reopened "
                                       "(silent 10s+) — %d "

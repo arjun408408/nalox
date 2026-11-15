@@ -363,6 +363,82 @@ def hudstatus(state):
             pass
 
 
+# ------------------------------------------- v7.0 LIVENESS WATCHDOG
+# The heartbeat proves the process lives; it does not prove
+# the LOOP moves. v7.0: the main loop stamps its stage at
+# every boundary (listening / heard / transcribing /
+# thinking / speaking) and a supervisor thread checks the
+# stamp every few seconds:
+#   * "speaking" past watchdog_speaking_s (45 s) — speech
+#     is cut through the EXISTING stop path (voice.stop(),
+#     the same lever barge-in pulls), one logbook ERROR
+#     names the stage + duration, back to listening;
+#   * any other non-listening stage past watchdog_stage_s
+#     (90 s) — one logbook ERROR, and for the transcription
+#     stages the lane workers are respawned (the ears
+#     clients' own restart machinery). The process is
+#     NEVER killed from here — restarts belong to the
+#     supervisor/service layer, exit codes unchanged.
+# Interventions are throttled per stage (1 per 2 min) so a
+# pathological loop cannot spam the log the owner reads.
+# "listening" itself is never judged here — a quiet room
+# is legitimate; the ears stream watchdog (ears.py) owns
+# the listening state's health. Pure policy + arithmetic:
+# the supervisor thread in main() performs the effects, so
+# this class is unit-testable with a fake clock.
+WATCHDOG_CHECK_S = 5.0      # supervisor cadence
+WATCHDOG_THROTTLE_S = 120.0  # max 1 intervention/stage/2 min
+
+
+class _StageWatch:
+    """Stage-stamp bookkeeping for the liveness watchdog."""
+
+    def __init__(self, speaking_s=45.0, stage_s=90.0,
+                 throttle_s=WATCHDOG_THROTTLE_S,
+                 clock=time.monotonic):
+        self.speaking_s = float(speaking_s)
+        self.stage_s = float(stage_s)
+        self.throttle_s = float(throttle_s)
+        self._clock = clock
+        self.stage = "listening"
+        self.since = float(clock())
+        self._last_action = {}
+
+    def note(self, stage):
+        """Stamp a stage boundary. Re-stamping the SAME
+        stage also refreshes the clock — each follow-up
+        listen_for_command is a fresh attempt, not a
+        continuation of the previous one's stall."""
+        self.stage = str(stage)
+        self.since = float(self._clock())
+
+    def check(self, now=None):
+        """(stage, age_s) when an intervention is due, else
+        None. On a due intervention the stamp resets to
+        "listening" (the loop re-stamps as it moves) and
+        the stage's throttle starts — the caller performs
+        the stage's recovery effect exactly once."""
+        if now is None:
+            now = float(self._clock())
+        else:
+            now = float(now)
+        stage = self.stage
+        if stage == "listening":
+            return None
+        limit = self.speaking_s if stage == "speaking" \
+            else self.stage_s
+        age = now - self.since
+        if age <= limit:
+            return None
+        if now - self._last_action.get(stage, -1e18) \
+                < self.throttle_s:
+            return None
+        self._last_action[stage] = now
+        self.stage = "listening"
+        self.since = now
+        return (stage, age)
+
+
 # ------------------------------------------- v5.5 COMMAND CENTER
 class _DashboardPreviewSink:
     """ears → Command Center bridge for the live hearing
@@ -1124,12 +1200,26 @@ def main():
         hudlog("[wake] wake up — opening the Command Center")
         _show_for_wake_up()
 
+    # v7.0: mic trouble alert — when the ears stream
+    # watchdog burns its whole restart budget, the owner
+    # hears ONE spoken line instead of shouting into a
+    # dead mic. Spoken through the normal speaker, and
+    # only when Nalox is not already talking.
+    def _on_mic_alert():
+        try:
+            if not _voice_mod.is_speaking():
+                speaker.say("স্যার, মাইকে সমস্যা হচ্ছে।",
+                            lang="bn")
+        except Exception:
+            pass
+
     try:
         import ears as _ears_mod
         _ears_mod.set_wake_callback(_on_wake)
         _ears_mod.set_wake_up_callback(_on_wake_up)
         # Mic status lines (v3.5): "[mic] connected: ..." etc. -> HUD.
         _ears_mod.set_status_callback(hudlog)
+        _ears_mod.set_mic_alert_callback(_on_mic_alert)
     except Exception as exc:
         log.warning("Ears callbacks not registered: %s", exc)
 
@@ -1454,6 +1544,21 @@ def main():
     ack, ack_lang = _wake_ack(cfg)
     followup_seconds = max(0, int(cfg.get("followup_seconds", 8) or 0))
 
+    # v7.0: liveness watchdog — the loop stamps its stage
+    # through _stage(); the supervisor thread (started just
+    # before the main loop below) performs the recoveries.
+    _watch = _StageWatch(
+        speaking_s=float(cfg.get("watchdog_speaking_s", 45.0)
+                         or 45.0),
+        stage_s=float(cfg.get("watchdog_stage_s", 90.0)
+                      or 90.0))
+
+    def _stage(name):
+        try:
+            _watch.note(name)
+        except Exception:
+            pass
+
     def say(text, lang=None):
         """Speak a reply, mirrored to the HUD with a SPEAKING status.
 
@@ -1476,6 +1581,7 @@ def main():
         """
         if not text:
             return "done"
+        _stage("speaking")
         if _hud is not None:
             try:
                 _hud.post("NALOX: " + text)
@@ -1541,6 +1647,7 @@ def main():
         the log page shows exactly where each cycle's seconds went:
         wake->record, transcribe, brain, speak.
         """
+        _stage("thinking")
         hudlog(f"[mic] heard: {command}")
         hudstatus("thinking")
         _t0 = time.monotonic()
@@ -1614,10 +1721,12 @@ def main():
         if action == "confirm":
             # The next utterance is the yes/no answer.
             hudstatus("awake")
+            _stage("transcribing")
             answer, ans_lang = ears.listen_for_command()
             if answer:
                 hudlog(f"[mic] heard: {answer}")
                 hudstatus("thinking")
+                _stage("thinking")
                 reply2, action2 = brain.handle(answer, lang=ans_lang)
                 if reply2:
                     say(reply2)
@@ -1714,16 +1823,63 @@ def main():
     # persistent fault can't turn into a "try again" loop on speaker.
     hudstatus("listening")
     hudlog("[ready] Say 'Nalox' to wake me")
+
+    # v7.0: the liveness supervisor — checks the stage
+    # stamp every WATCHDOG_CHECK_S and performs the one
+    # recovery each stuck stage has (see _StageWatch).
+    def _liveness_supervisor():
+        while True:
+            time.sleep(WATCHDOG_CHECK_S)
+            try:
+                _hit = _watch.check()
+            except Exception:
+                continue
+            if not _hit:
+                continue
+            _stuck_stage, _stuck_age = _hit
+            if _stuck_stage == "speaking":
+                log.error("[watchdog] speaking stuck for "
+                          "%.0fs — stopping playback",
+                          _stuck_age)
+                logbook.log(
+                    "ERROR",
+                    f"[watchdog] speaking stuck for "
+                    f"{_stuck_age:.0f}s — playback stopped, "
+                    f"back to listening")
+                try:
+                    _voice_mod.stop()
+                except Exception:
+                    pass
+            else:
+                log.error("[watchdog] stage %r stuck for "
+                          "%.0fs — recovering",
+                          _stuck_stage, _stuck_age)
+                logbook.log(
+                    "ERROR",
+                    f"[watchdog] stage '{_stuck_stage}' "
+                    f"stuck for {_stuck_age:.0f}s — "
+                    f"recovering")
+                if _stuck_stage in ("transcribing", "heard"):
+                    try:
+                        ears.respawn_transcription_workers()
+                    except Exception:
+                        pass
+
+    threading.Thread(target=_liveness_supervisor,
+                     daemon=True, name="liveness").start()
+
     last_error = None
     error_streak = 0
     last_error_speech = 0.0
     while True:
         try:
+            _stage("listening")
             heard = ears.wait_for_wake_word()
             if not heard:
                 continue
             hudstatus("awake")
             hudlog("[wake] wake word heard")
+            _stage("heard")
             _ack_t0 = time.monotonic()
             say(ack, lang=ack_lang)
             _ack_s = time.monotonic() - _ack_t0
@@ -1737,6 +1893,7 @@ def main():
             if _pending:
                 command, cmd_lang = _pending
             else:
+                _stage("transcribing")
                 command, cmd_lang = ears.listen_for_command()
             _rec_s = _ack_s + float(
                 _ears_mod.LAST_TIMING.get("record", 0.0))
@@ -1774,6 +1931,7 @@ def main():
                 hudstatus("awake")
                 hudlog(f"[sys] follow-up listening "
                        f"({followup_seconds}s) — no wake word needed")
+                _stage("transcribing")
                 text2, lang2 = ears.listen_for_command()
                 if not text2:
                     continue
@@ -1820,6 +1978,7 @@ def main():
                     except Exception:
                         pass
             hudstatus("listening")
+            _stage("listening")
             time.sleep(3)
 
 
