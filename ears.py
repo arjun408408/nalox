@@ -2101,6 +2101,46 @@ def split_wake_remainder(text, lang="en"):
     return "", lang
 
 
+# Extra name spellings the cloud STT services produce (v6.6) —
+# kept OUT of WAKE_VARIANTS_* (those drive wake MATCHING, a
+# wider net there costs false wakes); these only ever STRIP a
+# leading token from a transcript that already woke Nalox.
+_EXTRA_NAME_SPELLINGS = ["নালক্স", "নালোক্স", "नालक्स"]
+
+
+def _strip_leading_wake_name(text):
+    """Remove ONE leading wake-name token from a transcript
+    (v6.6) — used on the command-path re-hearing of a
+    one-breath segment, whose reading may carry the name in
+    any script or spelling ("নালক্স, কী খবর" / "nalox …").
+    Returns the rest of the text, "" when the text was ONLY
+    the name, and the text itself (stripped) when no leading
+    name is found — callers compare to tell the cases apart."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    for variant in sorted(WAKE_VARIANTS_BN + WAKE_VARIANTS_HI
+                          + _EXTRA_NAME_SPELLINGS,
+                          key=len, reverse=True):
+        if raw.startswith(variant):
+            return raw[len(variant):].strip(" .,!?।")
+    parts = raw.split(None, 1)
+    first = parts[0] if parts else ""
+    rest = parts[1].strip(" .,!?।") if len(parts) > 1 else ""
+    core = re.sub(r"[^a-z0-9]", "", first.lower())
+    if core and _is_wake_token(core):
+        return rest
+    token = first.strip(" .,!?।")
+    if token and not core:
+        # A pure Bengali/Devanagari first token within edit
+        # distance 2 of a script variant is the name as the
+        # STT spelled it ("নালক্স" for "ন্যালক্স").
+        for variant in WAKE_VARIANTS_BN + WAKE_VARIANTS_HI:
+            if _levenshtein(token, variant) <= 2:
+                return rest
+    return raw
+
+
 class Segmenter:
     """Energy segmenter (Ears 2.0) — pure bookkeeping, no I/O.
 
@@ -2638,6 +2678,15 @@ class Ears:
         Triggers (a)/(b)/(c) are unchanged and keep the command
         model ("small"); the one-retry budget is shared — any
         trigger that fires spends it.
+
+        v6.6 — the one-breath REMAINDER is no longer trusted
+        to the wake decode: the wake ears only have to find
+        the NAME. When a remainder exists, the same segment
+        audio is re-heard through the command path
+        (transcribe_command_best — cloud first) and ITS
+        reading (wake-name stripped) becomes the command;
+        the wake remainder survives only as the fallback when
+        the command path hears nothing usable.
         """
         kwargs = dict(beam_size=1, language=None, word_timestamps=False)
         kwargs.update(_DECODE_GUARDS)
@@ -2765,6 +2814,65 @@ class Ears:
         if wake_up:
             remainder = _strip_wake_up_phrase(remainder)
         if remainder and not is_garbage(remainder):
+            # v6.6: the remainder came from the WAKE model's
+            # ears (tiny by default) — sharp enough to catch
+            # the name, NOT sharp enough to trust with the
+            # command itself. Field 2026-11-15 19:24 IST: he
+            # asked "কী খবর বর্তমানে" in one breath and the
+            # tiny decode delivered "kik har bortomard" — the
+            # brain could only ask what he meant. So the SAME
+            # segment audio now goes through the real command
+            # ears (transcribe_command_best — cloud Gemini /
+            # Groq first, the local command model behind
+            # them); a leading wake-name token is stripped
+            # from its reading, and THAT becomes the command.
+            # If the command path hears nothing usable, the
+            # wake remainder stands — a command is never lost.
+            try:
+                ctext, clang, csrc = transcribe_command_best(
+                    audio, command_model, self.cfg,
+                    initial_prompt=COMMAND_PROMPT,
+                    local_fn=self._local_command)
+            except Exception as exc:
+                log.error("[CRASH-GUARD] one-breath "
+                          "re-transcription failed: %s: %s",
+                          type(exc).__name__, exc)
+                ctext, clang, csrc = "", "en", "local"
+            if ctext and not is_garbage(ctext):
+                crest, crlang = split_wake_remainder(ctext,
+                                                     clang)
+                cand = crest
+                if not cand:
+                    stripped = _strip_leading_wake_name(ctext)
+                    if stripped and stripped != ctext.strip():
+                        # The splitter missed this spelling
+                        # of the name; the stripper caught it.
+                        cand = stripped
+                        crlang = _script_lang(
+                            cand, clang if clang in ALLOWED_LANGS
+                            else rlang)
+                    elif stripped == ctext.strip() \
+                            and not looks_like_wake_word(ctext):
+                        # No name anywhere in the reading —
+                        # the whole text IS the command (the
+                        # command ears often drop the name).
+                        cand = ctext.strip(" .,!?।")
+                        crlang = _script_lang(
+                            cand, clang if clang in ALLOWED_LANGS
+                            else rlang)
+                    # (stripped == "" means the reading was
+                    # ONLY the name — no command in it; the
+                    # wake remainder below stands.)
+                if cand and not is_garbage(cand):
+                    if wake_up:
+                        cand = _strip_wake_up_phrase(cand)
+                    if cand:
+                        log.info("One-breath command re-heard "
+                                 "via %s: %r (%s) — the wake "
+                                 "ears had %r", csrc, cand,
+                                 crlang, remainder)
+                        remainder, rlang = cand, crlang
+            took = time.monotonic() - started
             self._pending_command = (remainder, rlang)
             LAST_TIMING["record"] = len(audio) / SAMPLE_RATE
             LAST_TIMING["transcribe"] = took

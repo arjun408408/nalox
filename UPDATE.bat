@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  Nalox UPDATE v6.5 - one click, NO reinstall.
+REM  Nalox UPDATE v6.6 - one click, NO reinstall.
 REM  This pack can be unzipped ANYWHERE. UPDATE.bat finds the
 REM  real Nalox install by itself: the real install is the
 REM  folder that contains .venv\Scripts\python.exe - and the
@@ -11,11 +11,11 @@ REM  requirements.txt changed, and restarts Nalox, which
 REM  announces the update out loud.
 REM ============================================================
 cd /d "%~dp0"
-title Nalox Update v6.5
+title Nalox Update v6.6
 
 echo.
 echo  ==========================================
-echo    Nalox update v6.5
+echo    Nalox update v6.6
 echo  ==========================================
 echo.
 

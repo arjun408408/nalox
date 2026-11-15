@@ -709,6 +709,22 @@ _JARVIS_CHARACTER = (
 PROVIDER_TIMEOUT_S = 10.0
 FREELLM_TIMEOUT_S = 10.0
 
+# ------------------------------------------------------------- v6.6
+# FreeLLMAPI TIMEOUT DEMOTION + WALK BUDGET (field 2026-11-15
+# 19:24 IST: one command paid 10 s to a FreeLLMAPI ReadTimeout,
+# then ~10 s more inside the Gemini candidate walk, before Groq
+# finally answered — 25.6 s of brain time for "কী খবর তোমার?").
+# A router that accepts the connection but never answers is
+# demoted for FREELLM_COOLDOWN_S: skipped entirely while the
+# direct providers take their turn; when the cooldown expires
+# the next real call is its probe — an answer reinstates it,
+# another timeout re-demotes it. And a provider's model
+# candidate walk now has ONE total budget (MODEL_WALK_BUDGET_S)
+# across all its candidates, not a fresh 10 s cap per name, so
+# four slow dead names can never stack into ~40 s.
+FREELLM_COOLDOWN_S = 300.0
+MODEL_WALK_BUDGET_S = 12.0
+
 # ------------------------------------------------------------- v6.5
 # MODEL CANDIDATE WALK (provider repair — field log 2026-11-15
 # 18:44 IST: Gemini's key was FINE, Google 404'd the model name
@@ -1761,6 +1777,10 @@ class Brain:
         # cache: a closed app must cost zero delay per command.
         self._freellm = {"at": 0.0, "up": False}
         self._freellm_thread = None
+        # v6.6: FreeLLMAPI timeout demotion — monotonic time
+        # until which a timed-out router is skipped entirely
+        # (0.0 = not demoted). See _freellm_note_failure.
+        self._freellm_down_until = 0.0
         try:
             self._start_freellm_probe()
         except Exception as exc:
@@ -4987,6 +5007,17 @@ class Brain:
         stale answer is used."""
         if not (self.cfg.get("freellm_api_key") or "").strip():
             return False
+        # v6.6: timeout demotion — while the cooldown runs the
+        # router is skipped ENTIRELY (the direct providers get
+        # their turn without paying 10 s a command to a hung
+        # router). Once it expires, the normal cache logic
+        # resumes and the next real call becomes the probe:
+        # an answer reinstates the router, another timeout
+        # re-demotes it (in _freellm_note_failure).
+        if self._freellm_down_until:
+            if time.monotonic() < self._freellm_down_until:
+                return False
+            self._freellm_down_until = 0.0
         with self._prov_lock:
             state = dict(self._freellm)
         if time.monotonic() - state["at"] > self.PROVIDER_TTL_SECONDS:
@@ -4999,20 +5030,46 @@ class Brain:
         return bool(state["up"])
 
     def _freellm_note_failure(self):
-        """After a FreeLLMAPI agent/plain call failed: if the
-        failure was a CONNECTION error, the app was closed (or
-        crashed) since the last probe — mark the cache down at
-        once (later commands skip instantly instead of paying
-        the connect again) and leave ONE log line naming the
-        likely cause. The spoken line stays short; this detail
-        is for the log page. A timeout is NOT marked down: a
-        slow router is not a dead one, and the next command may
-        still prefer it."""
+        """After a FreeLLMAPI agent/plain call failed, judge
+        the failure (v6.6 — two kinds, two stories):
+
+        TIMEOUT (checked FIRST — a ReadTimeout's reason string
+        also contains "HTTPConnectionPool", which the old
+        connection test swallowed): the app is RUNNING but not
+        answering. It is demoted for FREELLM_COOLDOWN_S —
+        _freellm_available returns False throughout, so the
+        direct providers stop paying 10 s per command to a
+        hung router; when the cooldown expires the next real
+        call is the probe that can reinstate it. ONE log line
+        per demotion, worded "is not answering" — never the
+        "app may be closed" line, which is wrong for a timeout.
+
+        CONNECTION error: the app was closed (or crashed)
+        since the last probe — mark the reachability cache
+        down at once (later commands skip instantly instead of
+        paying the connect again) and leave ONE log line
+        naming the likely cause. The spoken line stays short;
+        this detail is for the log page. (Pre-v6.6 a timeout
+        was deliberately NOT marked down — "a slow router is
+        not a dead one"; the 19:24 field log, 10 s burned
+        before the chain even started, retired that rule for
+        timeouts specifically.)"""
         with self._status_lock:
             fail = self._last_agent_fail
         if not fail or fail[0] != "FreeLLMAPI":
             return
         reason = fail[1] or ""
+        low = reason.lower()
+        if "timeout" in low or "timed out" in low:
+            now = time.monotonic()
+            if now >= self._freellm_down_until:
+                self._freellm_down_until = (now
+                                             + FREELLM_COOLDOWN_S)
+                _lb("ERROR", "[BRAIN] FreeLLMAPI is not answering — giving the direct providers a turn for a while.")
+                log.error("[brain] FreeLLMAPI demoted for "
+                          "%.0fs after a timeout (not "
+                          "answering)", FREELLM_COOLDOWN_S)
+            return
         if "onnection" not in reason and "refused" not in reason:
             return
         with self._prov_lock:
@@ -5930,6 +5987,23 @@ class Brain:
                    "the recycle bin or cleaning temporary files "
                    "— just do them and report. Replies are at "
                    "most two short sentences.")
+        # v6.6: CONVERSATIONAL CLOSE — the one mannerism the
+        # owner picked from the MARK LIV demo video he studied
+        # (2026-11-15): its replies feel alive because they so
+        # often end by offering the next step. Nalox may do
+        # the same — inside the same two-sentence discipline,
+        # never stacked on top of a question the reply already
+        # asks. (Writing tasks never see this: they run
+        # through _plain_chat's own system line, not this
+        # prompt.)
+        prompt += (" Conversational close: after you complete "
+                   "a task or answer a question, you may end "
+                   "the reply with ONE short follow-up offer in "
+                   "the reply's own language — in Bengali, for "
+                   "example: 'আর কিছু করতে পারি, স্যার?' The "
+                   "offer counts inside your two-sentence "
+                   "limit, and you must not add it when your "
+                   "reply already asks a question.")
         # v6.1: the LIVE phone state. Field 2026-11-15 16:03:
         # the phone WAS connected through the app, a phone
         # follow-up reached the agent, and the model asked
@@ -6639,7 +6713,22 @@ class Brain:
                 _candidates = [self.cfg.get(model_key,
                                             model_default)]
             _last_miss = None
-            for _cand in _candidates:
+            _walk_start = time.monotonic()
+            for _ci, _cand in enumerate(_candidates):
+                # v6.6: the same ONE total walk budget as the
+                # agent path (MODEL_WALK_BUDGET_S across all
+                # candidates, not a fresh cap per name).
+                _remaining = MODEL_WALK_BUDGET_S - (
+                    time.monotonic() - _walk_start)
+                if _ci and _remaining <= 0:
+                    self._brain_fail(
+                        label,
+                        f"model walk budget spent "
+                        f"({MODEL_WALK_BUDGET_S:.0f}s) — tried "
+                        f"{', '.join(_candidates[:_ci])} "
+                        f"(plain chat)",
+                        provider=prov)
+                    break
                 try:
                     import requests
                     resp = requests.post(
@@ -6655,7 +6744,8 @@ class Brain:
                                                "quotes, no preamble.")},
                                   {"role": "user", "content": prompt}],
                               "max_tokens": 300},
-                        timeout=PROVIDER_TIMEOUT_S)
+                        timeout=min(PROVIDER_TIMEOUT_S,
+                                    max(1.0, _remaining)))
                     if resp.status_code == 200:
                         reply = (resp.json()["choices"][0]["message"]
                                  .get("content") or "").strip()
@@ -6860,10 +6950,28 @@ class Brain:
                 provider=provider, timeout=timeout)
         candidates = self._model_candidates(provider) or [model]
         last_miss = None
+        _walk_start = time.monotonic()
         for idx, cand in enumerate(candidates):
+            # v6.6: the walk has ONE total budget across its
+            # candidates (MODEL_WALK_BUDGET_S), not a fresh
+            # provider cap per name — each candidate gets the
+            # time LEFT in the budget, and when the budget is
+            # spent the provider fails over at once (four slow
+            # dead names must not stack into ~40 s).
+            _remaining = MODEL_WALK_BUDGET_S - (
+                time.monotonic() - _walk_start)
+            if idx and _remaining <= 0:
+                self._brain_fail(
+                    label,
+                    f"model walk budget spent "
+                    f"({MODEL_WALK_BUDGET_S:.0f}s) — tried "
+                    f"{', '.join(candidates[:idx])}",
+                    provider=provider)
+                return None
             reply = self._agent_openai_compatible_impl(
                 text, base_url, key, cand, label=label,
-                provider=provider, timeout=timeout,
+                provider=provider,
+                timeout=min(timeout, max(1.0, _remaining)),
                 model_walk=True)
             if reply is _MODEL_MISS:
                 last_miss = cand

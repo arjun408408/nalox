@@ -55,6 +55,24 @@ session breaker: ONE clear ERROR line is logged, and every later
 say() goes straight to the fallback voice. The breaker resets
 only when the key changes (checked by hash, never stored/logged)
 or on restart.
+
+v6.6 — THE BENGALI VOICE MUST ACTUALLY ARRIVE (field 2026-11-15
+19:24 IST): the Bengali TEXT was right all along, but the voice
+chain for it was ElevenLabs (402, dead) → edge-tts (failed on
+EVERY chunk, "No audio was received") → pyttsx3 — an ENGLISH
+Windows voice reading Bengali script aloud as gibberish; in the
+greeting Arjun could make out only the word "sir". Three fixes:
+  - GOOGLE TTS: a new network layer (raw requests to the public
+    translate_tts endpoint — no new dependency) sits before
+    pyttsx3 for every language; for Bengali/Hindi text it is the
+    layer that guarantees the line is spoken IN its language.
+  - PER-REPLY STICKINESS: an engine that fails during a reply
+    is skipped for the rest of that reply — later chunks go
+    straight to the engine that works instead of re-paying a
+    dead engine's failure chunk after chunk.
+  - SESSION BREAKERS for edge-tts and Google TTS, mirroring the
+    ElevenLabs pattern: two consecutive failures park the engine
+    for five minutes, one log line per break.
 """
 import asyncio
 import hashlib
@@ -196,6 +214,73 @@ def is_speaking():
 PYTTSX3_TIMEOUT = 30.0
 POWERSHELL_TIMEOUT = 60.0
 
+# ------------------------------------------------- v6.6 net engines
+# Google Translate TTS (the public translate_tts endpoint the
+# Translate web page itself uses): raw HTTPS via requests — no
+# new dependency. The language follows the requested lang when
+# given, else the text's own script (google_tts_lang).
+GOOGLE_TTS_URL = "https://translate.google.com/translate_tts"
+GOOGLE_TTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                 "AppleWebKit/537.36 (KHTML, like Gecko) "
+                 "Chrome/120.0.0.0 Safari/537.36")
+GOOGLE_TTS_TIMEOUT = 15.0
+GOOGLE_TTS_MAX_CHARS = 180  # the endpoint's per-request limit
+
+# Session circuit breakers for the network fallback engines
+# (edge-tts, Google TTS), mirroring the v4.8 ElevenLabs breaker:
+# ENGINE_BREAK_FAILURES consecutive failures park the engine for
+# ENGINE_BREAK_SECONDS (one log line per break); a success
+# resets the count. Module-level so tests can shorten the park.
+ENGINE_BREAK_SECONDS = 300.0
+ENGINE_BREAK_FAILURES = 2
+
+
+def google_tts_lang(text, lang=None):
+    """The tl= language for a Google TTS request (v6.6): the
+    requested lang wins (bn/hi/en prefixes); without one, the
+    text's own dominant script decides — Bengali block, then
+    Devanagari, else English. Pure — unit-testable."""
+    code = (lang or "").strip().lower()
+    if code.startswith("bn"):
+        return "bn"
+    if code.startswith("hi"):
+        return "hi"
+    if code.startswith("en"):
+        return "en"
+    bn = sum(1 for ch in (text or "") if "\u0980" <= ch <= "\u09ff")
+    hi = sum(1 for ch in (text or "") if "\u0900" <= ch <= "\u097f")
+    if bn and bn >= hi:
+        return "bn"
+    if hi:
+        return "hi"
+    return "en"
+
+
+def google_tts_chunks(text, limit=GOOGLE_TTS_MAX_CHARS):
+    """Split text into <=limit pieces for translate_tts (v6.6),
+    preferring sentence/word boundaries. Pure — unit-testable."""
+    body = re.sub(r"\s+", " ", (text or "").strip())
+    if not body:
+        return []
+    if len(body) <= limit:
+        return [body]
+    pieces = []
+    rest = body
+    while len(rest) > limit:
+        cut = -1
+        for sep in ("। ", ". ", "! ", "? ", "; ", ", ", " "):
+            idx = rest.rfind(sep, 0, limit + 1)
+            if idx > 0:
+                cut = idx + len(sep)
+                break
+        if cut <= 0:
+            cut = limit
+        pieces.append(rest[:cut].strip())
+        rest = rest[cut:].strip()
+    if rest:
+        pieces.append(rest)
+    return [p for p in pieces if p]
+
 
 def stop():
     """Interrupt whatever Nalox is currently saying."""
@@ -226,6 +311,20 @@ class Speaker:
         # v4.8: ElevenLabs circuit breaker — None, or
         # (http_status, key_fingerprint) once a 401/402 trips it.
         self._eleven_down = None
+        # v6.6: per-reply engine stickiness + session breakers
+        # for the network fallback engines (edge-tts, Google
+        # TTS). _reply_skip holds the engines that already
+        # failed during the CURRENT say() — later chunks of
+        # the same reply go straight to the engine that works
+        # instead of re-paying a dead engine's failure per
+        # chunk (field 2026-11-15 19:24 IST: edge-tts failed
+        # on BOTH chunks of one reply). _net_fails counts
+        # CONSECUTIVE failures per engine across replies; at
+        # ENGINE_BREAK_FAILURES the engine is parked until
+        # _net_down_until[engine] — one log line per break.
+        self._reply_skip = set()
+        self._net_fails = {}
+        self._net_down_until = {}
 
     def stop(self):
         """Interrupt the current utterance (barge-in)."""
@@ -258,6 +357,41 @@ class Speaker:
             return False
         _status, fingerprint = self._eleven_down
         return fingerprint == _key_fingerprint(key)
+
+    # ------------------------------------------------ v6.6 breakers
+    def _engine_parked(self, engine):
+        """True when a network fallback engine is unusable for
+        THIS call: it already failed during the current reply
+        (per-reply stickiness), or its session circuit breaker
+        is still inside its park (ENGINE_BREAK_SECONDS)."""
+        if engine in self._reply_skip:
+            return True
+        until = self._net_down_until.get(engine)
+        return until is not None and time.monotonic() < until
+
+    def _note_net_failure(self, engine, label):
+        """Record a network-engine failure (v6.6): the engine
+        is sticky-skipped for the rest of this reply, and the
+        failure counts toward its session breaker. Tripping
+        the breaker logs ONE line; a failure after a park
+        expires re-trips it (a new break, a new line)."""
+        self._reply_skip.add(engine)
+        fails = self._net_fails.get(engine, 0) + 1
+        self._net_fails[engine] = fails
+        if fails >= ENGINE_BREAK_FAILURES:
+            until = self._net_down_until.get(engine)
+            if until is None or time.monotonic() >= until:
+                self._net_down_until[engine] = (
+                    time.monotonic() + ENGINE_BREAK_SECONDS)
+                line = f"[voice] {label} unavailable — skipping it for a while"
+                log.error(line)
+                _lb("ERROR", line)
+
+    def _note_net_success(self, engine):
+        """A network engine answered (v6.6): its consecutive-
+        failure count and any expired park reset."""
+        self._net_fails[engine] = 0
+        self._net_down_until.pop(engine, None)
 
     def _trip_elevenlabs(self, status, key):
         """Trip the breaker + log the ONE clear line. Later calls
@@ -679,6 +813,48 @@ class Speaker:
         asyncio.run(_make_bounded())
         return self._play_mp3_interruptible(tmp)
 
+    # ---------- Google Translate TTS (v6.6, online) ----------
+    def _speak_google(self, text, lang=None):
+        """Google's voice — the layer that exists so a Bengali
+        line is SPOKEN IN BENGALI even when ElevenLabs is down
+        (402) and edge-tts flakes out ("No audio was received"
+        on every chunk, field 2026-11-15 19:24 IST — after
+        which pyttsx3, an English Windows voice, read the
+        Bengali reply aloud as gibberish and Arjun heard only
+        the word "sir").
+
+        Raw HTTPS to the public translate_tts endpoint (the
+        one the Translate web page uses; no new dependency).
+        The language follows the requested lang, else the
+        text's own script (google_tts_lang); long text is
+        split at google_tts_chunks boundaries and the MP3
+        pieces are concatenated — MP3 frames play back-to-back
+        through the SAME MCI path edge-tts audio uses, so
+        barge-in/stop behaves identically."""
+        import requests
+        tl = google_tts_lang(text, lang)
+        audio = b""
+        for piece in google_tts_chunks(text):
+            resp = requests.get(
+                GOOGLE_TTS_URL,
+                params={"ie": "UTF-8", "q": piece, "tl": tl,
+                        "client": "tw-ob"},
+                headers={"User-Agent": GOOGLE_TTS_UA,
+                         "Referer": "https://translate.google.com/"},
+                timeout=GOOGLE_TTS_TIMEOUT)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Google TTS HTTP {resp.status_code}")
+            if len(resp.content) < 100:
+                raise RuntimeError("Google TTS returned no audio")
+            audio += resp.content
+        if not audio:
+            raise RuntimeError("Google TTS returned no audio")
+        tmp = os.path.join(tempfile.gettempdir(), "nalox_google.mp3")
+        with open(tmp, "wb") as fh:
+            fh.write(audio)
+        return self._play_mp3_interruptible(tmp)
+
     # ---------- result bookkeeping ----------
     def _spoken(self, path, text, result):
         note = " (interrupted)" if result == "interrupted" else ""
@@ -712,6 +888,12 @@ class Speaker:
         """
         if not text:
             return "done"
+        # v6.6: a new reply starts with a clean stickiness
+        # slate — engines that failed during an EARLIER reply
+        # are retried (subject to their session breakers);
+        # engines that fail during THIS reply are skipped for
+        # its remaining chunks.
+        self._reply_skip = set()
         _speak_begin()
         _started = time.monotonic()
         try:
@@ -762,7 +944,8 @@ class Speaker:
             # fallback, no request, no log line.
             _el_key = (self.cfg.get("elevenlabs_api_key")
                        or "").strip()
-            if _el_key and not self._elevenlabs_blocked(_el_key):
+            if _el_key and not self._elevenlabs_blocked(_el_key) \
+                    and "elevenlabs" not in self._reply_skip:
                 try:
                     result = self._speak_elevenlabs(text, robot)
                     self._spoken("ElevenLabs", text, result)
@@ -770,6 +953,10 @@ class Speaker:
                 except _ElevenLabsUnavailable as down:
                     self._trip_elevenlabs(down.status, _el_key)
                 except Exception as exc:
+                    # v6.6: an ordinary failure is also sticky
+                    # for the rest of this reply — later chunks
+                    # don't re-pay it.
+                    self._reply_skip.add("elevenlabs")
                     self._failed("ElevenLabs", exc)
             # 2) edge-tts — with the robot effect ON, the pyttsx3-WAV
             # path below is preferred so the effect applies; edge-tts
@@ -778,7 +965,7 @@ class Speaker:
                 want_edge = bool(self.cfg.get("use_edge_tts"))
             else:
                 want_edge = is_bengali or bool(self.cfg.get("use_edge_tts"))
-            if want_edge:
+            if want_edge and not self._engine_parked("edge-tts"):
                 if is_bengali:
                     # v4.9: default is the MALE Bengali edge voice
                     # (Pradeep) — config.py's default agrees; this
@@ -790,10 +977,30 @@ class Speaker:
                                               "en-US-ChristopherNeural")
                 try:
                     result = self._speak_edge(text, voice_name)
+                    self._note_net_success("edge-tts")
                     self._spoken("edge-tts", text, result)
                     return result
                 except Exception as exc:
                     self._failed("edge-tts", exc)
+                    self._note_net_failure("edge-tts", "edge-tts")
+            # 2b) Google TTS (v6.6) — one more network voice
+            # before the offline engines, for EVERY language:
+            # it is the layer that guarantees Bengali / Hindi
+            # text is spoken in its own language when
+            # ElevenLabs is down and edge-tts is flaking. The
+            # robot path skips it (that path processes pyttsx3
+            # WAV samples; an MP3 cannot join it), and a parked
+            # engine is skipped without a call.
+            if not robot and not self._engine_parked("google-tts"):
+                try:
+                    result = self._speak_google(text, lang)
+                    self._note_net_success("google-tts")
+                    self._spoken("google-tts", text, result)
+                    return result
+                except Exception as exc:
+                    self._failed("google-tts", exc)
+                    self._note_net_failure("google-tts",
+                                           "Google TTS")
             # 3) pyttsx3 — fresh engine every time. After two failures
             # in a row it is skipped: PowerShell speaks instead, so
             # Nalox never goes silent mid-conversation.
