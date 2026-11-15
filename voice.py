@@ -148,6 +148,15 @@ def say_budget_seconds(text):
                + SAY_BUDGET_PER_CHAR_SECONDS * len(text or ""))
 
 
+# v6.14: the engines with a separable bytes synthesis —
+# the only ones the one-chunk prefetch may use (see
+# Speaker._maybe_start_prefetch). edge-tts synthesizes
+# straight into its playback file inside its v6.11 retry
+# boundary, and ElevenLabs plays sample buffers, so both
+# keep their exact fused paths.
+_PREFETCH_ENGINES = frozenset(
+    ("google-tts", "google-cloud-tts"))
+
 # ------------------------------------------------- v6.5 live chunks
 # Sentence splitting for LIVE-SYNCED speech: the same terminator
 # set the brain's reply guard uses (. ! ? and the Bengali/Hindi
@@ -474,6 +483,19 @@ class Speaker:
         self._vstate = _load_voice_state()
         self._el_persisted = None
         self._el_probe_armed = False
+        # v6.14: one-chunk TTS prefetch state (see
+        # _maybe_start_prefetch). _reply_gen stamps every
+        # prefetch with the say() that armed it, so a stale
+        # slot can never be consumed by a later reply;
+        # _prefetch_next is the armed (gen, text, lang) of
+        # the next chunk — engine-agnostic: whichever
+        # prefetchable engine serves the current chunk
+        # adopts it at playback start; _prefetch_slot is
+        # the running/done synth, stamped with the engine
+        # that produced it.
+        self._reply_gen = 0
+        self._prefetch_next = None
+        self._prefetch_slot = None
         self._apply_vstate()
 
     # ------------------------------------------------ v6.7 D state
@@ -1100,6 +1122,27 @@ class Speaker:
         engine, so barge-in/stop behaves identically. Any
         non-200 (a 400 on a voice name included) raises —
         an engine failure, and the chain moves on."""
+        audio = self._take_prefetched("google-cloud-tts",
+                                      text)
+        if audio is None:
+            audio = self._synth_google_cloud(text, lang)
+        tmp = os.path.join(tempfile.gettempdir(),
+                           "nalox_google_cloud.mp3")
+        with open(tmp, "wb") as fh:
+            fh.write(audio)
+        # v6.14: the next chunk's synthesis (if say() armed
+        # one for this engine) starts NOW, so it overlaps
+        # this chunk's playback instead of queuing behind
+        # it.
+        self._maybe_start_prefetch("google-cloud-tts")
+        return self._play_mp3_interruptible(tmp)
+
+    def _synth_google_cloud(self, text, lang=None):
+        """The synthesis half of _speak_google_cloud (the
+        v6.14 split): every piece's REST call, concatenated
+        MP3 bytes out, raising exactly as the fused version
+        did. Separate so the prefetch thread can run it
+        while the previous chunk plays."""
         import base64
 
         import requests
@@ -1129,11 +1172,7 @@ class Speaker:
             audio += base64.b64decode(content)
         if not audio:
             raise RuntimeError("Google Cloud TTS returned no audio")
-        tmp = os.path.join(tempfile.gettempdir(),
-                           "nalox_google_cloud.mp3")
-        with open(tmp, "wb") as fh:
-            fh.write(audio)
-        return self._play_mp3_interruptible(tmp)
+        return audio
 
     # ---------- Google Translate TTS (v6.6, online) ----------
     def _speak_google(self, text, lang=None):
@@ -1153,6 +1192,27 @@ class Speaker:
         pieces are concatenated — MP3 frames play back-to-back
         through the SAME MCI path edge-tts audio uses, so
         barge-in/stop behaves identically."""
+        audio = self._take_prefetched("google-tts", text)
+        if audio is None:
+            audio = self._synth_google(text, lang)
+        tmp = os.path.join(tempfile.gettempdir(), "nalox_google.mp3")
+        with open(tmp, "wb") as fh:
+            fh.write(audio)
+        # v6.14: the next chunk's synthesis (if say() armed
+        # one for this engine) starts NOW, so it overlaps
+        # this chunk's playback instead of queuing behind
+        # it (field 2026-11-15 22:40 IST: a two-chunk
+        # google-tts reply took 8.9 s to speak, the second
+        # synthesis waiting on the first playback).
+        self._maybe_start_prefetch("google-tts")
+        return self._play_mp3_interruptible(tmp)
+
+    def _synth_google(self, text, lang=None):
+        """The synthesis half of _speak_google (the v6.14
+        split): the translate_tts piece loop, concatenated
+        MP3 bytes out, raising exactly as the fused version
+        did. Separate so the prefetch thread can run it
+        while the previous chunk plays."""
         import requests
         tl = google_tts_lang(text, lang)
         audio = b""
@@ -1172,10 +1232,90 @@ class Speaker:
             audio += resp.content
         if not audio:
             raise RuntimeError("Google TTS returned no audio")
-        tmp = os.path.join(tempfile.gettempdir(), "nalox_google.mp3")
-        with open(tmp, "wb") as fh:
-            fh.write(audio)
-        return self._play_mp3_interruptible(tmp)
+        return audio
+
+    # ---------- v6.14: one-chunk TTS prefetch ----------
+    def _start_prefetch(self, engine, text, lang, gen):
+        """Synthesize ONE future chunk on a daemon thread —
+        synthesis ONLY (never playback, never bookkeeping).
+        The outcome lands in _prefetch_slot: the bytes on
+        success, the exception on failure. The consumer
+        (_take_prefetched) re-raises a stored failure
+        inside the engine's own attempt, so it is booked
+        exactly like a serial synthesis failure, once."""
+        slot = {"gen": gen, "engine": engine, "text": text,
+                "audio": None, "exc": None, "thread": None}
+
+        def _run():
+            try:
+                if engine == "google-tts":
+                    slot["audio"] = self._synth_google(
+                        text, lang)
+                else:
+                    slot["audio"] = \
+                        self._synth_google_cloud(text, lang)
+            except Exception as exc:
+                slot["exc"] = exc
+
+        thread = threading.Thread(
+            target=_run, daemon=True,
+            name="nalox-tts-prefetch")
+        slot["thread"] = thread
+        self._prefetch_slot = slot
+        thread.start()
+
+    def _maybe_start_prefetch(self, engine):
+        """Called by a prefetchable engine at the moment
+        its playback is about to start: say() armed the
+        NEXT chunk's text, and THIS engine — the one
+        actually serving the current chunk — adopts the
+        arm and begins synthesizing that text through its
+        own synthesis now, so the synthesis overlaps this
+        chunk's playback. A stale arm, or a stop already
+        in flight, starts nothing. The slot is stamped
+        with this engine: only a later attempt BY THE
+        SAME engine for the same text consumes it."""
+        nxt = self._prefetch_next
+        if not nxt:
+            return
+        gen, text, lang = nxt
+        if gen != self._reply_gen:
+            return
+        if _STOP_EVENT.is_set():
+            return
+        self._prefetch_next = None
+        self._start_prefetch(engine, text, lang, gen)
+
+    def _take_prefetched(self, engine, text):
+        """Consume this engine's prefetch slot for `text`:
+        the synthesized bytes — or raise the stored
+        failure, which the engine's own attempt then books
+        through the normal _try_engine path, exactly once.
+        Returns None when there is nothing usable (no
+        slot, a stale generation, a different engine or
+        text): the caller synthesizes serially, exactly
+        as before v6.14. A slot is consumed at most once,
+        and a slot left over from an interrupted reply is
+        never consumed at all (say() bumps the generation
+        on every reply)."""
+        slot = self._prefetch_slot
+        if slot is None:
+            return None
+        self._prefetch_slot = None
+        if slot["gen"] != self._reply_gen \
+                or slot["engine"] != engine \
+                or slot["text"] != text:
+            return None
+        thread = slot["thread"]
+        if thread is not None:
+            # Still synthesizing (the previous chunk was
+            # short): wait for it — bounded by the synth's
+            # own per-piece HTTP timeouts, and never worse
+            # than synthesizing serially from this point.
+            thread.join()
+        if slot["exc"] is not None:
+            raise slot["exc"]
+        return slot["audio"]
 
     # ---------- result bookkeeping ----------
     def _spoken(self, path, text, result):
@@ -1217,6 +1357,13 @@ class Speaker:
         # its remaining chunks.
         self._reply_skip = set()
         self._edge_retry_noted = False
+        # v6.14: a new reply invalidates every prefetch
+        # trace of the old one — the generation bump makes
+        # any leftover slot unconsumable, even by an
+        # identical text.
+        self._reply_gen += 1
+        self._prefetch_next = None
+        self._prefetch_slot = None
         _speak_begin()
         _started = time.monotonic()
         try:
@@ -1224,7 +1371,7 @@ class Speaker:
             if not chunks:
                 return self._say_impl(text, lang)
             result = "done"
-            for chunk in chunks:
+            for idx, chunk in enumerate(chunks):
                 if _STOP_EVENT.is_set():
                     result = "interrupted"
                     break
@@ -1232,11 +1379,28 @@ class Speaker:
                     on_chunk(chunk)
                 except Exception:
                     pass
+                # v6.14: arm the NEXT chunk's text — if a
+                # prefetchable engine serves THIS chunk, it
+                # adopts the arm at its playback start
+                # (_maybe_start_prefetch) and synthesizes
+                # the next chunk during this playback.
+                if idx + 1 < len(chunks):
+                    self._prefetch_next = (
+                        self._reply_gen, chunks[idx + 1],
+                        lang)
                 result = self._say_impl(chunk, lang)
+                # An arm this chunk's engine didn't take is
+                # stale the moment the chunk ends.
+                self._prefetch_next = None
                 if result == "interrupted":
                     break
             return result
         finally:
+            # v6.14: nothing prefetched outlives the reply —
+            # a running prefetch thread finishes into a slot
+            # nobody will ever read.
+            self._prefetch_next = None
+            self._prefetch_slot = None
             _speak_end()
             # v4.6: overrun evidence — a say() past its budget is
             # a stuck engine path; the speaking-flag watchdog

@@ -975,6 +975,12 @@ def _try_load_big(model_cls):
                             walk stops there, exactly the
                             v6.7/v6.8 latch-and-retry case.
     Never raises."""
+    # v6.14: a load START yields briefly to an in-flight
+    # wake decode (command lane only; bounded — see
+    # _defer_big_load_for_wake). Covers both callers: the
+    # lazy load inside _get_model and the background
+    # retry below.
+    _defer_big_load_for_wake()
     last_exc = None
     for name in _big_candidates():
         try:
@@ -1105,6 +1111,63 @@ def _lane_threads(lane, cfg):
     if val > 0:
         return val
     return _LANE_DEFAULT_THREADS.get(lane, 4)
+
+
+# ------------------------------------------------------------- v6.14
+# LANE COORDINATION (worker-process side). _tx_process_main
+# stamps _PROCESS_SYNC from its spawn argument: a bundle of
+# two multiprocessing primitives shared by the two lane
+# processes (created once by the parent — see _lane_sync):
+#   "wake_ready" — an Event the WAKE worker sets just
+#                  before posting its ready sentinel.
+#   "wake_busy"  — a Value the WAKE worker holds at 1
+#                  while a wake decode is executing.
+# The COMMAND worker reads both: its boot preload waits for
+# wake_ready (bounded, plus a short settle) so the two
+# processes never preload in the same seconds, and a lazy
+# big-model load polls wake_busy before STARTING (bounded
+# — see _defer_big_load_for_wake). Combined / preview
+# processes get no bundle (None) and keep the legacy
+# behaviour exactly; every read is guarded, because
+# coordination must never break a decode or a load.
+_PROCESS_SYNC = None
+
+
+def _wake_decode_in_flight():
+    """True while the wake lane is mid-decode (best-effort
+    read of the shared flag; any failure reads as "not
+    busy" — coordination must never break a load)."""
+    sync = _PROCESS_SYNC
+    if not sync:
+        return False
+    try:
+        return bool(sync["wake_busy"].value)
+    except Exception:
+        return False
+
+
+def _defer_big_load_for_wake():
+    """v6.14: before STARTING a big-model load on the
+    command lane, give an in-flight wake decode a short
+    window to finish — the field shape (2026-11-15
+    22:44 IST) was a wake decode starving in the very
+    second the big model finished loading on cuda: the
+    lane split removed the queue, but the shared CPU
+    still bursts. Polls the shared flag for up to
+    BIG_LOAD_DEFER_S; if the wake lane is still busy the
+    load starts anyway — a command is never starved for
+    the wake lane. No-op off the command lane (the
+    combined worker is serial by design; the wake and
+    preview lanes never load the big model)."""
+    if _PROCESS_LANE != "command":
+        return
+    if not _wake_decode_in_flight():
+        return
+    end = time.monotonic() + BIG_LOAD_DEFER_S
+    while time.monotonic() < end:
+        if not _wake_decode_in_flight():
+            return
+        time.sleep(BIG_LOAD_POLL_S)
 
 
 # ------------------------------------------------------------- v6.13
@@ -1440,6 +1503,26 @@ WAKE_COOLDOWN_S = 20.0
 WAKE_COOLDOWN_EPISODES_MAX = 3
 WAKE_COOLDOWN_EPISODE_WINDOW_S = 600.0
 LOG_THROTTLE_WINDOW = 60.0
+# v6.14 steady-ears timings (lane coordination below):
+# module-level so the suites can shrink them; the values
+# here are the field ones.
+WAKE_READY_WAIT_S = 20.0     # the command preload's max
+                             # wait for the wake lane's
+                             # READY signal (bounded — a
+                             # wake lane that never readies
+                             # costs this once, at boot)
+BOOT_STAGGER_SETTLE_S = 1.0  # settle after wake READY
+                             # before the command preload
+                             # starts (the two processes
+                             # never preload in the same
+                             # seconds again)
+BIG_LOAD_DEFER_S = 2.0       # a big-model load start
+                             # polls the wake-busy flag
+                             # for up to this long…
+BIG_LOAD_POLL_S = 0.1        # …at this interval, then
+                             # starts anyway (a command
+                             # is never starved for the
+                             # wake lane)
 _AUTO_KINDS = ("wake_pass", "raw")
 
 
@@ -1499,7 +1582,8 @@ def _hb_echo_loop(hb_req_q, hb_res_q):
 
 
 def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
-                     cfg_snapshot, lane="combined"):
+                     cfg_snapshot, lane="combined",
+                     sync=None):
     """The transcription worker process's whole life.
 
     Runs in the CHILD (spawn: this module is re-imported
@@ -1533,7 +1617,14 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     v6.4: a heartbeat thread (_hb_echo_loop) starts BEFORE
     preload and answers on the dedicated heartbeat queues
     for the process's whole life — liveness never queues
-    behind a decode again."""
+    behind a decode again.
+
+    v6.14: `sync` is the parent's lane-coordination bundle
+    (see _PROCESS_SYNC): the wake worker clears/sets the
+    wake-busy flag around its decodes and sets wake_ready
+    just before its ready sentinel; the command worker
+    waits for wake_ready before its boot preload. Either
+    lane runs exactly as before when sync is None."""
     try:
         logging.disable(logging.CRITICAL)
     except Exception:
@@ -1554,6 +1645,8 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # cap (globals the model constructors read).
     global _big_slot_name, _big_resolved, _big_model_fail_kind
     global _PROCESS_LANE, _MODEL_CPU_THREADS
+    # v6.14: this process's lane-coordination bundle.
+    global _PROCESS_SYNC
     # v6.13: the big-model device preference + a clean
     # GPU slate for this process (probe cache, remembered
     # CUDA failure, notice flags).
@@ -1576,6 +1669,17 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
         or BIG_COMMAND_MODEL
     _big_resolved = ""
     _big_model_fail_kind = ""
+    # v6.14: stamp the coordination bundle. A fresh WAKE
+    # worker also clears the busy flag: a previous
+    # incarnation may have died mid-decode with it up, and
+    # the command lane would defer its first big load
+    # against a ghost (bounded, but pointless).
+    _PROCESS_SYNC = sync or None
+    if _PROCESS_LANE == "wake" and _PROCESS_SYNC:
+        try:
+            _PROCESS_SYNC["wake_busy"].value = 0
+        except Exception:
+            pass
     # Preload BEFORE the first job, so model load time never
     # eats a request deadline. Guarded per model: a model
     # that fails here fails per-job instead, same outcome.
@@ -1594,6 +1698,24 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     #             anything with a ~3 GB load again.
     #   combined: the pre-v6.12 list, unchanged (direct
     #             callers / older suites).
+    # v6.14 BOOT STAGGER: on the COMMAND lane the preload
+    # below waits until the WAKE lane has signalled READY,
+    # plus a short settle — at boot the two processes
+    # otherwise preload in the same seconds and the wake
+    # decodes pay for the contention (field 2026-11-15
+    # 22:13 IST: "worker slow" episodes in the first
+    # minute, beside the preloads). The wait is BOUNDED
+    # (WAKE_READY_WAIT_S): a wake lane that never readies
+    # costs this once, at boot, and the heartbeat thread
+    # above already echoes throughout, so the parent never
+    # mistakes the wait for a wedge.
+    if _PROCESS_LANE == "command" and _PROCESS_SYNC:
+        try:
+            if _PROCESS_SYNC["wake_ready"].wait(
+                    timeout=WAKE_READY_WAIT_S):
+                time.sleep(BOOT_STAGGER_SETTLE_S)
+        except Exception:
+            pass
     _preload = []
     if _PROCESS_LANE == "wake":
         _preload_names = (cfg.get("wake_model") or "tiny",
@@ -1685,6 +1807,14 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                  "" if _big_model_down else
                  _resolved_at_boot,
              "lane": _PROCESS_LANE}
+    if _PROCESS_LANE == "wake" and _PROCESS_SYNC:
+        # v6.14: signal BEFORE the sentinel posts, so a
+        # command worker released by this event is already
+        # inside its settle when the parent sees READY.
+        try:
+            _PROCESS_SYNC["wake_ready"].set()
+        except Exception:
+            pass
     try:
         res_q.put((0, "ready", _diag))
     except Exception:
@@ -1707,6 +1837,18 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             res_q.put((job_id, "ack", None))
         except Exception:
             return
+        # v6.14: the wake-busy flag brackets the decode
+        # itself — set after the ack, cleared when the
+        # dispatch settles (below). The command lane's
+        # big-load deferral reads it; nothing else does.
+        _wake_busy_marked = False
+        if _PROCESS_LANE == "wake" and _PROCESS_SYNC \
+                and kind in ("wake_pass", "raw"):
+            try:
+                _PROCESS_SYNC["wake_busy"].value = 1
+                _wake_busy_marked = True
+            except Exception:
+                pass
         result = None
         try:
             # v6.12 JOB DOORS — the lane split is enforced
@@ -1773,6 +1915,11 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                     result = "started"
         except Exception:
             result = None
+        if _wake_busy_marked:
+            try:
+                _PROCESS_SYNC["wake_busy"].value = 0
+            except Exception:
+                pass
         if _big_model_down and not _notice_sent:
             # v6.7: the fallback latched on a job, not at
             # preload — tell the parent now (once). v6.8:
@@ -1816,6 +1963,64 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                 pass
 
 
+# ------------------------------------------------------------- v6.14
+# LANE COORDINATION (parent side) + WAKE PRIORITY.
+_LANE_SYNC = None
+_LANE_SYNC_LOCK = threading.Lock()
+
+
+def _lane_sync():
+    """The process-wide lane-coordination bundle (v6.14):
+    one Event + one shared Value from the spawn context,
+    created ONCE and handed to BOTH lane workers at spawn
+    (the workers do the rest — see _PROCESS_SYNC). Returns
+    None when the primitives cannot be created: the lanes
+    then simply run uncoordinated, exactly as before.
+    Never raises."""
+    global _LANE_SYNC
+    if _LANE_SYNC is None:
+        with _LANE_SYNC_LOCK:
+            if _LANE_SYNC is None:
+                try:
+                    ctx = multiprocessing.get_context("spawn")
+                    _LANE_SYNC = {
+                        "wake_ready": ctx.Event(),
+                        "wake_busy": ctx.Value("b", 0),
+                    }
+                except Exception:
+                    _LANE_SYNC = {}
+    return _LANE_SYNC or None
+
+
+def _raise_wake_worker_priority(proc):
+    """v6.14: best-effort ABOVE_NORMAL priority for the
+    WAKE worker process — on Windows psutil's nice()
+    applies SetPriorityClass(ABOVE_NORMAL_PRIORITY_CLASS)
+    to the child; elsewhere it attempts nice(-5). The
+    wake lane is the owner's doorbell: under a shared-CPU
+    burst (the command lane loading the big model, a
+    browser starting) its tiny decodes were still
+    arriving late (field 2026-11-15 22:13 / 22:42 IST —
+    "worker slow" episodes beside the preloads and the
+    cuda load). Priority is a nicety, never a dependency:
+    ANY failure is silent (one debug line at most), and
+    this is only ever called for the wake lane — never
+    for the command or preview processes."""
+    try:
+        pid = getattr(proc, "pid", None)
+        if not pid:
+            return
+        import psutil
+        handle = psutil.Process(pid)
+        if os.name == "nt":
+            handle.nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+        else:
+            handle.nice(-5)
+    except Exception as exc:
+        log.debug("[ears] wake worker priority not "
+                  "raised: %s", exc)
+
+
 def _spawn_tx_process(cfg, lane="combined"):
     """Default worker factory: (proc, req_q, res_q, hb_req_q,
     hb_res_q) for one fresh spawn-context worker — the job
@@ -1825,15 +2030,21 @@ def _spawn_tx_process(cfg, lane="combined"):
 
     v6.12: the LANE rides into the worker (see
     _tx_process_main) and into the process name, so a task
-    manager / log ever shows which lane a worker is."""
+    manager / log ever shows which lane a worker is.
+
+    v6.14: the wake and command workers also receive the
+    shared lane-coordination bundle (_lane_sync); the
+    other lanes get None."""
     ctx = multiprocessing.get_context("spawn")
     req_q = ctx.Queue()
     res_q = ctx.Queue()
     hb_req_q = ctx.Queue()
     hb_res_q = ctx.Queue()
+    sync = _lane_sync() if lane in ("wake", "command") \
+        else None
     proc = ctx.Process(target=_tx_process_main,
                        args=(req_q, res_q, hb_req_q, hb_res_q,
-                             dict(cfg or {}), lane),
+                             dict(cfg or {}), lane, sync),
                        daemon=True,
                        name="nalox-ears-%s" % (lane or "worker"))
     proc.start()
@@ -1979,6 +2190,11 @@ class _TxWorkerClient:
             self._diag_logged = False
             self._big_resolved_name = ""
             self._big_resolved_desc = ""
+            # v6.14: the WAKE worker runs at ABOVE_NORMAL
+            # priority (best-effort, failure-silent — see
+            # _raise_wake_worker_priority). Wake lane only.
+            if self.lane == "wake":
+                _raise_wake_worker_priority(self._proc)
             return True
         except Exception as exc:
             log.error("[ears] could not start the "

@@ -6424,6 +6424,25 @@ class Brain:
                    "preferences and facts Arjun tells you are "
                    "saved on this laptop and survive restarts. "
                    "Never claim you have no long-term memory.")
+        # v6.14: SELF-KNOWLEDGE (hearing) — field 2026-11-15
+        # 22:45 IST: seconds after hearing him BY VOICE and
+        # answering, the brain told Arjun "দুঃখিত, স্যার—
+        # আমি আপনার ভয়েস ইনপুট শোনার সুবিধা নেই; টেক্সটের
+        # মাধ্যমে জানাতে পারবেন।" — false, and it cost
+        # trust exactly like the v5.4 memory denial. The
+        # prompt now grounds what Nalox's body actually is:
+        # ears first, voice out, Telegram as a second door.
+        prompt += (" You hear Arjun by VOICE: he speaks to "
+                   "you aloud and your Whisper ears "
+                   "transcribe his speech — when a message "
+                   "reaches you, he most likely just spoke "
+                   "it. You speak your replies aloud with "
+                   "your text-to-speech voice. You also "
+                   "receive typed text from his Telegram. "
+                   "NEVER claim you cannot hear voice input "
+                   "or that you have no facility for it, and "
+                   "never ask him to type instead of "
+                   "speaking.")
         # v5.6: ACT FIRST — the recycle-bin incident: a chain
         # model narrated 13 s of deliberation and did nothing.
         # The thinking stays inside; the tool call is the reply.

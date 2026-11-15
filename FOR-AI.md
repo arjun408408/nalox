@@ -208,3 +208,40 @@ behaviour are updated with a note, never silently deleted.
 - The VM that builds packs has no Windows/display: Tk
   behaviour is verified headlessly (state machines + fakes)
   and on the owner's machine after delivery.
+
+## v6.14 "Steady Ears" (2026-11-15)
+
+Field-driven (owner's v6.13 log): the pipeline works and the
+big ears model is GPU-verified ("large-v3-turbo on cuda
+(float16)"); three residuals fixed. (1) Wake-lane starvation
+under load bursts: the WAKE worker process gets a best-effort
+priority raise at spawn (psutil nice — ABOVE_NORMAL on
+Windows, -5 elsewhere; failure-silent, wake lane only,
+`ears._raise_wake_worker_priority`); the lanes share a sync
+bundle (`ears._lane_sync`: spawn-context Event + Value)
+created by the parent and passed into `_tx_process_main` as
+its 7th argument — the command lane's "small" preload waits
+for the wake lane's READY (≤ `WAKE_READY_WAIT_S` 20 s, then
+proceeds regardless) plus a ~1 s settle, and the wake worker
+stamps `wake_ready` before its ready sentinel and sets
+`wake_busy` while a wake decode runs, so a lazy big-model
+load (`_try_load_big` → `_defer_big_load_for_wake`) polls
+the flag for up to ~2 s before starting and then starts
+anyway. Lanes without the bundle (combined/preview, older
+6-arg callers) see none of this. (2) Brain self-knowledge:
+the system prompt now grounds that Nalox hears the owner by
+VOICE (wake word + Whisper), speaks via TTS, and also
+receives Telegram text — it must never claim it cannot hear
+voice input or ask him to type (field 22:45 IST it did
+exactly that). Prompt-only; no reply guard. (3) TTS chunk
+prefetch (voice.py): for the two engines with a separable
+bytes synthesis (`google-tts`, `google-cloud-tts` —
+`_PREFETCH_ENGINES`), say() arms the next chunk's text and
+the serving engine starts synthesizing it at playback start
+(one-chunk lookahead, generation-stamped slot); a stop
+orphans the slot (never played, never consumed by a later
+reply), and a consumed prefetch failure raises inside the
+engine call so breaker bookkeeping counts it exactly once,
+identically to a serial failure. edge-tts and ElevenLabs
+are NOT prefetched (fused synth/play paths; the v6.11 edge
+retry semantics are untouched). Tests: test_v614 (76).
