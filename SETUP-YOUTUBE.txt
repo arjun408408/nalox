@@ -1,0 +1,71 @@
+Nalox — YouTube Reply-All Setup (একবারই লাগবে / one time only)
+==============================================================
+এই setup টা করলেই Nalox তোমার চ্যানেলের (MNY Intelligence) সব
+unreplied comment-এর reply নিজে নিজে দিয়ে দেবে। মোট ৫-৭ মিনিট লাগবে।
+
+Follow these steps once, on your laptop:
+
+1) Google Cloud project বানাও
+   - Browser-এ যাও: console.cloud.google.com
+   - উপরে project dropdown → "New Project" → Name: Nalox → Create
+   - ওই Nalox project টা select করা আছে কিনা দেখে নাও।
+
+2) YouTube API চালু করো
+   - বাম menu → "APIs & Services" → "Library"
+   - Search: "YouTube Data API v3" → ওটায় click → "Enable"
+
+3) OAuth consent screen
+   - "APIs & Services" → "OAuth consent screen"
+   - User type: "External" → Create
+   - App name: Nalox, তোমার নিজের email টা support email হিসেবে দাও → Save
+   - "Test users" অংশে "Add users" → তোমার channel-এর Google email টা
+     যোগ করো (এটা জরুরি — না হলে login-এ আটকাবে)।
+
+4) OAuth client বানাও + JSON download
+   - "APIs & Services" → "Credentials"
+   - "Create credentials" → "OAuth client ID"
+   - Application type: "Desktop app" → Create
+   - "Download JSON" button-এ click করে file টা download করো।
+
+5) File টা Nalox folder-এ রাখো
+   - Download করা file টার নাম বদলে ঠিক এটা করো: youtube_client_secret.json
+   - File টা তোমার Nalox install folder-এ রাখো (যেখানে nalox.py আছে)।
+
+6) প্রথমবার command দাও
+   - Nalox-কে বলো: "Nalox, reply all"  (অথবা "সব কমেন্টের রিপ্লাই দাও")
+   - Browser নিজে থেকে খুলবে → তোমার channel-এর Google account দিয়ে
+     sign in করো।
+   - "Google hasn't verified this app" warning এলে ভয় নেই — এটা
+     তোমার নিজের বানানো app: "Advanced" → "Go to Nalox" → "Allow"।
+   - এরপর থেকে আর login লাগবে না — token laptop-এই save থাকবে।
+
+IMPORTANT / জরুরি:
+- youtube_client_secret.json file টা কাউকে পাঠাবে না, কোনো chat-এ
+  upload করবে না — শুধু নিজের laptop-এ রাখবে।
+  (Do NOT send this file to anyone. Keep it only on your laptop.)
+- কোথাও আটকালে Muse-কে screenshot পাঠাও।
+
+
+====================================================================
+GOOGLE CALENDAR (v4.3) — একই setup, আরেকটা API
+====================================================================
+
+ভালো খবর: Calendar-এর জন্য আলাদা করে প্রায় কিছুই করতে হবে না —
+উপরে বানানো একই Google Cloud project আর একই
+youtube_client_secret.json file-ই চলবে।
+
+1) একই project-এ Calendar API চালু করো
+   - console.cloud.google.com → তোমার Nalox project টা খোলো
+   - "APIs & Services" → "Library" → "Google Calendar API" খুঁজে
+     "Enable" চাপো।
+
+2) ব্যস! Nalox-কে বলো: "Nalox, what's on my calendar today?"
+   (বা "আজ কি কি আছে")
+   - প্রথমবার browser খুলবে — একই Google account দিয়ে "Allow"
+     করলেই হবে। Token save হবে gcal_token.json নামে, এরপর থেকে
+     আর login লাগবে না।
+
+(English: In the SAME Google Cloud project, enable the "Google
+Calendar API". The same youtube_client_secret.json works. The
+first calendar command opens the browser for one consent; the
+token is then cached as gcal_token.json.)

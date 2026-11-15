@@ -1,0 +1,17 @@
+# Nalox skill: draft an email (v4.3).
+# Adapted from OpenJarvis's bundled "email-draft" recipe.
+# The draft is composed by the brain and SAVED as a text file in
+# the "Nalox Captures" folder. It is NEVER sent — Arjun reviews
+# and sends drafts himself.
+
+[skill]
+name = "Draft Email"
+description = "Write an email draft about a topic and save it (never sends)."
+triggers = ["draft an email about", "draft email about",
+            "draft an email on", "draft email on",
+            "write a draft email about"]
+
+[[skill.steps]]
+tool = "draft_email_save"
+[skill.steps.args]
+topic = "{query}"

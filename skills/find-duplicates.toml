@@ -1,0 +1,15 @@
+# Nalox skill: find duplicate files (v4.3).
+# Adapted from OpenJarvis's bundled "file-deduplicator" recipe.
+# Scans Downloads (same size, then same MD5) and REPORTS the
+# duplicate groups + wasted space. Nothing is deleted.
+
+[skill]
+name = "Find Duplicate Files"
+description = "Find duplicate files in Downloads and report wasted space."
+triggers = ["find duplicate files", "find duplicates",
+            "find duplicate files in downloads", "check for duplicates"]
+
+[[skill.steps]]
+tool = "find_duplicate_files"
+[skill.steps.args]
+folder = ""

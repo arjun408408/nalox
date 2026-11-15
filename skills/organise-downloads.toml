@@ -1,0 +1,15 @@
+# Nalox skill: organise the Downloads folder (v4.3).
+# Adapted from OpenJarvis's bundled "file-organizer" recipe, shrunk
+# to one step over a Nalox tool. Files are sorted into subfolders
+# by kind (Images / Documents / Videos / Audio / Archives /
+# Installers / Other). Nothing is ever deleted or overwritten.
+
+[skill]
+name = "Organise Downloads"
+description = "Sort loose files in Downloads into subfolders by kind."
+triggers = ["organise my downloads", "organize my downloads",
+            "organise downloads", "organize downloads",
+            "tidy my downloads", "downloads গোছাও", "downloads গুছিয়ে দাও"]
+
+[[skill.steps]]
+tool = "organise_downloads"

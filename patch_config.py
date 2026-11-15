@@ -1,0 +1,169 @@
+"""One-time config patch, shipped inside Nalox update packs.
+
+UPDATE.bat copies this file into the Nalox folder and runs it with the
+venv Python. It changes ONLY the keys in PATCHES below and preserves
+everything else in config.json — above all Arjun's own API keys
+(ElevenLabs / Groq / Telegram), which must never be overwritten by an
+update pack. If config.json does not exist, it does nothing.
+"""
+import json
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+
+# v3.3: better Bengali model, no auto-YouTube.
+# v3.7: robot_hz 35 -> 30.
+# v4.1: robot voice OFF for good (Arjun rejected it — only his plain
+# ElevenLabs voice, or the plain local voice), no news at startup,
+# and full PC control ON (his standing instruction — no confirmation
+# prompts; Settings keeps the toggle).
+PATCHES = {
+    "robot_voice": False,
+    "robot_hz": 30,
+    "whisper_command_model": "small",
+    "startup_youtube_check": False,
+    "briefing_news": False,
+    "full_control": True,
+    # v5.2: the automatic startup briefing is CANCELLED
+    # (Arjun's explicit instruction, 2026-11-15 — greeting
+    # only at boot). briefing_on_startup is the new gate;
+    # morning_briefing is the legacy key the boot digest and
+    # the classic briefing both read — both go off. The
+    # ON-DEMAND digest ("good morning" / Telegram) never read
+    # either key, so it stays available.
+    "briefing_on_startup": False,
+    "morning_briefing": False,
+}
+
+# v4.3: brand-new keys get their defaults ONLY when absent — an
+# existing value (e.g. a mode Arjun already picked) is never reset.
+# v4.5: the wake_model default is now "base" (faster wake; loud
+# segments the base model garbles are retried once with "small").
+PATCH_IF_ABSENT = {
+    "mode": "jarvis",
+    "voice_speed": 1.0,
+    "wake_model": "base",
+    # v5.0: FreeLLMAPI brain keys — defaults only when absent;
+    # a unified key Arjun already pasted is never touched.
+    "freellm_api_key": "",
+    "freellm_base_url": "http://127.0.0.1:31415/v1",
+    "freellm_model": "auto",
+    # v5.1: cloud ears on ("auto") by default — Gemini/Groq
+    # hear commands when a key exists; Settings can turn it off.
+    "cloud_ears": "auto",
+    # v5.4: phone control (ADB over Wi-Fi) — empty defaults;
+    # the pairing values + contacts he enters in Settings →
+    # Phone are his own and are never touched once present.
+    "phone_adb_path": "",
+    "phone_wifi_address": "",
+    "phone_pair_address": "",
+    "phone_pair_code": "",
+    "phone_contacts": {},
+    # v6.0: Nalox Phone app link token — empty default;
+    # phone_link.py generates the real one on first use and
+    # a value he regenerates in Settings is never touched.
+    "phone_link_token": "",
+    # v5.4: his chosen wake line — added with the default ONLY
+    # when absent; a line he edits in Settings → General is a
+    # deliberate choice and is preserved. v5.7: the default is
+    # the NEW line; an install still holding the v5.4 default
+    # is migrated by WAKE_LINE_OLD_DEFAULT below.
+    "wake_line": "Yes Sir, I'm here.",
+    # v5.5: Command Center on by default — added only when
+    # absent; if Arjun ever turns it off by hand, that choice
+    # is preserved.
+    "command_center": True,
+    # v6.2: self-update keys — the repo defaults to the
+    # owner's own arjun408408/nalox (patch-if-absent: his
+    # Settings → Updates field comes prefilled; an edited
+    # value is preserved); the token stays "" until HE
+    # pastes one into Settings → Updates, and auto_update
+    # defaults on so that once the token exists, no
+    # further clicks are ever needed.
+    "github_repo": "arjun408408/nalox",
+    "github_token": "",
+    "auto_update": True,
+}
+
+# v4.5 wake-model migration. The v4.3 patch WROTE wake_model="small"
+# into config.json as its default (PATCH_IF_ABSENT above), and no
+# Settings control exists for this key — so an existing "small" is
+# the old patch's default, never a deliberate user choice, and it
+# migrates to the new "base" default. ANY other existing value
+# ("tiny", "medium", ... — only reachable by hand-editing the file)
+# is treated as user-set and is preserved untouched.
+WAKE_MODEL_OLD_DEFAULT = "small"
+WAKE_MODEL_NEW_DEFAULT = "base"
+
+# v4.9 Bengali-voice migration, same shape as the wake-model one
+# above. The old bn_voice default was bn-BD-NabanitaNeural
+# (FEMALE) and no Settings control existed for the key before
+# v4.9 — so an existing config holding exactly that value holds
+# the old default, never a deliberate pick, and it migrates to
+# the MALE default Arjun asked for ("ছেলের ভয়েস চাই"). ANY
+# other existing value is treated as user-set and preserved.
+BN_VOICE_OLD_DEFAULT = "bn-BD-NabanitaNeural"
+BN_VOICE_NEW_DEFAULT = "bn-BD-PradeepNeural"
+
+# v5.7 wake-line migration, same shape as the two above. The
+# v5.4 patch wrote wake_line="Yes Sir, I'm coming for you."
+# into installs as its default (PATCH_IF_ABSENT), and Arjun
+# has now ordered a different line — "Yes Sir, I'm here." An
+# install holding EXACTLY the old default holds the patch's
+# choice, not a deliberate one, so it migrates. ANY other
+# existing value (a line he typed into Settings → General
+# himself) is treated as user-set and preserved untouched.
+WAKE_LINE_OLD_DEFAULT = "Yes Sir, I'm coming for you."
+WAKE_LINE_NEW_DEFAULT = "Yes Sir, I'm here."
+
+
+def main():
+    if not os.path.exists(CONFIG_PATH):
+        print("[patch] no config.json here - nothing to patch.")
+        return
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception as exc:
+        print(f"[patch] could not read config.json ({exc}) - skipped.")
+        return
+    changed = []
+    for key, value in PATCHES.items():
+        if cfg.get(key) != value:
+            cfg[key] = value
+            changed.append(f"{key}={value}")
+    for key, value in PATCH_IF_ABSENT.items():
+        if key not in cfg:
+            cfg[key] = value
+            changed.append(f"{key}={value} (new)")
+    if cfg.get("wake_model") == WAKE_MODEL_OLD_DEFAULT:
+        cfg["wake_model"] = WAKE_MODEL_NEW_DEFAULT
+        changed.append(
+            f"wake_model={WAKE_MODEL_NEW_DEFAULT} "
+            "(v4.5: old patch default migrated; a user-set value "
+            "would have been kept)")
+    if cfg.get("bn_voice") == BN_VOICE_OLD_DEFAULT:
+        cfg["bn_voice"] = BN_VOICE_NEW_DEFAULT
+        changed.append(
+            f"bn_voice={BN_VOICE_NEW_DEFAULT} "
+            "(v4.9: female default migrated to the male Bengali "
+            "voice Arjun asked for; a user-set value would have "
+            "been kept)")
+    if cfg.get("wake_line") == WAKE_LINE_OLD_DEFAULT:
+        cfg["wake_line"] = WAKE_LINE_NEW_DEFAULT
+        changed.append(
+            f"wake_line={WAKE_LINE_NEW_DEFAULT} "
+            "(v5.7: the v5.4 default wake line migrated to the "
+            "line Arjun ordered; a user-set value would have "
+            "been kept)")
+    if not changed:
+        print("[patch] config.json already up to date.")
+        return
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    print("[patch] config.json updated: " + ", ".join(changed))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,21 @@
+# Nalox requirements — these all have ready-made Windows wheels for
+# Python 3.12, so pip never has to compile anything on Arjun's laptop.
+# (On Python 3.14/3.15 several of these have NO wheels at all — e.g.
+# onnxruntime and av — which is why INSTALL.bat insists on 3.12.)
+faster-whisper==1.0.3
+sounddevice>=0.4.6
+numpy>=1.26,<3
+pyttsx3>=2.90
+pyautogui>=0.9.54
+psutil>=5.9
+pystray>=0.19
+pillow>=10.0
+# v3.6: webcam photos (vision.py). The headless build has Windows
+# wheels and needs no GUI libraries.
+opencv-python-headless>=4.8
+# v4.0: YouTube reply-all (youtube_tools.py) — Google API client +
+# OAuth consent flow for Arjun's own channel.
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+requests>=2.31
+edge-tts>=7.0

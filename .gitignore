@@ -1,0 +1,42 @@
+# Nalox — user data & runtime state: NEVER commit these.
+# (The rule: config.json and user data never ship.)
+
+# His config — API keys live here. Never in git, never in a pack.
+config.json
+
+# His data
+custom_commands.json
+prefs.json
+
+# Runtime state
+*.flag
+*.lock
+updated_to.txt
+
+# Logs & diagnostics
+nalox_log.txt
+nalox_page.html
+nalox_fault.log
+logs/
+
+# Memory stores & captures
+*.db
+*.sqlite
+*.sqlite3
+captures/
+leads/
+demos/
+
+# Python / venv
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets of any other shape
+youtube_client_secret.json
+youtube_token.json
+nalox-release.jks
+
+# runtime state (added at first push)
+memory.json
+digest_skip.json

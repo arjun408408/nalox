@@ -1,0 +1,22 @@
+# Nalox skill: summarise a web page (v4.3).
+# Adapted from OpenJarvis's bundled "web-summarize" recipe.
+# Step 1 fetches the page text ({query} = the address Arjun said
+# after the trigger); step 2 asks the brain for a 2-sentence
+# summary of that text ({prev} = step 1's result).
+
+[skill]
+name = "Summarise Web Page"
+description = "Fetch a web page and summarise it in two sentences."
+triggers = ["summarise this web page", "summarize this web page",
+            "summarise the web page", "summarize the web page",
+            "summarise this page", "summarize this page"]
+
+[[skill.steps]]
+tool = "fetch_url_text"
+[skill.steps.args]
+url = "{query}"
+
+[[skill.steps]]
+tool = "summarise_text"
+[skill.steps.args]
+text = "{prev}"
