@@ -226,6 +226,17 @@ transcription stuck" x2 — and his "wake up" never landed):
     far as stdlib allows on Windows), and a crash-looping
     worker earns a respawn cap + backoff instead of a fork
     storm. Cloud ears are unchanged (already bounded HTTP).
+  - v6.3 keeps the process isolation and fixes its one
+    remaining flaw — the timeout CASCADE (field log
+    2026-11-15 18:18–18:20: a restart every ~4 s, then the
+    backoff pause): deadlines now run from the worker's
+    per-job ACK after a readiness handshake (preload never
+    eats decode time), the wake deadline is 8 s, a timed-out
+    worker is PINGED before it is killed (slow ≠ wedged),
+    consecutive timeouts trip a self-expiring wake cooldown,
+    and identical restart lines are throttled. Cloud ears
+    tighten to 6 s per provider (fast switching, with the
+    brain).
   - The v6.0 decode locks / model rotation are RETIRED:
     inside the worker, decodes are strictly serial, so
     there is nothing left to lock.
@@ -712,11 +723,12 @@ def _get_model(name):
 # spawn): the parent sends a job over a queue, the worker —
 # which owns the WhisperModel cache in ITS address space —
 # decodes strictly serially and sends the result back. Each
-# request carries a HARD deadline:
-#   wake passes   WAKE_TX_DEADLINE    (4 s)
+# request carries a HARD deadline, measured from the moment
+# the worker ACKs the job (v6.3 — see below):
+#   wake passes   WAKE_TX_DEADLINE    (8 s)
 #   commands      COMMAND_TX_DEADLINE (12 s)
 #   voice files   FILE_TX_DEADLINE    (30 s)
-# On deadline expiry the parent TERMINATES the worker and
+# On a VERIFIED wedge the parent TERMINATES the worker and
 # spawns a fresh one: a wedged native decode dies with its
 # process, which is the one thing the v4.6–v6.0 thread
 # machinery (stuck watchdog, generation bumps, decode locks,
@@ -732,12 +744,81 @@ def _get_model(name):
 # respawns pause for WORKER_BACKOFF_S instead of fork-bombing
 # a broken install — requests during the pause fail fast as
 # "nothing heard" and the next window retries.
-WAKE_TX_DEADLINE = 4.0
+#
+# v6.3 — THE TIMEOUT CASCADE, KILLED. Field log 2026-11-15
+# 18:18–18:20: "[ears] worker restarted (timeout)" at
+# 18:18:53, then 18:19:44/:48/:52/:56 — every ~4 s, exactly
+# the old wake deadline — then "restarting too often —
+# pausing". The loop could never recover: the deadline clock
+# started at SUBMISSION, so a freshly spawned worker was
+# still loading its models (or an honestly slow decode was
+# mid-flight) when the next 4 s deadline killed it again.
+# Three mechanisms end it:
+#   1. READINESS HANDSHAKE — the worker posts a "ready"
+#      sentinel after preload and ACKs every job it picks
+#      up. The client tracks readiness per spawn; a request
+#      first waits for the ack under a generous READY_TIMEOUT
+#      (never counted as a request timeout, logged once), and
+#      the decode deadline runs from the ACK — decode time
+#      only, never preload time.
+#   2. PING BEFORE KILL — a decode that overruns its
+#      deadline earns a ping with a short grace. A worker
+#      that answers (or whose late result lands first) is
+#      SLOW, not wedged: the late request is dropped and the
+#      worker is KEPT. Only a worker that fails the ping —
+#      or is already dead — is restarted.
+#   3. NO CASCADE — consecutive decode timeouts trip a
+#      short cooldown during which automatic wake/raw jobs
+#      fail fast instead of queueing up behind a struggling
+#      worker; the cooldown expires on its own and the next
+#      request is the recovery probe. Wake listening can
+#      never stay dead. And identical [ears] restart lines
+#      are throttled (first + a summary count), so neither
+#      the log nor the chat mirror can flood again.
+WAKE_TX_DEADLINE = 8.0
 COMMAND_TX_DEADLINE = 12.0
 FILE_TX_DEADLINE = 30.0
 WORKER_MAX_RESTARTS = 5
 WORKER_RESTART_WINDOW = 120.0
 WORKER_BACKOFF_S = 60.0
+READY_TIMEOUT = 60.0
+ACK_TIMEOUT = 5.0
+PING_TIMEOUT = 1.0
+WAKE_COOLDOWN_AFTER = 2
+WAKE_COOLDOWN_S = 20.0
+LOG_THROTTLE_WINDOW = 60.0
+_AUTO_KINDS = ("wake_pass", "raw")
+
+
+class _LogThrottle:
+    """First occurrence logs at once; repeats inside
+    LOG_THROTTLE_WINDOW are counted silently and flushed as
+    ONE summary line when the window rolls (v6.3)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = {}  # key -> [window_start, suppressed]
+
+    def emit(self, key, msg, status=None):
+        now = time.monotonic()
+        summary = None
+        first = False
+        with self._lock:
+            st = self._state.get(key)
+            if st is None or now - st[0] >= LOG_THROTTLE_WINDOW:
+                if st is not None and st[1]:
+                    summary = st[1]
+                self._state[key] = [now, 0]
+                first = True
+            else:
+                st[1] += 1
+        if summary:
+            log.error("%s (repeated %d more times, suppressed)",
+                      msg, summary)
+        if first:
+            log.error("%s", msg)
+            _fire_status(status if status is not None else msg)
+        return first
 
 
 def _tx_process_main(req_q, res_q, cfg_snapshot):
@@ -747,7 +828,11 @@ def _tx_process_main(req_q, res_q, cfg_snapshot):
     there; the model cache it builds is its own). Its logging
     is silenced — two processes writing one rotating log
     would corrupt it, and the parent logs every outcome
-    anyway. Jobs are (job_id, kind, payload):
+    anyway. After preloading the models it posts a
+    (0, "ready", True) sentinel, and it ACKs every job the
+    moment it picks it up — the parent's deadline measures
+    decode time from that ack, never preload (v6.3). Jobs
+    are (job_id, kind, payload):
       "ping"     -> ("pong", payload) — lifecycle proof
       "wake_pass"  (audio, model_name, kwargs)
                  -> _transcribe_rich(...) 4-tuple
@@ -776,6 +861,14 @@ def _tx_process_main(req_q, res_q, cfg_snapshot):
             _get_model(_name)
         except Exception:
             pass
+    # v6.3 READINESS HANDSHAKE: the models are loaded — tell
+    # the parent BEFORE the first job is read. The client's
+    # request deadlines only ever measure decode time (from
+    # a job's ack), never this preload.
+    try:
+        res_q.put((0, "ready", True))
+    except Exception:
+        return
     while True:
         try:
             job = req_q.get()
@@ -787,6 +880,13 @@ def _tx_process_main(req_q, res_q, cfg_snapshot):
             job_id, kind, payload = job
         except Exception:
             continue
+        # v6.3 ACK: proof a READY worker picked the job up —
+        # the parent starts the decode deadline when it sees
+        # this, so a slow spawn can never eat decode time.
+        try:
+            res_q.put((job_id, "ack", None))
+        except Exception:
+            return
         result = None
         try:
             if kind == "ping":
@@ -834,11 +934,23 @@ class _TxWorkerClient:
     """Parent-side handle on the transcription worker.
 
     request() is the only door: it serialises callers (one
-    job in flight — the worker decodes serially anyway),
-    waits at most `deadline` seconds, and on timeout kills
-    and respawns the worker before returning None. Callers
-    read None as "nothing heard" — the same shape a failed
-    in-process decode always produced. Never raises.
+    job in flight — the worker decodes serially anyway) and
+    NEVER raises; callers read None as "nothing heard" — the
+    same shape a failed in-process decode always produced.
+
+    v6.3 protocol (the timeout-cascade fix — see the long
+    note at the worker constants): a request runs in two
+    phases. Phase 1 waits for the worker's ACK under
+    READY_TIMEOUT (fresh spawn still loading models) or
+    ACK_TIMEOUT (worker already ready) — never counted as a
+    request timeout. Phase 2 runs the caller's deadline
+    against the decode itself. A phase-2 timeout triggers
+    PING BEFORE KILL: a worker that pongs (or whose late
+    result lands during the grace) is slow-but-alive — the
+    late request is dropped, the worker is KEPT, and the
+    timeout counts toward the wake cooldown. Only a worker
+    that fails the ping, never acks, or is already dead is
+    restarted.
     """
 
     def __init__(self, cfg, process_factory=None):
@@ -852,6 +964,14 @@ class _TxWorkerClient:
         self._restart_stamps = []
         self._backoff_until = 0.0
         self._closed = False
+        # v6.3 state: readiness of the CURRENT spawn, the
+        # once-per-spawn "loading models" log, the consecutive
+        # decode-timeout count and the wake cooldown it trips.
+        self._ready = False
+        self._start_logged = False
+        self._consec_timeouts = 0
+        self._cooldown_until = 0.0
+        self._throttle = _LogThrottle()
 
     # ------------------------------------------------ lifecycle
     def _spawn(self):
@@ -862,16 +982,20 @@ class _TxWorkerClient:
         if len(self._restart_stamps) >= WORKER_MAX_RESTARTS:
             self._restart_stamps = []
             self._backoff_until = now + WORKER_BACKOFF_S
-            log.error("[ears] transcription worker restarted "
-                      "too often — pausing restarts for %ds",
-                      int(WORKER_BACKOFF_S))
-            _fire_status("[ears] transcription worker "
-                         "restarting too often — pausing")
+            self._throttle.emit(
+                "backoff",
+                "[ears] transcription worker restarted too "
+                "often — pausing restarts for %ds"
+                % int(WORKER_BACKOFF_S),
+                status="[ears] transcription worker "
+                       "restarting too often — pausing")
             return False
         self._restart_stamps.append(now)
         try:
             self._proc, self._req_q, self._res_q = \
                 self._factory(self._cfg)
+            self._ready = False
+            self._start_logged = False
             return True
         except Exception as exc:
             log.error("[ears] could not start the "
@@ -885,6 +1009,7 @@ class _TxWorkerClient:
         proc, self._proc = self._proc, None
         self._req_q = None
         self._res_q = None
+        self._ready = False
         if proc is None:
             return
         try:
@@ -912,15 +1037,138 @@ class _TxWorkerClient:
                 pass
             self._kill()
 
+    # ------------------------------------------------ message pump
+    def _classify(self, msg, job_id, kind, ping_id=None):
+        """Sort one worker message for the current wait:
+        'ready' / 'ack' / 'result' / 'pong' / 'stale'."""
+        try:
+            rid, mkind, result = msg
+        except Exception:
+            return "stale", None
+        if mkind == "ready":
+            self._ready = True
+            return "ready", None
+        if mkind == "ack":
+            return ("ack", None) if rid == job_id \
+                else ("stale", None)
+        if ping_id is not None and rid == ping_id \
+                and mkind == "ping":
+            return "pong", result
+        if rid == job_id and mkind == kind:
+            return "result", result
+        return "stale", None
+
+    def _pump(self, timeout, job_id, kind, ping_id=None,
+              want=("result",)):
+        """Wait up to `timeout` for a wanted event.
+
+        Returns (event, value): one of `want`, or 'died' /
+        'timeout'. Ready sentinels and stale messages are
+        absorbed inside the same budget (a ready flips
+        self._ready and the wait continues)."""
+        end = time.monotonic() + max(0.0, float(timeout))
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return "timeout", None
+            try:
+                msg = self._res_q.get(timeout=min(left, 0.25))
+            except queue.Empty:
+                if self._proc is not None \
+                        and not self._proc.is_alive():
+                    return "died", None
+                continue
+            except Exception:
+                return "timeout", None
+            event, value = self._classify(msg, job_id, kind,
+                                          ping_id)
+            if event in want:
+                return event, value
+            # 'ready' / 'stale' / unwanted 'ack' — keep waiting.
+
+    # ------------------------------------------------ outcomes
+    def _restart(self, reason):
+        """Kill + respawn, with the log line throttled."""
+        msg = {"timeout": "[ears] worker restarted (timeout)",
+               "crashed": "[ears] worker restarted (crashed)",
+               "unresponsive":
+                   "[ears] worker restarted (unresponsive)"}[
+                       reason]
+        self._throttle.emit("restart-" + reason, msg)
+        self._kill()
+        self._spawn()
+
+    def _note_success(self):
+        self._consec_timeouts = 0
+
+    def _note_timeout(self, kind):
+        """One decode timeout (wedged or slow-alive). Two in
+        a row on the automatic kinds trip the wake cooldown:
+        wake/raw requests then fail fast until it expires, so
+        a struggling worker is never buried under new jobs —
+        and listening recovers on its own when it does."""
+        self._consec_timeouts += 1
+        if kind in _AUTO_KINDS \
+                and self._consec_timeouts >= WAKE_COOLDOWN_AFTER:
+            self._consec_timeouts = 0
+            self._cooldown_until = \
+                time.monotonic() + WAKE_COOLDOWN_S
+            self._throttle.emit(
+                "cooldown",
+                "[ears] wake transcription paused briefly "
+                "(worker slow) — still listening")
+
+    def _timeout_recovery(self, job_id, kind):
+        """Phase 2 expired with no result: PING BEFORE KILL.
+
+        A pong — or the late result landing first — proves
+        the worker is slow-but-alive: drop the request, keep
+        the worker, count the timeout. Silence inside the
+        grace means a genuine wedge: restart it."""
+        proc = self._proc
+        if proc is None or not proc.is_alive():
+            self._restart("crashed")
+            return None
+        self._next_id += 1
+        ping_id = self._next_id
+        try:
+            self._req_q.put((ping_id, "ping", "t"))
+        except Exception:
+            self._restart("crashed")
+            return None
+        ev, val = self._pump(PING_TIMEOUT, job_id, kind,
+                             ping_id=ping_id,
+                             want=("result", "pong"))
+        if ev == "result":
+            # The late answer beat the pong: alive, and the
+            # job actually finished — hand it to the caller.
+            self._note_success()
+            return val
+        if ev == "pong":
+            self._note_timeout(kind)
+            return None
+        if ev == "died":
+            self._restart("crashed")
+            return None
+        self._note_timeout(kind)
+        self._restart("timeout")
+        return None
+
     # ------------------------------------------------ requests
     def request(self, kind, payload, deadline):
-        """One job under a hard deadline: the worker's result,
-        or None (timeout / crash / backoff / closed)."""
+        """One job: the worker's result, or None (timeout /
+        crash / backoff / cooldown / closed)."""
         with self._call_lock:
             if self._closed:
                 return None
+            now = time.monotonic()
+            if kind in _AUTO_KINDS and now < self._cooldown_until:
+                # Cascade guard: fail fast — the wake loop
+                # drains its stale segments and the next real
+                # request after the cooldown is the probe.
+                return None
             if self._proc is None:
-                if time.monotonic() < self._backoff_until:
+                if now < self._backoff_until:
                     return None
                 if not self._spawn():
                     return None
@@ -931,37 +1179,54 @@ class _TxWorkerClient:
             except Exception:
                 self._kill()
                 return None
-            end = time.monotonic() + float(deadline)
-            while True:
-                left = end - time.monotonic()
-                if left <= 0:
-                    log.error("[ears] worker restarted (timeout)")
-                    _fire_status("[ears] worker restarted "
-                                 "(timeout)")
-                    self._kill()
-                    self._spawn()  # fresh worker for the NEXT job
-                    return None
-                try:
-                    rid, _kind, result = self._res_q.get(
-                        timeout=min(left, 0.25))
-                except queue.Empty:
-                    if self._proc is not None \
-                            and not self._proc.is_alive():
-                        log.error("[ears] worker restarted "
-                                  "(crashed)")
-                        _fire_status("[ears] worker restarted "
-                                     "(crashed)")
-                        self._kill()
-                        self._spawn()
-                        return None
-                    continue
-                except Exception:
-                    return None
-                if rid == job_id:
-                    return result
-                # A stale response cannot normally exist (one
-                # job in flight, queues die with their worker)
-                # — ignore it and keep waiting for ours.
+            if kind == "ping":
+                # A ping is a liveness probe, not a decode:
+                # the plain deadline applies (v6.2 semantics).
+                ev, val = self._pump(deadline, job_id, kind,
+                                     want=("result",))
+                if ev == "result":
+                    self._note_success()
+                    return val
+                self._restart("crashed" if ev == "died"
+                              else "timeout")
+                return None
+            # ---- phase 1: readiness + ack (NOT the deadline)
+            if not self._ready:
+                if not self._start_logged:
+                    self._start_logged = True
+                    log.info("[ears] transcription worker is "
+                             "starting — loading its models "
+                             "(a first request waits here; "
+                             "this is not a hang)")
+                ev, val = self._pump(READY_TIMEOUT, job_id,
+                                     kind, want=("ack", "result"))
+            else:
+                ev, val = self._pump(ACK_TIMEOUT, job_id, kind,
+                                     want=("ack", "result"))
+            if ev == "result":
+                # A worker that answers without acking first
+                # (the protocol tolerates it) — the answer is
+                # the answer.
+                self._note_success()
+                return val
+            if ev == "died":
+                self._restart("crashed")
+                return None
+            if ev == "timeout":
+                # Never picked the job up inside its start
+                # budget — the worker is broken, not slow.
+                self._restart("timeout")
+                return None
+            # ---- phase 2: the decode deadline runs from the ack
+            ev, val = self._pump(deadline, job_id, kind,
+                                 want=("result",))
+            if ev == "result":
+                self._note_success()
+                return val
+            if ev == "died":
+                self._restart("crashed")
+                return None
+            return self._timeout_recovery(job_id, kind)
 
 
 def _lang_of(info):
@@ -1248,7 +1513,7 @@ def transcribe_command(audio_f32, model_name, initial_prompt=None):
 # (Gemini audio, then Groq Whisper), local faster-whisper as the
 # always-there fallback. The wake loop does NOT use this — it
 # stays local and instant, exactly as before.
-CLOUD_EARS_TIMEOUT = 8.0  # seconds, per provider attempt
+CLOUD_EARS_TIMEOUT = 6.0  # seconds, per provider attempt (v6.3: was 8 — fast switching)
 _GEMINI_STT_URL = ("https://generativelanguage.googleapis.com"
                    "/v1beta/models/{model}:generateContent")
 _GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
@@ -2130,9 +2395,10 @@ class Ears:
         started = time.monotonic()
         text, lang, no_speech = "", "en", 1.0
         # v6.2: the decode runs in the worker PROCESS under
-        # the 4 s wake deadline — a timeout/crash reads as an
-        # empty decode here, and the retry policy below gets
-        # its say with a fresh worker.
+        # the wake deadline (v6.3: 8 s, measured from the
+        # worker's ack) — a timeout/crash reads as an empty
+        # decode here, and the retry policy below gets its
+        # say with a fresh worker.
         got_pass = self._wake_pass(audio, model_name, kwargs)
         if got_pass is not None:
             text, lang, no_speech = got_pass

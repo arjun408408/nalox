@@ -464,6 +464,33 @@ def parse_chat_line(text):
     return "sys", text
 
 
+# v6.3 CHAT PURITY (owner's order, 2026-11-15 18:25 IST:
+# "শুধু ন্যালক্স আর ইউ-র চ্যাট দেখাবে" — the CHAT panel shows
+# ONLY the conversation). The v6.2 field screenshot showed
+# the chat polluted with [timing] / [sys] follow-up / [ears]
+# restart / [voice] / [ERROR] lines. The selection below is
+# the ONLY door into the chat model: genuine conversation
+# lines (his "[mic] heard:" lines and Nalox's "NALOX:"
+# replies) pass; everything else is excluded HERE and only
+# here — the full unfiltered stream still flows to the
+# 📋 Log page (logbook) exactly as before.
+CHAT_WHO = ("you", "nalox")
+
+
+def chat_selection(lines):
+    """The CHAT panel's line selection (v6.3): from raw
+    hudlog lines, the (who, body) pairs for genuine
+    conversation lines only — YOU + NALOX, in order. Pure —
+    unit-testable; Dashboard.post routes through the same
+    predicate."""
+    out = []
+    for line in lines or []:
+        who, body = parse_chat_line(line)
+        if who in CHAT_WHO:
+            out.append((who, body))
+    return out
+
+
 # v5.8: bubble styling as pure data (unit-testable). The
 # Text widget applies these per tag: background paints the
 # bubble, lmargin/rmargin weight it to one side of the
@@ -989,9 +1016,18 @@ class Dashboard:
         return bool(self._visible)
 
     def post(self, text):
-        """Feed one conversation line (same lines hudlog posts)."""
+        """Feed one line (same lines hudlog posts).
+
+        v6.3 CHAT PURITY: only genuine conversation lines
+        (YOU + NALOX — see chat_selection) enter the chat
+        model; system/ears/timing/voice/error lines stop
+        here. They are NOT lost — hudlog mirrors every line
+        to the logbook / 📋 Log page independently of this
+        panel."""
         try:
             who, body = parse_chat_line(text)
+            if who not in CHAT_WHO:
+                return
             with self._chat_lock:
                 self._chat.append((who, body))
             self._send(("chat", (who, body)))

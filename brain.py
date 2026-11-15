@@ -695,6 +695,20 @@ _JARVIS_CHARACTER = (
     "Your replies are spoken aloud: plain text, no markdown, no "
     "lists, no emojis.")
 
+# ------------------------------------------------------------- v6.3
+# FAST PROVIDER SWITCHING (owner's order, 2026-11-15 18:22
+# IST: "একজন অপেক্ষা করলে আরেকজনকে পট করে দিয়ে দিতে" — if
+# one AI keeps him waiting, hand over to the next one FAST).
+# Every provider attempt in the brain chain is capped at
+# PROVIDER_TIMEOUT_S of HTTP time; FreeLLMAPI's old 25 s cap
+# drops to FREELLM_TIMEOUT_S. A hanging provider is abandoned
+# at its cap and the chain falls through at once — the
+# worst case for the whole chain is a handful of caps, never
+# an open-ended wait, and every abandonment is logged by
+# _brain_fail like any other provider failure.
+PROVIDER_TIMEOUT_S = 10.0
+FREELLM_TIMEOUT_S = 10.0
+
 # MODES (config "mode") — the JARVIS character is the base for all
 # three; each mode adds its own working style on top.
 MODES = {
@@ -1728,6 +1742,16 @@ class Brain:
         for _k in ("preferred_name", "preferred_lang"):
             if self._prefs.get(_k) and not cfg.get(_k):
                 cfg[_k] = self._prefs[_k]
+        # v6.3: the learned language is also the LOCAL reply
+        # default from the very first line — self.lang was set
+        # from default_language above, before prefs loaded, so
+        # without this sync a Bengali-first owner still got
+        # English defaults for ambiguous/short utterances
+        # until handle()'s per-call pref pass ran.
+        _pl0 = self._pref_lang()
+        if _pl0:
+            self.lang = _pl0
+            self.last_lang = _pl0
         log.info("[prefs] call me: %s | language: %s",
                  self._addr(), self._pref_lang() or "auto")
         # v4.8: publish the initial brain status and start the
@@ -5589,6 +5613,44 @@ class Brain:
             return f"वो मैं ठीक से समझ नहीं पाया, {user}।"
         return f"That one I couldn't quite catch, {user}."
 
+    def _language_directive(self):
+        """The agent's working-language rule (v6.3), driven by
+        the learned language preference — _pref_lang() reads
+        cfg + prefs.json and handle()'s hot-reload keeps both
+        current, so a preference learned by voice (or edited
+        in Settings) changes this directive with NO restart.
+
+        The owner's order (2026-11-15 18:22 IST): the UI and
+        logs stay English, but Nalox's WORKING language with
+        him is his mother tongue. With pref bn, Bengali is
+        the default; English/Hindi are mirrored when HE uses
+        them; short or ambiguous utterances default to
+        Bengali. en/hi prefs mirror the same shape. With no
+        preference, the v4.3 English-primary rule stands."""
+        pref = self._pref_lang()
+        if pref == "bn":
+            return (" Language: Bengali is your default "
+                    "working language with Arjun — it is his "
+                    "mother tongue. Reply in Bengali by "
+                    "default. When he speaks English, reply in "
+                    "English; when he speaks Hindi, reply in "
+                    "Hindi. For short or ambiguous utterances, "
+                    "default to Bengali. English, Bengali and "
+                    "Hindi are your three languages.")
+        if pref == "hi":
+            return (" Language: Hindi is your default working "
+                    "language with Arjun. Reply in Hindi by "
+                    "default. When he speaks English, reply in "
+                    "English; when he speaks Bengali, reply in "
+                    "Bengali. For short or ambiguous utterances, "
+                    "default to Hindi. English, Bengali and "
+                    "Hindi are your three languages.")
+        return (" Language: English is your primary language. "
+                "When Arjun speaks Bengali or Hindi, reply in "
+                "that same language with the same character — "
+                "English, Bengali and Hindi are your three "
+                "languages.")
+
     def _system_prompt(self):
         mode = MODES[self._mode()]
         prompt = (
@@ -5596,10 +5658,7 @@ class Brain:
             f"{self.cfg['user_name']}'s personal laptop assistant. "
             "You can act on the laptop with your tools. "
             + _JARVIS_CHARACTER + " " + mode["suffix"]
-            + " Language: English is your primary language. When "
-              "Arjun speaks Bengali or Hindi, reply in that same "
-              "language with the same character — English, Bengali "
-              "and Hindi are your three languages.")
+            + self._language_directive())
         # v4.7: a learned form of address binds the agent too —
         # his real name above stays a fact, the ADDRESS follows
         # the preference he taught Nalox ("call me Sir").
@@ -5953,8 +6012,10 @@ class Brain:
         owner's explicit instruction. It is tried only when its
         reachability cache says the app is up: a closed app is
         skipped with zero delay, and a live call is capped at
-        25 s and falls through — never retried twice in one
-        command, never allowed to freeze the conversation.
+        10 s and falls through (v6.3 fast switching — every
+        provider in the chain is capped at 10 s) — never
+        retried twice in one command, never allowed to freeze
+        the conversation.
 
         v4.3: before calling anyone, a question of 3+ words quietly
         searches Arjun's indexed documents; the top-2 snippets ride
@@ -6016,7 +6077,7 @@ class Brain:
                 text, self._freellm_base(), freellm_key,
                 self.cfg.get("freellm_model", "auto") or "auto",
                 label="FreeLLMAPI", provider="freellm",
-                timeout=25)
+                timeout=FREELLM_TIMEOUT_S)
             if reply:
                 _lb("BRAIN", "FreeLLMAPI answered")
                 return reply
@@ -6153,7 +6214,7 @@ class Brain:
                     json={"model": model, "max_tokens": 400,
                           "system": system, "messages": messages,
                           "tools": tools},
-                    timeout=45)
+                    timeout=PROVIDER_TIMEOUT_S)
                 if resp.status_code != 200:
                     self._brain_fail(
                         "Claude",
@@ -6187,7 +6248,7 @@ class Brain:
                 url, headers=headers,
                 json={"model": model, "max_tokens": 400,
                       "system": system, "messages": messages},
-                timeout=45)
+                timeout=PROVIDER_TIMEOUT_S)
             if resp.status_code != 200:
                 self._brain_fail(
                     "Claude",
@@ -6226,7 +6287,7 @@ class Brain:
         """
         # FreeLLMAPI (v5.0), no tools — the local router leads
         # plain chat too, under the same rules as the agent:
-        # reachability cache decides, 25 s cap, fall through.
+        # reachability cache decides, 10 s cap (v6.3), fall through.
         fl_key = (self.cfg.get("freellm_api_key") or "").strip()
         if fl_key and not self._provider_rejected("freellm") \
                 and self._freellm_available():
@@ -6246,7 +6307,7 @@ class Brain:
                                            "quotes, no preamble.")},
                               {"role": "user", "content": prompt}],
                           "max_tokens": 300},
-                    timeout=25)
+                    timeout=FREELLM_TIMEOUT_S)
                 if resp.status_code == 200:
                     reply = (resp.json()["choices"][0]["message"]
                              .get("content") or "").strip()
@@ -6286,7 +6347,7 @@ class Brain:
                                      "for — no quotes, no preamble."),
                           "messages": [{"role": "user",
                                         "content": prompt}]},
-                    timeout=45)
+                    timeout=PROVIDER_TIMEOUT_S)
                 if resp.status_code == 200:
                     blocks = resp.json().get("content") or []
                     reply = " ".join(
@@ -6343,7 +6404,7 @@ class Brain:
                                            "quotes, no preamble.")},
                               {"role": "user", "content": prompt}],
                           "max_tokens": 300},
-                    timeout=45)
+                    timeout=PROVIDER_TIMEOUT_S)
                 if resp.status_code == 200:
                     reply = (resp.json()["choices"][0]["message"]
                              .get("content") or "").strip()
@@ -6386,7 +6447,7 @@ class Brain:
                                            "quotes, no preamble.")},
                               {"role": "user", "content": prompt}],
                           "stream": False},
-                    timeout=45)
+                    timeout=PROVIDER_TIMEOUT_S)
                 reply = ((resp.json().get("message") or {})
                          .get("content") or "").strip()
                 reply = self._guard_reply(reply, "Ollama",
@@ -6437,7 +6498,7 @@ class Brain:
                     url + "/api/chat",
                     json={"model": model, "messages": messages,
                           "tools": AGENT_TOOLS, "stream": False},
-                    timeout=45)
+                    timeout=PROVIDER_TIMEOUT_S)
                 if resp.status_code != 200:
                     self._brain_fail(
                         "Ollama",
@@ -6471,7 +6532,7 @@ class Brain:
             resp = requests.post(
                 url + "/api/chat",
                 json={"model": model, "messages": messages, "stream": False},
-                timeout=45)
+                timeout=PROVIDER_TIMEOUT_S)
             if resp.status_code != 200:
                 self._brain_fail(
                     "Ollama",
@@ -6492,7 +6553,7 @@ class Brain:
 
     def _agent_openai_compatible(self, text, base_url, key, model,
                                  label="OpenAI-compatible",
-                                 provider=None, timeout=45):
+                                 provider=None, timeout=PROVIDER_TIMEOUT_S):
         """v6.0 timing wrapper: record the attempt's latency
         + outcome in perflevel under the provider's name
         (the ⚡ Level and the adaptive provider order read
@@ -6516,7 +6577,7 @@ class Brain:
     def _agent_openai_compatible_impl(self, text, base_url, key,
                                       model,
                                       label="OpenAI-compatible",
-                                      provider=None, timeout=45):
+                                      provider=None, timeout=PROVIDER_TIMEOUT_S):
         """Tool-using loop against an OpenAI-compatible API (Groq/OpenAI).
 
         v4.8: EVERY failure is logged via _brain_fail (one logbook
