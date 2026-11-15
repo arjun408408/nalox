@@ -267,6 +267,42 @@ def google_cloud_voice(lclass):
 ENGINE_BREAK_SECONDS = 300.0
 ENGINE_BREAK_FAILURES = 2
 
+# v6.11 — edge-tts gets ONE in-call retry for network flakes
+# before a failure counts (field 2026-11-15 21:41 IST: on
+# Arjun's phone-hotspot network edge-tts dies with "No audio
+# was received" often enough that Bengali replies kept
+# falling through to the FEMALE Google Translate voice —
+# while his chosen FREE male voice is edge-tts's own
+# bn-BD-PradeepNeural). The retry lives INSIDE _speak_edge,
+# so it happens before _try_engine's bookkeeping: a landed
+# retry is a plain success (breaker untouched, stickiness
+# untouched), and a doubly-failed chunk raises ONCE, so the
+# breaker still counts it exactly once. Module-level so
+# tests can shorten the backoff.
+EDGE_RETRY_BACKOFF_SECONDS = 0.8
+
+
+def _edge_failure_retryable(exc):
+    """True when an edge-tts synthesis failure is a network
+    flake worth ONE fresh-connection retry (v6.11): the
+    no-audio error, a timeout, or a connection failure.
+    A ValueError (e.g. an invalid voice name) is a config
+    error — retrying it would fail identically, so it is
+    never retried. Pure — unit-testable; matches the
+    aiohttp/websockets failure classes by module name so
+    voice.py needs no new imports."""
+    if isinstance(exc, ValueError):
+        return False
+    if type(exc).__name__ == "NoAudioReceived":
+        return True
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError,
+                        ConnectionError, OSError)):
+        return True
+    module = type(exc).__module__ or ""
+    if module.startswith(("aiohttp", "websockets")):
+        return True
+    return "no audio" in str(exc).lower()
+
 # ------------------------------------------------------------- v6.7 D
 # VOICE HEALTH PERSISTS ACROSS RESTARTS (voice_state.json,
 # beside this file — USER DATA: never shipped in packs,
@@ -423,6 +459,10 @@ class Speaker:
         # ENGINE_BREAK_FAILURES the engine is parked until
         # _net_down_until[engine] — one log line per break.
         self._reply_skip = set()
+        # v6.11: the "[voice] edge-tts retry ok" line is
+        # logged at most once per reply; say() resets this
+        # with the rest of the per-reply state.
+        self._edge_retry_noted = False
         self._net_fails = {}
         self._net_down_until = {}
         # v6.7 D: persisted voice health (voice_state.json) —
@@ -1005,8 +1045,42 @@ class Speaker:
         async def _make_bounded():
             await asyncio.wait_for(_make(), timeout=20)
 
-        asyncio.run(_make_bounded())
+        # v6.11: ONE retry on a fresh connection for network
+        # flakes (see _edge_failure_retryable). _make() builds
+        # a NEW edge_tts.Communicate per run, so the second
+        # pass is a genuinely fresh connection. The retry sits
+        # inside this method, before _try_engine's failure
+        # bookkeeping: if it lands, the chunk is a plain
+        # success and the circuit breaker never hears about
+        # the flake; if it also fails, the exception rises
+        # ONCE and the breaker counts the chunk once, exactly
+        # as before v6.11. A barge-in (stop event set) skips
+        # the retry — never speak over Arjun.
+        retried = False
+        while True:
+            try:
+                asyncio.run(_make_bounded())
+                break
+            except Exception as exc:
+                if retried or not _edge_failure_retryable(exc) \
+                        or _STOP_EVENT.is_set():
+                    raise
+                retried = True
+                time.sleep(EDGE_RETRY_BACKOFF_SECONDS)
+        if retried:
+            self._log_edge_retry_ok()
         return self._play_mp3_interruptible(tmp)
+
+    def _log_edge_retry_ok(self):
+        """The v6.11 edge-tts retry landed — one log line
+        per reply at most (the flag resets in say() with
+        the rest of the per-reply state)."""
+        if self._edge_retry_noted:
+            return
+        self._edge_retry_noted = True
+        line = "[voice] edge-tts retry ok"
+        log.info(line)
+        _lb("VOICE", line)
 
     # ---------- Google Cloud Text-to-Speech (v6.8, online) ----------
     def _speak_google_cloud(self, text, lang=None):
@@ -1142,6 +1216,7 @@ class Speaker:
         # engines that fail during THIS reply are skipped for
         # its remaining chunks.
         self._reply_skip = set()
+        self._edge_retry_noted = False
         _speak_begin()
         _started = time.monotonic()
         try:

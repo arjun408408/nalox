@@ -7,8 +7,25 @@ voice-এ ছেলের গলা বেছে নেওয়ার কোন
 Nalox ছেলে, ওর বাংলা গলা ছেলেরই হতে হবে। Google-এর আরেকটা
 সার্ভিস — Google Cloud Text-to-Speech — সেখানে ছেলের বাংলা
 গলা আছে (bn-IN-Standard-B)। সেটা চালু করতে একটা FREE API
-key লাগে। Free tier-এ প্রতি মাসে ১০ লাখ (1 million) character
+key লাগে। Free tier-এ প্রতি মাসে ৪০ লাখ (4 million) character
 ফ্রি — Nalox-এর জন্য যথেষ্টের বেশি। মোট ৫ মিনিট লাগবে।
+
+⚠️ প্রথমেই একটা জরুরি কথা / Read this first:
+এই setup চলাকালীন Google তোমাকে "$300 free trial" দেখাতে
+পারে, বা billing চালু করতে / card যোগ করতে বলতে পারে।
+ওই $300 Google তোমাকে FREE দিচ্ছে (trial credit) — ওটা
+তোমার কাছ থেকে কাটা হবে না। কিন্তু card যোগ করতে বললেই
+তুমি শুধু থেমে যাও — এই setup টা বাদ দাও, কোনো ক্ষতি
+নেই। এই key টা সম্পূর্ণ optional: Nalox-এর নিজের FREE
+ছেলের বাংলা গলা (edge-tts-এর Pradeep) কোনো key বা card
+ছাড়াই চলে।
+(In English: during this setup Google may show a "$300
+free trial" or ask you to enable billing / add a card.
+That $300 is credit Google GIVES you, not a charge. But
+if it asks for a card, just STOP and skip this setup
+entirely — this key is optional. Nalox's free male
+Bengali voice (edge-tts Pradeep) needs no key and no
+card.)
 
 Follow these steps once, on your laptop:
 
@@ -42,14 +59,14 @@ Follow these steps once, on your laptop:
   chat-এ বা কাউকে পাঠিও না।
 - Key না বসালেও Nalox চলবে আগের মতোই (মেয়ের গলার free
   voice দিয়ে) — এই setup টা শুধু গলা বদলানোর জন্য।
-- কোনো card/billing লাগে না এই free tier-এর জন্য; Google
-  যদি billing চায়, থেমে যাও — আমাকে (Muse-কে) বলো,
-  অন্য পথ দেখব।
+- Billing/card নিয়ে উপরের ⚠️ নোটটা পড়ো — Google card
+  চাইলে থেমে যাও, এই setup বাদ দাও — আমাকে (Muse-কে)
+  বলো, অন্য পথ দেখব।
 
 (English summary: the free Google Translate voice Nalox
 uses for Bengali is female with no alternative. Google
 Cloud Text-to-Speech has a male Bengali voice
-(bn-IN-Standard-B), free for 1M characters/month. Create a
+(bn-IN-Standard-B), free for 4M characters/month. Create a
 project at console.cloud.google.com, enable the Cloud
 Text-to-Speech API, create an API key under APIs &
 Services → Credentials, and paste it into Nalox Settings →

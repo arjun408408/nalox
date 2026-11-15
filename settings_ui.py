@@ -376,7 +376,8 @@ def _build(tk, parent, cfg):
                    cfg.get("google_tts_api_key"), show="*")
     tk.Label(fr, text="Free key — steps in "
                       "SETUP-GOOGLE-VOICE.txt (Nalox folder). "
-                      "Paste it here only, never in chat.",
+                      "Paste it here only, never in chat. "
+                      "(optional — skip it if Google asks for a card)",
              bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(
                  anchor="w", padx=10)
     # v5.1: cloud hearing toggle — Gemini/Groq transcribe his
