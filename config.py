@@ -44,9 +44,15 @@ DEFAULTS = {
     # explicit cpu_threads, so the wake lane, the command
     # lane and the preview process decoding at the same
     # moment cannot thrash his 8-core / 16-thread Ryzen 7
-    # 1700. Wake stays light (it must answer instantly),
-    # command gets the most, preview stays light. ---
-    "ears_wake_threads": 2,
+    # 1700. Command gets the most, preview stays light.
+    # v7.2: the WAKE cap rises 2 -> 4 — the v6.12 value was
+    # set while CPU headroom was still treated as scarce;
+    # the owner has since lifted that constraint entirely
+    # (2026-11-15), and the wake lane is the one that must
+    # answer instantly, so it gets the headroom. Existing
+    # installs holding the shipped 2 are migrated by
+    # patch_config.py; a hand-set value is preserved. ---
+    "ears_wake_threads": 4,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
     # --- v7.0: SELF-HEALING WATCHDOGS — the ears watch the

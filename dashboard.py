@@ -165,6 +165,16 @@ follows the live status colour, and the SYSTEM panel
 gains a GPU row (guarded nvidia-smi read, "—" when
 unavailable). Layout, panels and behaviours are
 otherwise exactly as they were.
+
+v7.2 — HE CAN SEE THE MIC. Under the SYSTEM panel's mic
+name, a live mic line (mic_live_text): an 8-cell level
+bar fed by ears.get_level() plus "heard Xs ago" from
+ears.mic_activity()'s gate-beat stamp. When he speaks
+and Nalox hears him, the bar moves and the age stays
+small; when the room is silent — or the mic is not
+picking him up — the bar sits flat and the age grows.
+Guarded end to end: a stats failure leaves the last
+text (or "—") and can never break the dashboard.
 """
 import logging
 import math
@@ -523,6 +533,34 @@ def collect_stats(prev_cpu_sample):
     return stats, (sample if sample is not None else prev_cpu_sample)
 
 
+def mic_live_text(level, loud_age_s):
+    """The SYSTEM panel's live mic line (v7.2). Pure.
+
+    (smoothed mic level 0..1, seconds since a chunk last beat
+    the gate — None when nothing has beaten it since boot)
+    -> one display line: an 8-cell level bar plus the age of
+    the last heard speech energy, so the owner can SEE the
+    mic hearing him (bar moving, age small) or not hearing
+    him (bar flat, age growing)."""
+    try:
+        lvl = max(0.0, min(1.0, float(level)))
+    except Exception:
+        lvl = 0.0
+    filled = int(round(lvl * 8))
+    bar = "█" * filled + "░" * (8 - filled)
+    if loud_age_s is None:
+        age = "no speech heard yet"
+    else:
+        secs = int(loud_age_s)
+        if secs < 2:
+            age = "hearing you now"
+        elif secs < 60:
+            age = f"heard {secs}s ago"
+        else:
+            age = f"heard {secs // 60}m ago"
+    return f"🎙 {bar} · {age}"
+
+
 # ============================================================ chat feed
 def parse_chat_line(text):
     """Map one hudlog() line to (who, body) for the CHAT panel.
@@ -751,6 +789,7 @@ class Dashboard:
         self._clock_label = None
         self._brain_label = None
         self._mic_label = None
+        self._mic_live_label = None  # v7.2: live mic readout
         self._stat_widgets = {}
         self._logo_img = None
         # v5.7: the orb-centre logo, pre-rendered at LOGO_SIZES
@@ -1720,6 +1759,13 @@ class Dashboard:
             left, text="🎤 —", bg=PANEL, fg=MUTED,
             font=("Segoe UI", 10), wraplength=232, justify="left")
         self._mic_label.pack(anchor="w", padx=16, pady=(8, 2))
+        # v7.2: the live mic readout — level bar + "heard Xs
+        # ago" under the mic name (refreshed by _stats_tick
+        # from ears.mic_activity; degrades to "🎙 —").
+        self._mic_live_label = tk.Label(
+            left, text="🎙 —", bg=PANEL, fg=MUTED,
+            font=("Segoe UI", 10), wraplength=232, justify="left")
+        self._mic_live_label.pack(anchor="w", padx=16, pady=(0, 2))
         self._brain_label = tk.Label(
             left, text=self._brain_text or "Brain: checking…",
             bg=PANEL, fg=MUTED, font=("Segoe UI", 10),
@@ -2390,6 +2436,19 @@ class Dashboard:
                 mic = status.get("mic")
                 if mic and mic != "unknown":
                     self._mic_label.configure(text="🎤 " + mic)
+            # v7.2: the live mic readout — level bar + the
+            # age of the last gate beat, from ears'
+            # mic_activity(). Fully guarded: any failure
+            # keeps the previous text and never breaks the
+            # tick (the panel degrades, it does not die).
+            if self._mic_live_label is not None:
+                try:
+                    if _ears is not None:
+                        _lvl, _age = _ears.mic_activity()
+                        self._mic_live_label.configure(
+                            text=mic_live_text(_lvl, _age))
+                except Exception:
+                    pass
             if self._brain_label is not None:
                 brain = self._brain_text or status.get("brain")
                 if brain and brain != "unknown":

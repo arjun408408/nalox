@@ -779,6 +779,38 @@ def get_level():
     return _level
 
 
+# v7.2: the last moment a chunk BEAT the gate threshold (real
+# speech energy, not room tone) in the wake or command listen
+# loops. The Command Center's live mic readout (dashboard.py)
+# shows "heard Xs ago" from this stamp, so the owner can SEE
+# the mic hearing him — or see that it isn't. 0.0 = nothing
+# has beaten the gate since this process started.
+_last_loud_at = 0.0
+
+
+def _note_gate_beat():
+    """Stamp a gate beat (one chunk over the threshold)."""
+    global _last_loud_at
+    _last_loud_at = time.monotonic()
+
+
+def mic_activity():
+    """(level, seconds_since_loud) for the dashboard (v7.2).
+
+    level is get_level(); seconds_since_loud is how long ago
+    a chunk last beat the gate threshold, or None when no
+    chunk has beaten it since boot. Pure reads of module
+    state; guarded so a stats failure can never break the
+    dashboard — it shows "—" instead."""
+    try:
+        if _last_loud_at <= 0.0:
+            return get_level(), None
+        return get_level(), max(0.0, time.monotonic()
+                                - _last_loud_at)
+    except Exception:
+        return 0.0, None
+
+
 # --------------------------------------- stage timing (v4.3)
 # The last command's stage durations, read by nalox.py to build the
 # "[timing] wake→record Xs, transcribe Ys, brain Zs, speak Ws" line
@@ -4057,6 +4089,13 @@ class Segmenter:
         self._speech = 0
         self._trailing = 0
         self._active = False
+        # v7.2 (S2): set by feed() when the segment it just
+        # completed was discarded as a blip — the discard was
+        # SILENT before v7.2, which made "he spoke but the
+        # gate dropped it" indistinguishable from an empty
+        # room in the log. The wake loop reads (and counts)
+        # this after every feed(); behaviour is unchanged.
+        self.last_was_blip = False
 
     @property
     def active(self):
@@ -4070,6 +4109,7 @@ class Segmenter:
 
     def feed(self, chunk, rms, threshold):
         """One chunk in; a completed segment out (or None)."""
+        self.last_was_blip = False
         if not self._active:
             if rms > threshold:
                 self._active = True
@@ -4090,6 +4130,10 @@ class Segmenter:
             self.reset()
             if speech >= self._min_speech:
                 return segment
+            # v7.2 (S2): a completed segment below the
+            # speech minimum is a blip — discarded exactly
+            # as before, but no longer silently.
+            self.last_was_blip = True
         return None
 
 
@@ -4350,6 +4394,20 @@ class Ears:
         # first found itself blocked by is_speaking()).
         self._gate_reported_floor = 0.0
         self._speaking_blocked_since = 0.0
+        # v7.2 (S2): wake-listen gate statistics — the wake
+        # loop counts what the gate/segmenter did with the
+        # room's audio between heartbeats: seg (segments
+        # handed to transcription), blip (completed segments
+        # discarded as sub-0.2 s blips), short (segments
+        # dropped under 0.4 s) and peak (max chunk RMS). The
+        # heartbeat prints them (nalox.py) so the log can
+        # prove whether a silent minute was an empty room
+        # (peak near the floor, seg=0) or speech the gate
+        # dropped (healthy peak, seg=0, blip/short > 0).
+        # wake_listen_stats() snapshots + resets.
+        self._listen_stats = {"seg": 0, "blip": 0, "short": 0,
+                              "peak": 0.0}
+        self._listen_stats_lock = threading.Lock()
         # Ears 2.0: a one-breath command remainder waiting for
         # nalox.py ("Nalox কেমন আছো" -> ("কেমন আছো", "bn")).
         self._pending_command = None
@@ -4738,6 +4796,38 @@ class Ears:
             log.warning("Transcription queue full — dropped a "
                         "wake segment")
             return False
+
+    def wake_listen_stats(self):
+        """Snapshot + reset the v7.2 wake-listen gate stats.
+
+        Keys: seg / blip / short / peak (see __init__). The
+        nalox.py heartbeat calls this once a minute and prints
+        the deltas on the [heartbeat] line — the evidence
+        that separates "he never spoke" from "the gate
+        dropped it". Never raises."""
+        try:
+            with self._listen_stats_lock:
+                snap = dict(self._listen_stats)
+                self._listen_stats = {"seg": 0, "blip": 0,
+                                      "short": 0, "peak": 0.0}
+            return snap
+        except Exception:
+            return {"seg": 0, "blip": 0, "short": 0, "peak": 0.0}
+
+    def _note_listen_stat(self, key, value=None):
+        """One wake-listen stat update (v7.2, S2). Guarded —
+        statistics must never break listening."""
+        try:
+            with self._listen_stats_lock:
+                if key == "peak":
+                    if value is not None and value > \
+                            self._listen_stats["peak"]:
+                        self._listen_stats["peak"] = float(value)
+                else:
+                    self._listen_stats[key] = \
+                        self._listen_stats.get(key, 0) + 1
+        except Exception:
+            pass
 
     def transcribe_queue_size(self):
         """Pending wake-segment jobs (v4.6 heartbeat evidence)."""
@@ -5164,6 +5254,14 @@ class Ears:
             with the legacy reopen above; past the budget the
             owner is told out loud, once (see the v7.0 section
             near _MicHealth).
+          - v7.2 (S2): the loop counts what the gate did —
+            peak chunk RMS, segments submitted, blips and
+            too-short drops (wake_listen_stats) — and the
+            nalox.py heartbeat prints the deltas once a
+            minute, so a silent log can finally prove whether
+            the room was empty or the gate dropped his speech.
+            Gate beats also stamp mic_activity() for the
+            Command Center's live mic readout.
         """
         block = int(0.1 * SAMPLE_RATE)
         segmenter = Segmenter()
@@ -5293,15 +5391,27 @@ class Ears:
                 rms = _rms(chunk)
                 if not segmenter.active:
                     self._track_floor(rms)
-                segment = segmenter.feed(chunk, rms,
-                                         self.gate_threshold())
+                _thr = self.gate_threshold()
+                # v7.2 (S2 + S4): gate bookkeeping — the peak
+                # proves whether ANY speech energy arrived,
+                # a beat stamps the dashboard's "heard Xs
+                # ago", and the segmenter's silent drops are
+                # counted for the heartbeat (see __init__).
+                self._note_listen_stat("peak", rms)
+                if rms > _thr:
+                    _note_gate_beat()
+                segment = segmenter.feed(chunk, rms, _thr)
+                if segmenter.last_was_blip:
+                    self._note_listen_stat("blip")
                 if segment is None:
                     continue
                 audio = np.concatenate(segment)
                 if len(audio) < SAMPLE_RATE * 0.4:
+                    self._note_listen_stat("short")
                     continue
                 # v4.6: the worker transcribes; capture never waits.
-                self._submit_wake_segment(audio, model_name)
+                if self._submit_wake_segment(audio, model_name):
+                    self._note_listen_stat("seg")
         finally:
             source.close()
         return False
@@ -5434,8 +5544,10 @@ class Ears:
                     wait_chunks += 1
                     if wait_chunks > 50:  # ~5 s and nobody spoke
                         break
-                segment = segmenter.feed(chunk, rms,
-                                         self.gate_threshold())
+                _thr = self.gate_threshold()
+                if rms > _thr:
+                    _note_gate_beat()  # v7.2: dashboard "heard" stamp
+                segment = segmenter.feed(chunk, rms, _thr)
                 if pump is not None and segmenter.active:
                     heard_chunks.append(chunk)
                     _now = time.monotonic()

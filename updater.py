@@ -21,8 +21,11 @@ Config (Settings → Updates writes these; all local):
     auto_update   master switch for the scheduled checks
 
 Flow: at boot (~60 s in, background thread) and then every
-6 hours — only when repo+token are set AND auto_update is
-on — fetch the repo's version.txt through the GitHub API;
+30 minutes (v7.2; 6-hourly through v7.1 — the shorter cycle
+lets a pushed fix land within the hour instead of waiting
+out a 6 h boundary) — only when repo+token are set AND
+auto_update is on — fetch the repo's version.txt through
+the GitHub API;
 if it is newer than the local version.txt, download that
 ref's zipball, stage it in a temp dir, apply the whitelist,
 write the updated_to.txt marker, log
@@ -63,8 +66,8 @@ MARKER_NAME = "updated_to.txt"
 API_ROOT = "https://api.github.com/repos/"
 HTTP_TIMEOUT = 30          # every GitHub call is bounded
 CHECK_FIRST_DELAY_S = 60.0   # first check ~60 s after boot
-CHECK_INTERVAL_S = 6 * 3600  # then every 6 hours
-FAILED_RETRY_S = 6 * 3600    # a failed version waits a cycle
+CHECK_INTERVAL_S = 30 * 60   # then every 30 min (v7.2; was 6 h)
+FAILED_RETRY_S = 30 * 60     # a failed version waits a cycle
 
 # The UPDATE.bat apply set, mirrored: top-level code files,
 # docs and data folders. Anything not listed here is never
@@ -450,7 +453,7 @@ def check_and_update(cfg, base_dir=BASE_DIR, http=None,
         "not-configured"  repo/token not set — nothing done
         "disabled"        auto_update off (scheduled path)
         "current"         already on the newest version
-        "skipped-failed"  this version failed < 6 h ago
+        "skipped-failed"  this version failed < 30 min ago
         "updated"         applied; a restart is on its way
         "error: ..."      one failure, logged, nothing applied
 
@@ -503,7 +506,8 @@ def check_and_update(cfg, base_dir=BASE_DIR, http=None,
 
 def start_background(cfg, restart_fn=None):
     """The scheduled checker (called once from nalox.py's
-    boot): first check ~60 s after start, then every 6 h.
+    boot): first check ~60 s after start, then every 30 min
+    (v7.2; 6-hourly through v7.1).
     Silent no-op when repo/token are unset or auto_update is
     off — check_and_update re-reads the live config each
     cycle, so values Arjun saves in Settings apply without a

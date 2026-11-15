@@ -132,7 +132,8 @@ Center's own top bar carries ⚙ Settings + 📋 Log (the
 HUD's own handlers), so nothing he needs lives only on
 the plain window. (3) Nalox UPDATES ITSELF from his
 private GitHub repo (updater.py; Settings → Updates holds
-repo + token): boot + 6-hourly checks, UPDATE.bat-parity
+repo + token): boot + 30-min checks (v7.2; 6-hourly
+through v7.1), UPDATE.bat-parity
 apply, restart via the supervisor, and a one-time spoken
 "I have updated myself to version X.Y, sir." from the
 updated_to.txt marker popped below. (4) All local
@@ -1438,10 +1439,19 @@ def main():
             while True:
                 time.sleep(60)
                 try:
+                    # v7.2 (S2): the gate deltas ride the
+                    # heartbeat — seg/blip/short/peak separate
+                    # "he never spoke" (peak at the floor) from
+                    # "the gate dropped it" (healthy peak,
+                    # seg=0). See ears.wake_listen_stats.
+                    _gs = ears.wake_listen_stats()
                     logbook.log_file_only(
                         f"[heartbeat] state={_ui_state} "
                         f"mic={ears.current_mic_name()} "
-                        f"queue={ears.transcribe_queue_size()}")
+                        f"queue={ears.transcribe_queue_size()} "
+                        f"seg={_gs['seg']} blip={_gs['blip']} "
+                        f"short={_gs['short']} "
+                        f"peak={_gs['peak']:.4f}")
                 except Exception:
                     pass
 
@@ -1500,8 +1510,9 @@ def main():
         log.warning("Telegram bridge failed to start: %s", exc)
 
     # v6.2 SELF-UPDATE checker (updater.py): first check
-    # ~60 s after boot, then every 6 h — background thread,
-    # silent unless Settings → Updates holds a repo + token.
+    # ~60 s after boot, then every 30 min (v7.2; 6-hourly
+    # through v7.1) — background thread, silent unless
+    # Settings → Updates holds a repo + token.
     try:
         import updater as _updater_mod
         _updater_mod.start_background(cfg, _restart_process)

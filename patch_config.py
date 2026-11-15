@@ -115,8 +115,11 @@ PATCH_IF_ABSENT = {
     # he pastes a key (SETUP-GOOGLE-VOICE.txt).
     "google_tts_api_key": "",
     # v6.12: ears thread caps (see config.py) — added when
-    # absent; a value he sets by hand is preserved.
-    "ears_wake_threads": 2,
+    # absent; a value he sets by hand is preserved. v7.2:
+    # the wake default is 4 now (see WAKE_THREADS_OLD_
+    # DEFAULT below): an install missing the key gets 4,
+    # and one still holding the shipped 2 migrates.
+    "ears_wake_threads": 4,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
     # v6.13: big-model device preference (see config.py) —
@@ -186,6 +189,20 @@ WAKE_LINE_NEW_DEFAULT = "Yes Sir, I'm here."
 COMMAND_MODEL_OLD_DEFAULT = "small"
 COMMAND_MODEL_NEW_DEFAULT = "large-v3-turbo"
 
+# v7.2 wake-threads migration, same shape as the ones above.
+# The v6.12 patch WROTE ears_wake_threads=2 into config.json
+# as its default (PATCH_IF_ABSENT), and no Settings control
+# exists for this key — so an existing 2 is the shipped
+# default, never a deliberate choice. The v6.12 caps were
+# set while CPU headroom was still treated as a constraint;
+# the owner has since lifted that constraint entirely
+# (2026-11-15), and the wake lane is the one that must
+# answer instantly, so its default rises to 4. ANY other
+# existing value (only reachable by hand-editing the file)
+# is user-set and is preserved untouched.
+WAKE_THREADS_OLD_DEFAULT = 2
+WAKE_THREADS_NEW_DEFAULT = 4
+
 
 def main():
     if not os.path.exists(CONFIG_PATH):
@@ -233,6 +250,14 @@ def main():
             f"whisper_command_model={COMMAND_MODEL_NEW_DEFAULT} "
             "(v6.7: the shipped 'small' default migrated to the "
             "big local fallback; a user-set value would have "
+            "been kept)")
+    if cfg.get("ears_wake_threads") == WAKE_THREADS_OLD_DEFAULT:
+        cfg["ears_wake_threads"] = WAKE_THREADS_NEW_DEFAULT
+        changed.append(
+            f"ears_wake_threads={WAKE_THREADS_NEW_DEFAULT} "
+            "(v7.2: the shipped v6.12 default migrated — the "
+            "owner lifted the CPU constraint, so the wake lane "
+            "gets more headroom; a user-set value would have "
             "been kept)")
     if not changed:
         print("[patch] config.json already up to date.")

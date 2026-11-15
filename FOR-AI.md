@@ -130,8 +130,9 @@ override your defaults whenever they conflict.
 ## Self-update (v6.2) — how it must stay
 
 - Config keys: `github_repo`, `github_token`, `auto_update`
-  (Settings → Updates). Boot check ~60 s in, then 6-hourly,
-  only when repo+token set and auto on.
+  (Settings → Updates). Boot check ~60 s in, then every
+  30 min (v7.2; 6-hourly through v7.1), only when
+  repo+token set and auto on.
 - Apply = UPDATE.bat parity (whitelist in `updater._wanted`);
   **user data NEVER ships or gets overwritten**: `config.json`,
   `custom_commands.json`, `prefs.json`, logs, `*.flag`, `*.lock`,
@@ -190,7 +191,8 @@ behaviour are updated with a note, never silently deleted.
    `arjun408408/nalox`, patch-if-absent; `github_token` stays
    "" until he pastes one into Settings → Updates — never
    ask for it in chat, never commit a token). Every running
-   Nalox self-updates on its next check (boot + 6-hourly).
+   Nalox self-updates on its next check (boot + 30-min
+  checks since v7.2; 6-hourly before).
 
 ## Known open items (as of v6.8)
 
@@ -396,3 +398,67 @@ ears_antichain_require_stall, ears_wake_segment_max_age_s.
 Tests: test_v71 (new) + the full battery. Frozen as ever:
 brain/providers, Bengali-only replies, phone app,
 Telegram, exit codes.
+
+## v7.2 — wake headroom, gate proof, faster self-update, visible mic (2026-11-16)
+
+Built overnight on the owner's direct order after his
+02:04 IST verdict on v7.1 ("কিছু হয়নি" — nothing
+worked, ~3 min of testing). FIRST STEP was the fresh log
+evidence, and it must be recorded honestly: the newest
+sync reachable during the whole build (fetched
+repeatedly, logs-branch sha 74e2530b) was STILL the
+02:02:26 sync — no newer sync had landed. The complete
+v7.1 session evidence is therefore 13 log lines: clean
+boot 02:01:06, greeting composed 02:01:07 and SPOKEN via
+google-tts 02:01:16, [ready], mic connected, gate
+floor=0.0000 threshold=0.0060, Command Center closed
+02:02:05, one heartbeat (state=listening, queue=0). Zero
+[heard], zero worker-slow, zero queue growth, zero
+watchdog lines; the fault log holds NO v7.1 crash (its
+last boot marker is this very boot). That window proves
+NEITHER a further ears defect NOR health: a wake segment
+that decoded without matching, and speech the gate never
+turned into a segment, are both invisible in it. No S5
+fix was invented — S2 below exists precisely to make the
+next such window decidable.
+
+- S1 WAKE HEADROOM: the shipped `ears_wake_threads`
+  default rises 2 -> 4 (config.py DEFAULTS +
+  patch_config PATCH_IF_ABSENT + a WAKE_THREADS migration
+  in the established shape: an existing 2 is the shipped
+  v6.12 default and migrates; ANY other value is his and
+  is preserved). The v6.12 caps predated the owner's
+  lifted CPU constraint (2026-11-15). Command (4) and
+  preview (2) caps unchanged.
+- S2 GATE PROOF (ears.py + nalox.py): the Segmenter now
+  flags its blip discards (`last_was_blip` — behaviour
+  identical, the discard is no longer silent); the wake
+  loop counts seg (submitted) / blip / short (<0.4 s
+  drops) / peak chunk RMS into `Ears._listen_stats`;
+  `wake_listen_stats()` snapshots + resets; the nalox.py
+  heartbeat prints the deltas (`seg= blip= short=
+  peak=`). Reading a future heartbeat: peak near the
+  floor with seg=0 = the room was silent; a healthy peak
+  with seg=0 and blip/short > 0 = he spoke and the gate
+  dropped it; seg > 0 = segments are flowing to decode.
+- S3 SELF-UPDATE CADENCE (updater.py): CHECK_INTERVAL_S
+  and FAILED_RETRY_S 6 h -> 30 min. The existing shape is
+  module constants, so this is a constant change — there
+  is deliberately NO new config key. Boot check (~60 s)
+  unchanged; a pushed fix now lands within the hour.
+- S4 VISIBLE MIC (ears.py + dashboard.py): gate beats in
+  the wake AND command loops stamp `ears._last_loud_at`;
+  `ears.mic_activity()` returns (smoothed level, seconds
+  since the last beat or None). The SYSTEM panel gains a
+  live mic line under the mic name — `mic_live_text()`:
+  an 8-cell level bar + "hearing you now" / "heard Xs
+  ago" / "no speech heard yet" — refreshed on the 1 s
+  stats tick, guarded end to end ("🎙 —" on any failure).
+  This release's visible change (owner's UI rule).
+Tests: test_v72 (new) + the full battery. Intentional
+re-pins: test_v612 S6/S8 (the wake default is 4 now) and
+the functional version-needle sweep 7.1 -> 7.2 in every
+suite (test_v71's self-contained fixtures — fake zips,
+formatter samples — untouched). Frozen as ever:
+brain/providers, Bengali-only replies, phone app,
+Telegram, exit codes, wake models + fuzzy matching.
