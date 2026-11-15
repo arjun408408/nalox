@@ -1,4 +1,3 @@
 Nalox log sync
-Version: smoke-test
-SMOKE TEST — v6.9 logsync API proof, written by Muse via gh api. Nalox will overwrite this file on its first real sync.
-log sync: smoke
+Version: smoke-test-2
+SMOKE TEST UPDATE — sha path proven live. Nalox will overwrite this file on its first real sync.
