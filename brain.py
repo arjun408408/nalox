@@ -728,6 +728,77 @@ FREELLM_TIMEOUT_S = 10.0
 FREELLM_COOLDOWN_S = 300.0
 MODEL_WALK_BUDGET_S = 12.0
 
+# ------------------------------------------------------------- v6.13
+# RATE-LIMIT RETRY (OpenJarvis import #3 — jittered backoff,
+# agents/hybrid/_openai_retry.py, shrunk to Nalox's
+# budgets). On HTTP 429 ONLY, a Groq call retries up to
+# twice with small jittered delays, strictly inside the
+# budget the caller already had (the provider cap, itself
+# bounded by the walk remainder): a retry that would not
+# fit is skipped and the provider falls through at once —
+# the v6.3 fast-switching rule outranks retrying. No
+# other status is ever retried; auth / quota-dead errors
+# keep the walk / fall-through semantics they have today.
+# ears.py carries the twin of this for the Groq cloud ear.
+_RL_DELAYS_S = (0.4, 1.2)
+_RL_JITTER_S = 0.3
+_RL_MIN_FIT_S = 0.25
+
+
+def _rl_delay(attempt):
+    """The jittered delay before rate-limit retry number
+    `attempt` (0-based): the base delay + a random jitter,
+    so parallel callers never wake in lockstep."""
+    base = _RL_DELAYS_S[min(attempt, len(_RL_DELAYS_S) - 1)]
+    return base + random.uniform(0.0, _RL_JITTER_S)
+
+
+def _rl_sleep(seconds):
+    """The retry sleep (a wrapper so the suites can record
+    instead of waiting)."""
+    time.sleep(seconds)
+
+
+def _post_with_rl_retry(post, url, *, headers, json_body,
+                        timeout_s, deadline):
+    """One logical POST with the v6.13 rate-limit retry.
+
+    `post` is requests.post (passed in, so the suites
+    script the very object the callers use). The first
+    attempt gets the full timeout_s — the caller set the
+    deadline to that same budget an instant earlier, so
+    the microseconds already spent must not shrink the
+    provider's cap (the pre-v6.13 code called post with
+    exactly timeout_s, and the suites pin that). A 429
+    retries while both a delay slot and budget remain,
+    each retry getting only the time left. The final
+    response — success, an exhausted 429, or any other
+    status — returns for the caller's existing handling;
+    transport exceptions propagate exactly as a bare
+    post's would."""
+    attempt = 0
+    last = None
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            if last is not None:
+                return last
+            raise TimeoutError(
+                "provider budget spent before the call ran")
+        att = timeout_s if left >= timeout_s - 0.05 \
+            else min(timeout_s, left)
+        last = post(url, headers=headers, json=json_body,
+                    timeout=att)
+        if last.status_code != 429 \
+                or attempt >= len(_RL_DELAYS_S):
+            return last
+        delay = _rl_delay(attempt)
+        if delay + _RL_MIN_FIT_S >= \
+                deadline - time.monotonic():
+            return last
+        _rl_sleep(delay)
+        attempt += 1
+
 # ------------------------------------------------------------- v6.7
 # OLLAMA, A REAL LAST RESORT. The owner lifted the CPU
 # constraint (2026-11-15 19:51 IST), so the offline brain is
@@ -5700,6 +5771,124 @@ class Brain:
         with self._validate_lock:
             self._validate_keys_now_locked()
 
+    def _check_one_key(self, requests, prov, field, url,
+                       label):
+        """ONE provider's key check (v6.13: extracted from
+        the validation loop so the run can probe providers
+        CONCURRENTLY — OpenJarvis import #2, engine
+        discovery style). The behaviour is the loop body's,
+        unchanged: one lightweight GET /models with bounded
+        (connect, read) timeouts, the result published the
+        moment it lands (v5.2). Returns (prov, result) —
+        result None when the field is empty. Runs on a
+        pool thread; everything it touches is either local,
+        lock-guarded, or the publish path itself."""
+        key = (self.cfg.get(field) or "").strip()
+        if not key:
+            return prov, None
+        if url is None:
+            # v5.0: FreeLLMAPI's base URL is configurable.
+            url = self._freellm_base() + "/models"
+        headers = {"Authorization": f"Bearer {key}"}
+        if prov == "anthropic":
+            headers = {"x-api-key": key,
+                       "anthropic-version": "2023-06-01"}
+        try:
+            # v5.2: a (connect, read) tuple, not a scalar —
+            # a scalar timeout is per-operation in requests,
+            # so a slow-dripping endpoint could hold a check
+            # open far past 6 s; the tuple bounds each phase.
+            resp = requests.get(url, headers=headers,
+                                timeout=(3.05, 5))
+        except Exception as exc:
+            detail = (f"{type(exc).__name__}: {exc}")[:120]
+            if prov == "freellm" and (
+                    "onnection" in type(exc).__name__
+                    or "refused" in str(exc)):
+                # The router APP is not running — a state
+                # of its own ("down"), not a key problem and
+                # not a network outage. The reachability
+                # cache learns it too, so the agent skips
+                # the provider instantly until a re-probe.
+                result = {
+                    "state": "down",
+                    "detail": "not running — open the "
+                              "FreeLLMAPI app"}
+                with self._prov_lock:
+                    self._freellm = {"at": time.monotonic(),
+                                     "up": False}
+                _lb("ERROR", "[BRAIN] FreeLLMAPI not running "
+                             "— open the FreeLLMAPI app on "
+                             "this laptop; it becomes the "
+                             "brain as soon as it is up.")
+                log.error("[brain] FreeLLMAPI not running "
+                          "(connection refused)")
+                self._publish_key_check(prov, result)
+                return prov, result
+            result = {"state": "unreachable",
+                             "detail": detail}
+            _lb("ERROR", f"[BRAIN] {label} key check FAILED: "
+                         f"{detail}")
+            log.error("[brain] %s key check failed: %s",
+                      label, detail)
+            self._publish_key_check(prov, result)
+            return prov, result
+        if prov == "freellm":
+            # Any HTTP response at all = the app is up.
+            with self._prov_lock:
+                self._freellm = {"at": time.monotonic(),
+                                 "up": True}
+        if resp.status_code == 200:
+            result = {"state": "ok", "detail": "key OK"}
+            log.info("[brain] %s key check: OK", label)
+            # v6.5: the candidate walk rides validation —
+            # the /models list says which model names this
+            # key may actually use, so a dead head model is
+            # replaced BEFORE the first command pays for
+            # the 404. Best-effort: an unparseable list
+            # changes nothing (the live walk still covers
+            # the call path), and a mismatch never marks
+            # the key itself bad.
+            if prov in _MODEL_WALK_PROVIDERS:
+                try:
+                    ids = set()
+                    for item in (resp.json().get("data")
+                                 or []):
+                        mid = str(item.get("id") or "")
+                        if mid:
+                            ids.add(mid)
+                            if mid.startswith("models/"):
+                                ids.add(mid[len("models/"):])
+                    for cand in self._model_candidates(prov):
+                        if cand in ids:
+                            self._remember_working_model(
+                                prov, cand, label)
+                            break
+                except Exception:
+                    pass
+        elif resp.status_code in (401, 403):
+            detail = (f"HTTP {resp.status_code} — "
+                      f"{_err_snippet(resp)}")
+            result = {"state": "rejected",
+                             "detail": detail}
+            _lb("ERROR", f"[BRAIN] {label} key REJECTED: "
+                         f"{detail}")
+            log.error("[brain] %s key rejected: %s",
+                      label, detail)
+        else:
+            detail = (f"HTTP {resp.status_code} — "
+                      f"{_err_snippet(resp)}")
+            result = {"state": "unreachable",
+                             "detail": detail}
+            _lb("ERROR", f"[BRAIN] {label} key check FAILED: "
+                         f"{detail}")
+            log.error("[brain] %s key check failed: %s",
+                      label, detail)
+        # v5.2: publish THIS provider's result immediately —
+        # the headline must not wait for the rest of the line.
+        self._publish_key_check(prov, result)
+        return prov, result
+
     def _validate_keys_now_locked(self):
         """One full validation pass (call ONLY under
         _validate_lock, via _validate_keys_now).
@@ -5710,118 +5899,63 @@ class Brain:
         each provider lands in _key_checks + brain_status the
         moment its own check finishes. A rejected Claude key
         with an empty Groq field also earns the wrong-field
-        hint as a logbook ERROR line."""
+        hint as a logbook ERROR line.
+
+        v6.13: the checks run CONCURRENTLY (OpenJarvis
+        import #2 — engine/_discovery.py::discover_engines
+        probes engine health in a thread pool and sorts the
+        results deterministically). The key checks and the
+        Ollama boot-note probe are independent network
+        calls, so they share one pool: the run takes the
+        SLOWEST single check (+ slack), not the sum, and
+        no check can hold the run past its own timeouts.
+        Collection is deterministic — results are gathered
+        in _KEY_CHECKS table order for the final state,
+        whatever order the pool finished in — and every
+        log line is the same line the serial run produced.
+        (Voice has no boot probe to add to the pool:
+        describe_active() is a pure state read and engine
+        health is deliberately lazy — v6.6/v6.7 stickiness
+        + persisted parks — so the serial boot cost the
+        field logs showed was always on this side.)"""
         try:
             import requests
         except Exception:
             return
+        from concurrent.futures import ThreadPoolExecutor
+        _checks = [(prov, field, url, label)
+                   for prov, field, url, label
+                   in self._KEY_CHECKS
+                   if (self.cfg.get(field) or "").strip()]
         results = {}
-        _checks = list(self._KEY_CHECKS)
-        for prov, field, url, label in _checks:
-            key = (self.cfg.get(field) or "").strip()
-            if not key:
-                continue
-            if url is None:
-                # v5.0: FreeLLMAPI's base URL is configurable.
-                url = self._freellm_base() + "/models"
-            headers = {"Authorization": f"Bearer {key}"}
-            if prov == "anthropic":
-                headers = {"x-api-key": key,
-                           "anthropic-version": "2023-06-01"}
+
+        def _ollama_note():
+            # v6.7: the offline brain gets its one boot
+            # note — independent of every key check, so it
+            # probes alongside them instead of after them.
             try:
-                # v5.2: a (connect, read) tuple, not a scalar —
-                # a scalar timeout is per-operation in requests,
-                # so a slow-dripping endpoint could hold a check
-                # open far past 6 s; the tuple bounds each phase.
-                resp = requests.get(url, headers=headers,
-                                    timeout=(3.05, 5))
-            except Exception as exc:
-                detail = (f"{type(exc).__name__}: {exc}")[:120]
-                if prov == "freellm" and (
-                        "onnection" in type(exc).__name__
-                        or "refused" in str(exc)):
-                    # The router APP is not running — a state
-                    # of its own ("down"), not a key problem and
-                    # not a network outage. The reachability
-                    # cache learns it too, so the agent skips
-                    # the provider instantly until a re-probe.
-                    results[prov] = {
-                        "state": "down",
-                        "detail": "not running — open the "
-                                  "FreeLLMAPI app"}
-                    with self._prov_lock:
-                        self._freellm = {"at": time.monotonic(),
-                                         "up": False}
-                    _lb("ERROR", "[BRAIN] FreeLLMAPI not running "
-                                 "— open the FreeLLMAPI app on "
-                                 "this laptop; it becomes the "
-                                 "brain as soon as it is up.")
-                    log.error("[brain] FreeLLMAPI not running "
-                              "(connection refused)")
-                    self._publish_key_check(prov, results[prov])
+                self._note_ollama_at_boot()
+            except Exception:
+                pass
+
+        with ThreadPoolExecutor(
+                max_workers=max(1, len(_checks) + 1),
+                thread_name_prefix="nalox-key-probe") as pool:
+            _futures = {pool.submit(self._check_one_key,
+                                    requests, prov, field,
+                                    url, label): prov
+                        for prov, field, url, label
+                        in _checks}
+            _futures[pool.submit(_ollama_note)] = None
+            for _fut, _prov in _futures.items():
+                try:
+                    _out = _fut.result()
+                except Exception:
                     continue
-                results[prov] = {"state": "unreachable",
-                                 "detail": detail}
-                _lb("ERROR", f"[BRAIN] {label} key check FAILED: "
-                             f"{detail}")
-                log.error("[brain] %s key check failed: %s",
-                          label, detail)
-                self._publish_key_check(prov, results[prov])
-                continue
-            if prov == "freellm":
-                # Any HTTP response at all = the app is up.
-                with self._prov_lock:
-                    self._freellm = {"at": time.monotonic(),
-                                     "up": True}
-            if resp.status_code == 200:
-                results[prov] = {"state": "ok", "detail": "key OK"}
-                log.info("[brain] %s key check: OK", label)
-                # v6.5: the candidate walk rides validation —
-                # the /models list says which model names this
-                # key may actually use, so a dead head model is
-                # replaced BEFORE the first command pays for
-                # the 404. Best-effort: an unparseable list
-                # changes nothing (the live walk still covers
-                # the call path), and a mismatch never marks
-                # the key itself bad.
-                if prov in _MODEL_WALK_PROVIDERS:
-                    try:
-                        ids = set()
-                        for item in (resp.json().get("data")
-                                     or []):
-                            mid = str(item.get("id") or "")
-                            if mid:
-                                ids.add(mid)
-                                if mid.startswith("models/"):
-                                    ids.add(mid[len("models/"):])
-                        for cand in self._model_candidates(prov):
-                            if cand in ids:
-                                self._remember_working_model(
-                                    prov, cand, label)
-                                break
-                    except Exception:
-                        pass
-            elif resp.status_code in (401, 403):
-                detail = (f"HTTP {resp.status_code} — "
-                          f"{_err_snippet(resp)}")
-                results[prov] = {"state": "rejected",
-                                 "detail": detail}
-                _lb("ERROR", f"[BRAIN] {label} key REJECTED: "
-                             f"{detail}")
-                log.error("[brain] %s key rejected: %s",
-                          label, detail)
-            else:
-                detail = (f"HTTP {resp.status_code} — "
-                          f"{_err_snippet(resp)}")
-                results[prov] = {"state": "unreachable",
-                                 "detail": detail}
-                _lb("ERROR", f"[BRAIN] {label} key check FAILED: "
-                             f"{detail}")
-                log.error("[brain] %s key check failed: %s",
-                          label, detail)
-            # v5.2: publish THIS provider's result immediately —
-            # the headline must not wait for the rest of the line.
-            self._publish_key_check(prov, results[prov])
+                if _prov is not None and _out is not None:
+                    _p, _result = _out
+                    if _result is not None:
+                        results[_p] = _result
         with self._status_lock:
             self._key_checks = results
         self._refresh_brain_status()
@@ -5837,8 +5971,7 @@ class Brain:
                 "Claude's. Move it in Settings → Brain.")
             log.error("[brain] hint: the rejected Claude key may "
                       "be a Groq key pasted into the wrong field")
-        # v6.7: the offline brain gets its one boot note.
-        self._note_ollama_at_boot()
+
 
     def _note_ollama_at_boot(self):
         """Note the OFFLINE brain once per Brain instance (v6.7).
@@ -6906,21 +7039,31 @@ class Brain:
                     break
                 try:
                     import requests
-                    resp = requests.post(
+                    # v6.13: a 429 retries with jittered
+                    # backoff inside this candidate's own
+                    # timeout (already the provider cap
+                    # bounded by the walk remainder).
+                    _call_timeout = min(
+                        PROVIDER_TIMEOUT_S,
+                        max(1.0, _remaining))
+                    resp = _post_with_rl_retry(
+                        requests.post,
                         base_url + "/chat/completions",
                         headers={"Authorization": f"Bearer {api_key}",
                                  "Content-Type": "application/json"},
-                        json={"model": _cand,
-                              "messages": [
-                                  {"role": "system",
-                                   "content": ("You are Nalox, Arjun's "
-                                               "assistant. Reply with ONLY "
-                                               "the text asked for — no "
-                                               "quotes, no preamble.")},
-                                  {"role": "user", "content": prompt}],
-                              "max_tokens": 300},
-                        timeout=min(PROVIDER_TIMEOUT_S,
-                                    max(1.0, _remaining)))
+                        json_body={"model": _cand,
+                                   "messages": [
+                                       {"role": "system",
+                                        "content": ("You are Nalox, Arjun's "
+                                                    "assistant. Reply with ONLY "
+                                                    "the text asked for — no "
+                                                    "quotes, no preamble.")},
+                                       {"role": "user",
+                                        "content": prompt}],
+                                   "max_tokens": 300},
+                        timeout_s=_call_timeout,
+                        deadline=(time.monotonic()
+                                  + _call_timeout))
                     if resp.status_code == 200:
                         reply = (resp.json()["choices"][0]["message"]
                                  .get("content") or "").strip()
@@ -7303,13 +7446,19 @@ class Brain:
                         + self.chat_history[-8:]
                         + [{"role": "user", "content": text}])
             for _round in range(3):
-                resp = requests.post(
+                # v6.13: a 429 retries with jittered backoff
+                # inside this call's own timeout budget.
+                resp = _post_with_rl_retry(
+                    requests.post,
                     base_url + "/chat/completions",
                     headers=headers,
-                    json={"model": model, "messages": messages,
-                          "tools": AGENT_TOOLS, "tool_choice": "auto",
-                          "max_tokens": 300},
-                    timeout=timeout)
+                    json_body={"model": model,
+                               "messages": messages,
+                               "tools": AGENT_TOOLS,
+                               "tool_choice": "auto",
+                               "max_tokens": 300},
+                    timeout_s=timeout,
+                    deadline=time.monotonic() + timeout)
                 if resp.status_code != 200:
                     if model_walk and _model_error_snippet(
                             resp.status_code, resp) is not None:
@@ -7341,11 +7490,14 @@ class Brain:
                                      "tool_call_id": call.get("id", ""),
                                      "content": result})
             # Tool rounds used up — ask once more, without tools.
-            resp = requests.post(
+            resp = _post_with_rl_retry(
+                requests.post,
                 base_url + "/chat/completions",
                 headers=headers,
-                json={"model": model, "messages": messages, "max_tokens": 300},
-                timeout=timeout)
+                json_body={"model": model, "messages": messages,
+                           "max_tokens": 300},
+                timeout_s=timeout,
+                deadline=time.monotonic() + timeout)
             if resp.status_code != 200:
                 if model_walk and _model_error_snippet(
                         resp.status_code, resp) is not None:

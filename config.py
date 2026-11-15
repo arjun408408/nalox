@@ -49,6 +49,16 @@ DEFAULTS = {
     "ears_wake_threads": 2,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
+    # --- v6.13: BIG-MODEL DEVICE (OpenJarvis import #1 —
+    # CTranslate2 compute-type probing). The big command
+    # model probes CUDA support before loading: "auto" =
+    # GPU (float16) when the probe reports it, CPU int8
+    # otherwise, with a clean one-line fallback if a CUDA
+    # load fails. "cpu" forces the old path; "cuda" asks
+    # for the GPU (still degrades safely when absent).
+    # Only the big command model ever uses the GPU — the
+    # wake lane and preview stay on CPU. ---
+    "ears_big_device": "auto",
     # --- v5.1: CLOUD EARS — the COMMAND transcription may go
     # to the cloud first (Gemini audio, then Groq Whisper),
     # because the local small model still garbles Arjun's

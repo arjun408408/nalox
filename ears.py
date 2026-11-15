@@ -594,6 +594,17 @@ def get_level():
 # on the log page — so a slow stage is provable from a screenshot.
 LAST_TIMING = {"record": 0.0, "transcribe": 0.0}
 
+# v6.13: WHY the last listen_for_command came back empty —
+# None (a command WAS heard, or no listen has run yet),
+# "no-speech" (no segment ever formed), "too-short" (a
+# segment formed but held <0.3 s of speech), or
+# "engines-empty" (real speech was captured and EVERY
+# transcription path — cloud and local — returned empty).
+# nalox.py reads this after a post-wake listen: an empty
+# command is answered out loud, never with silence, and
+# "engines-empty" also earns a logbook ERROR.
+LAST_COMMAND_MISS = None
+
 
 # ------------------------------------------------- wake callback (v3.4)
 _wake_callback = None
@@ -658,6 +669,21 @@ def _fire_status(msg):
         fn(msg)
     except Exception:
         pass  # status reporting must never break listening
+
+
+def _logbook_error(msg):
+    """Write ONE ERROR line into the diagnostics logbook
+    (v6.13). The logbook is the file logsync uploads, and an
+    ERROR line is what asks logsync for an early upload —
+    the Python logger alone lands in nalox.log, which nobody
+    off this machine ever sees. Guarded lazy import,
+    mirroring voice._lb: ears must never break because the
+    logbook did."""
+    try:
+        import logbook
+        logbook.log("ERROR", msg)
+    except Exception:
+        pass
 
 
 # --------------------------------------- manual TALK trigger (v3.7)
@@ -952,7 +978,9 @@ def _try_load_big(model_cls):
     last_exc = None
     for name in _big_candidates():
         try:
-            model = _construct_model(model_cls, name)
+            # v6.13: big-slot constructions go through the
+            # device plan (GPU first when it probes well).
+            model = _construct_big(model_cls, name)
             return model, name, "ok", None
         except Exception as exc:
             if _is_invalid_size_error(exc):
@@ -984,6 +1012,7 @@ def _retry_big_model(res_q=None):
     names the model actually serving."""
     global _big_model_down, _big_model_error
     global _big_model_fail_kind, _big_resolved
+    global _big_resolved_notice_sent, _big_gpu_notice_sent
     try:
         from faster_whisper import WhisperModel
         model, resolved, kind, exc = _try_load_big(
@@ -1016,9 +1045,20 @@ def _retry_big_model(res_q=None):
     _save_ears_state({"command_model_resolved": resolved})
     if res_q is not None:
         try:
+            # v6.13: the serving device rides the resolved
+            # notice, and a GPU fail-over during the retry
+            # earns its one honest line here too.
             res_q.put((0, "notice",
-                       ("big-model-resolved", resolved)))
+                       ("big-model-resolved", resolved,
+                        _big_device_desc)))
+            _big_resolved_notice_sent = True
             res_q.put((0, "notice", "big-model-ready"))
+            if _big_gpu_fallback_reason \
+                    and not _big_gpu_notice_sent:
+                res_q.put((0, "notice",
+                           ("big-model-gpu-fallback",
+                            _big_gpu_fallback_reason)))
+                _big_gpu_notice_sent = True
         except Exception:
             pass
     return True
@@ -1067,13 +1107,97 @@ def _lane_threads(lane, cfg):
     return _LANE_DEFAULT_THREADS.get(lane, 4)
 
 
-def _construct_model(model_cls, name):
+# ------------------------------------------------------------- v6.13
+# BIG-MODEL DEVICE — GPU decode + compute-type probing
+# (OpenJarvis import #1: src/openjarvis/speech/
+# faster_whisper.py::_resolve_compute_type probes
+# ctranslate2.get_supported_compute_types(device) before
+# constructing and falls back through a preference list
+# instead of crashing or silently crawling). The v6.10
+# ladder fixed model-NAME rejection; this fixes the
+# sibling problem: the big model was constructed on CPU
+# int8 unconditionally, so on the owner's NVIDIA 8 GB
+# card it crawled while the GPU sat idle (his Ollama
+# models use that GPU; his ears never did). The big slot
+# now probes CUDA support BEFORE constructing: float16
+# on cuda when the probe reports it, CPU int8 otherwise.
+# ANY CUDA construction failure (missing cuBLAS/cuDNN
+# DLLs, OOM, a driver problem) degrades that rung to the
+# CPU construction, is remembered for the session (CUDA
+# is never retried), and earns ONE honest parent line via
+# the big-model-gpu-fallback notice. Only the BIG slot
+# ever plans CUDA — the wake lane, the preview and the
+# small command model stay CPU int8 exactly as before,
+# so GPU contention with his Ollama models can never
+# touch the wake path. Config escape hatch:
+# ears_big_device = auto | cpu | cuda (default auto).
+_BIG_DEVICE_CFG = "auto"
+_big_cuda_dead = False
+_big_cuda_fail_reason = ""
+_big_gpu_fallback_reason = ""
+_big_device_desc = ""
+_cuda_probe_cache = None
+_big_resolved_notice_sent = False
+_big_gpu_notice_sent = False
+
+
+def _probe_supported_compute(device):
+    """The compute types CTranslate2 reports for a device,
+    or None when the probe itself is unavailable (no
+    ctranslate2, an old build, a driver error). Guarded —
+    a failed probe must never cost a load; callers treat
+    None as "no CUDA". The cuda answer is cached per
+    process (the probe is a driver query, not a per-load
+    question). Tests script this function."""
+    global _cuda_probe_cache
+    if device == "cuda" and _cuda_probe_cache is not None:
+        return _cuda_probe_cache
+    result = None
+    try:
+        import ctranslate2
+        result = set(
+            ctranslate2.get_supported_compute_types(device))
+    except Exception:
+        result = None
+    if device == "cuda":
+        _cuda_probe_cache = result
+    return result
+
+
+def _big_device_plan():
+    """(device, compute_type) for the next BIG-slot
+    construction in this process (v6.13).
+
+    A cpu preference, or a CUDA failure already remembered
+    this session, keeps the v6.12 CPU int8 path. auto /
+    cuda ask the probe: float16 reported for cuda earns
+    the GPU; anything else (no probe answer, no float16)
+    is the CPU path — asking for cuda on a machine with
+    no CUDA degrades safely instead of crashing a lane.
+    The wake / preview lanes never reach the big slot
+    (_get_model refuses it there); the plan still answers
+    CPU for them, belt and braces."""
+    if _PROCESS_LANE in ("wake", "preview"):
+        return ("cpu", "int8")
+    pref = str(_BIG_DEVICE_CFG or "auto").strip().lower()
+    if pref == "cpu" or _big_cuda_dead:
+        return ("cpu", "int8")
+    supported = _probe_supported_compute("cuda")
+    if supported and "float16" in supported:
+        return ("cuda", "float16")
+    return ("cpu", "int8")
+
+
+def _construct_model(model_cls, name, device="cpu",
+                     compute_type="int8"):
     """Construct one WhisperModel with this process's
     cpu_threads cap — but ONLY when the class's __init__
     names cpu_threads explicitly (the real faster-whisper
     does; the suites' fakes do not, and passing it to them
     would raise TypeError and double-count their recorded
-    attempts on a retry)."""
+    attempts on a retry). v6.13: device / compute_type are
+    parameters (defaults are the pre-v6.13 CPU int8 path)
+    so the big slot can construct on the GPU."""
     try:
         import inspect
         _params = inspect.signature(
@@ -1082,10 +1206,46 @@ def _construct_model(model_cls, name):
     except Exception:
         _has = False
     if _has:
-        return model_cls(name, device="cpu",
-                         compute_type="int8",
+        return model_cls(name, device=device,
+                         compute_type=compute_type,
                          cpu_threads=int(_MODEL_CPU_THREADS))
-    return model_cls(name, device="cpu", compute_type="int8")
+    return model_cls(name, device=device,
+                     compute_type=compute_type)
+
+
+def _construct_big(model_cls, name):
+    """Construct one BIG-slot model on the planned device
+    (v6.13). A CUDA construction failure — for any reason
+    except the deterministic name rejection, which stays
+    the ladder's business and re-raises — degrades THIS
+    rung to the CPU construction, remembers the failure
+    for the session (CUDA is not probed or attempted
+    again), and records the reason for the parent's one
+    honest line. The device that actually serves is
+    remembered in _big_device_desc for the ready line."""
+    global _big_cuda_dead, _big_cuda_fail_reason
+    global _big_gpu_fallback_reason, _big_device_desc
+    device, compute_type = _big_device_plan()
+    if device != "cuda":
+        model = _construct_model(model_cls, name)
+        _big_device_desc = "cpu (int8)"
+        return model
+    try:
+        model = _construct_model(model_cls, name,
+                                 device="cuda",
+                                 compute_type="float16")
+    except Exception as exc:
+        if _is_invalid_size_error(exc):
+            raise
+        _big_cuda_dead = True
+        _big_cuda_fail_reason = (
+            f"{type(exc).__name__}: {exc}")[:140]
+        _big_gpu_fallback_reason = _big_cuda_fail_reason
+        model = _construct_model(model_cls, name)
+        _big_device_desc = "cpu (int8)"
+        return model
+    _big_device_desc = "cuda (float16)"
+    return model
 
 
 def _get_model(name):
@@ -1270,6 +1430,15 @@ FILE_HARD_CAP_S = 45.0
 WAKE_RETRY_MODEL = "base"
 WAKE_COOLDOWN_AFTER = 2
 WAKE_COOLDOWN_S = 20.0
+# v6.13 anti-chain: a wake lane whose worker stays alive
+# (heartbeat echoes) but never finishes a decode re-trips
+# this cooldown forever — fail-fast, expire, two timeouts,
+# cooldown again — and the owner hears PERMANENT silence
+# (his 2026-11-15 22:24 IST report). Episodes are counted;
+# the third inside ten minutes force-respawns the lane and
+# writes a logbook ERROR instead of another quiet cooldown.
+WAKE_COOLDOWN_EPISODES_MAX = 3
+WAKE_COOLDOWN_EPISODE_WINDOW_S = 600.0
 LOG_THROTTLE_WINDOW = 60.0
 _AUTO_KINDS = ("wake_pass", "raw")
 
@@ -1385,8 +1554,24 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # cap (globals the model constructors read).
     global _big_slot_name, _big_resolved, _big_model_fail_kind
     global _PROCESS_LANE, _MODEL_CPU_THREADS
+    # v6.13: the big-model device preference + a clean
+    # GPU slate for this process (probe cache, remembered
+    # CUDA failure, notice flags).
+    global _BIG_DEVICE_CFG, _big_cuda_dead
+    global _big_cuda_fail_reason, _big_gpu_fallback_reason
+    global _big_device_desc, _cuda_probe_cache
+    global _big_resolved_notice_sent, _big_gpu_notice_sent
     _PROCESS_LANE = lane or "combined"
     _MODEL_CPU_THREADS = _lane_threads(_PROCESS_LANE, cfg)
+    _BIG_DEVICE_CFG = str(cfg.get("ears_big_device")
+                          or "auto")
+    _big_cuda_dead = False
+    _big_cuda_fail_reason = ""
+    _big_gpu_fallback_reason = ""
+    _big_device_desc = ""
+    _cuda_probe_cache = None
+    _big_resolved_notice_sent = False
+    _big_gpu_notice_sent = False
     _big_slot_name = cfg.get("whisper_command_model") \
         or BIG_COMMAND_MODEL
     _big_resolved = ""
@@ -1459,9 +1644,23 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
         # v6.10: the ladder resolved at preload — tell the
         # parent which rung serves, so its ready line names
         # the real model (the notice precedes ready).
+        # v6.13: the serving device rides along.
         try:
             res_q.put((0, "notice",
-                       ("big-model-resolved", _big_resolved)))
+                       ("big-model-resolved", _big_resolved,
+                        _big_device_desc)))
+            _big_resolved_notice_sent = True
+        except Exception:
+            pass
+    if _big_gpu_fallback_reason:
+        # v6.13: the GPU was attempted at preload and
+        # failed over to CPU — the parent's one honest
+        # line (see the gpu-fallback notice branch).
+        try:
+            res_q.put((0, "notice",
+                       ("big-model-gpu-fallback",
+                        _big_gpu_fallback_reason)))
+            _big_gpu_notice_sent = True
         except Exception:
             pass
     # v6.3 READINESS HANDSHAKE: the models are loaded — tell
@@ -1591,6 +1790,30 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             res_q.put((job_id, kind, result))
         except Exception:
             return
+        # v6.13: a LAZY big load (the command lane's normal
+        # path since v6.12) announces itself AFTER the job
+        # that paid it — the parent logs which model serves
+        # on which device. After the result, never before:
+        # the caller's message shape is unchanged. A GPU
+        # fail-over during the job earns its one line here
+        # too. Each notice fires once per worker process.
+        if _big_resolved and not _big_resolved_notice_sent:
+            try:
+                res_q.put((0, "notice",
+                           ("big-model-resolved",
+                            _big_resolved, _big_device_desc)))
+                _big_resolved_notice_sent = True
+            except Exception:
+                pass
+        if _big_gpu_fallback_reason \
+                and not _big_gpu_notice_sent:
+            try:
+                res_q.put((0, "notice",
+                           ("big-model-gpu-fallback",
+                            _big_gpu_fallback_reason)))
+                _big_gpu_notice_sent = True
+            except Exception:
+                pass
 
 
 def _spawn_tx_process(cfg, lane="combined"):
@@ -1694,6 +1917,9 @@ class _TxWorkerClient:
         self._start_logged = False
         self._consec_timeouts = 0
         self._cooldown_until = 0.0
+        # v6.13 anti-chain: monotonic stamps of this lane's
+        # recent cooldown episodes (see _note_cooldown_episode).
+        self._cooldown_episodes = []
         self._throttle = _LogThrottle()
         # v6.8 big-model retry state: "none" (nothing heard)
         # / "armed" (preload failed, retry due at
@@ -1712,6 +1938,11 @@ class _TxWorkerClient:
         # big-model-resolved notice) feeds the ready line.
         self._diag_logged = False
         self._big_resolved_name = ""
+        # v6.13: the device the big model serves on
+        # ("cuda (float16)" / "cpu (int8)"), from the
+        # worker's resolved notice — the ready line names
+        # it, so a field log shows which path landed.
+        self._big_resolved_desc = ""
 
     # ------------------------------------------------ lifecycle
     def _spawn(self):
@@ -1747,6 +1978,7 @@ class _TxWorkerClient:
             self._big_retry_at = 0.0
             self._diag_logged = False
             self._big_resolved_name = ""
+            self._big_resolved_desc = ""
             return True
         except Exception as exc:
             log.error("[ears] could not start the "
@@ -1892,16 +2124,43 @@ class _TxWorkerClient:
                 # preload or in the background retry) — the
                 # ready line names the model actually
                 # serving, not the configured hope.
+                # v6.13: the serving device rides as a third
+                # element (older 2-tuples still parse) and
+                # the line names it: "… — using large-v1 on
+                # cuda (float16)".
                 _rname = result[1] if len(result) > 1 \
+                    else ""
+                _rdesc = result[2] if len(result) > 2 \
                     else ""
                 if _rname:
                     self._big_resolved_name = _rname
+                if _rdesc:
+                    self._big_resolved_desc = _rdesc
                 self._big_state = "done"
                 try:
                     self._throttle.emit(
                         "big-model-ready",
                         "[ears] big local model ready — using "
-                        + (_rname or BIG_COMMAND_MODEL))
+                        + (_rname or BIG_COMMAND_MODEL)
+                        + ((" on " + _rdesc) if _rdesc
+                           else ""))
+                except Exception:
+                    pass
+            elif isinstance(result, tuple) and result \
+                    and result[0] == "big-model-gpu-fallback":
+                # v6.13: the worker tried the GPU for the
+                # big model and failed over to CPU — ONE
+                # honest line (throttled), never a per-load
+                # spam: the worker remembers the failure for
+                # its whole session and sends this once.
+                _greason = result[1] if len(result) > 1 \
+                    else ""
+                try:
+                    self._throttle.emit(
+                        "big-model-gpu-fallback",
+                        "[ears] GPU decode unavailable "
+                        "(%s) — big model on CPU"
+                        % (_greason or "unknown error"))
                 except Exception:
                     pass
             elif result == "big-model-ready":
@@ -1911,7 +2170,10 @@ class _TxWorkerClient:
                         "big-model-ready",
                         "[ears] big local model ready — using "
                         + (self._big_resolved_name
-                           or BIG_COMMAND_MODEL))
+                           or BIG_COMMAND_MODEL)
+                        + ((" on " + self._big_resolved_desc)
+                           if self._big_resolved_desc
+                           else ""))
                 except Exception:
                     pass
             elif result == "big-model-fallback":
@@ -1992,12 +2254,57 @@ class _TxWorkerClient:
         if kind in _AUTO_KINDS \
                 and self._consec_timeouts >= WAKE_COOLDOWN_AFTER:
             self._consec_timeouts = 0
+            # v6.13 anti-chain: on the WAKE lane a REPEATED
+            # cooldown is a wedged worker, not a slow one —
+            # the episode counter decides; a trip
+            # force-respawns the lane and no fresh cooldown
+            # is stacked on the new worker. Scoped to the
+            # dedicated wake lane on purpose: the legacy
+            # "combined" default keeps the pinned v6.4 rule
+            # (a live worker is never restarted for
+            # slowness), and production wake traffic rides
+            # the "wake" lane only.
+            if self.lane == "wake" \
+                    and self._note_cooldown_episode():
+                return
             self._cooldown_until = \
                 time.monotonic() + WAKE_COOLDOWN_S
             self._throttle.emit(
                 "cooldown",
                 "[ears] wake transcription paused briefly "
                 "(worker slow) — still listening")
+
+    def _note_cooldown_episode(self):
+        """Count one wake cooldown episode (v6.13 anti-chain).
+
+        Episodes older than WAKE_COOLDOWN_EPISODE_WINDOW_S
+        are pruned. Below WAKE_COOLDOWN_EPISODES_MAX nothing
+        changes — the caller applies the ordinary single
+        cooldown, exactly as before. AT the threshold the
+        chain is broken for good: the episode list clears,
+        any live cooldown is dropped, ONE logbook ERROR line
+        is written ("[ears] wake lane restarted (repeated
+        cooldowns)" — an ERROR, so logsync uploads early),
+        and the lane is force-respawned even though its
+        heartbeat still answers. Returns True iff the
+        threshold tripped."""
+        now = time.monotonic()
+        self._cooldown_episodes = [
+            t for t in self._cooldown_episodes
+            if now - t < WAKE_COOLDOWN_EPISODE_WINDOW_S]
+        self._cooldown_episodes.append(now)
+        if len(self._cooldown_episodes) \
+                < WAKE_COOLDOWN_EPISODES_MAX:
+            return False
+        self._cooldown_episodes = []
+        self._cooldown_until = 0.0
+        _logbook_error("[ears] wake lane restarted "
+                       "(repeated cooldowns)")
+        log.error("[ears] wake lane restarted "
+                  "(repeated cooldowns)")
+        self._kill()
+        self._spawn()
+        return True
 
     # ------------------------------------------------ heartbeat (v6.4)
     def _probe_heartbeat(self, wait_s):
@@ -2544,6 +2851,35 @@ def transcribe_command(audio_f32, model_name, initial_prompt=None):
 # always-there fallback. The wake loop does NOT use this — it
 # stays local and instant, exactly as before.
 CLOUD_EARS_TIMEOUT = 6.0  # seconds, per provider attempt (v6.3: was 8 — fast switching)
+
+# ------------------------------------------------------------- v6.13
+# RATE-LIMIT RETRY (OpenJarvis import #3 — jittered backoff,
+# agents/hybrid/_openai_retry.py, shrunk to Nalox's
+# budgets). On HTTP 429 ONLY, a cloud-ear call retries up
+# to twice with small jittered delays, strictly inside its
+# existing cap: a retry that would not fit is skipped and
+# the caller falls through at once — the owner's
+# fast-switching rule (v6.3) outranks retrying. No other
+# status is ever retried. brain.py carries the twin of
+# this for the Groq brain path.
+_RL_DELAYS_S = (0.4, 1.2)
+_RL_JITTER_S = 0.3
+_RL_MIN_FIT_S = 0.25
+
+
+def _rl_delay(attempt):
+    """The jittered delay before rate-limit retry number
+    `attempt` (0-based): the base delay + a random jitter,
+    so parallel callers never wake in lockstep."""
+    import random
+    base = _RL_DELAYS_S[min(attempt, len(_RL_DELAYS_S) - 1)]
+    return base + random.uniform(0.0, _RL_JITTER_S)
+
+
+def _rl_sleep(seconds):
+    """The retry sleep (a wrapper so the suites can record
+    instead of waiting)."""
+    time.sleep(seconds)
 _GEMINI_STT_URL = ("https://generativelanguage.googleapis.com"
                    "/v1beta/models/{model}:generateContent")
 _GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
@@ -2636,25 +2972,50 @@ def _cloud_gemini(wav, cfg):
 
 def _cloud_groq(wav, cfg):
     """One Groq Whisper transcription attempt -> text or None
-    (multipart upload of the WAV, whisper-large-v3)."""
+    (multipart upload of the WAV, whisper-large-v3).
+
+    v6.13: an HTTP 429 (rate limit) retries up to twice
+    with jittered delays INSIDE the same CLOUD_EARS_TIMEOUT
+    budget — the attempt clock starts here, each retry's
+    POST gets only the time left, and a retry whose delay
+    would overrun the budget is skipped, so the caller's
+    fall-through to the next ear is never delayed past
+    the cap it already had."""
     key = (cfg.get("groq_api_key") or "").strip()
     if not key:
         return None
     try:
         import requests
-        resp = requests.post(
-            _GROQ_STT_URL,
-            headers={"Authorization": "Bearer " + key},
-            files={"file": ("command.wav", wav, "audio/wav")},
-            data={"model": _GROQ_STT_MODEL,
-                  "response_format": "json"},
-            timeout=CLOUD_EARS_TIMEOUT)
-        if resp.status_code != 200:
+        _deadline = time.monotonic() + CLOUD_EARS_TIMEOUT
+        _attempt = 0
+        while True:
+            _left = _deadline - time.monotonic()
+            if _left <= 0:
+                return None
+            resp = requests.post(
+                _GROQ_STT_URL,
+                headers={"Authorization": "Bearer " + key},
+                files={"file": ("command.wav", wav,
+                                "audio/wav")},
+                data={"model": _GROQ_STT_MODEL,
+                      "response_format": "json"},
+                timeout=min(CLOUD_EARS_TIMEOUT, _left))
+            if resp.status_code == 200:
+                text = (resp.json().get("text") or "").strip()
+                return text or None
+            if resp.status_code == 429 \
+                    and _attempt < len(_RL_DELAYS_S):
+                _delay = _rl_delay(_attempt)
+                if _delay + _RL_MIN_FIT_S < \
+                        _deadline - time.monotonic():
+                    log.info("Cloud ear groq: HTTP 429 — "
+                             "retrying in %.1fs", _delay)
+                    _rl_sleep(_delay)
+                    _attempt += 1
+                    continue
             log.info("Cloud ear groq: HTTP %s — trying next",
                      resp.status_code)
             return None
-        text = (resp.json().get("text") or "").strip()
-        return text or None
     except Exception as exc:
         log.info("Cloud ear groq failed (%s: %s) — trying next",
                  type(exc).__name__, exc)
@@ -4155,6 +4516,7 @@ class Ears:
         never contains Nalox's own voice; transcription follows
         the transcribe_command language policy.
         """
+        global LAST_COMMAND_MISS
         import sounddevice as sd
         deadline = time.monotonic() + 10.0
         while _nalox_is_speaking() and not self._stop.is_set() \
@@ -4202,6 +4564,7 @@ class Ears:
         if segment is None:
             self._finish_preview(pump, "")
             LAST_TIMING["transcribe"] = 0.0
+            LAST_COMMAND_MISS = "no-speech"
             return "", "en"
         threshold = self.gate_threshold()
         speech_s = 0.1 * sum(1 for c in segment
@@ -4209,6 +4572,7 @@ class Ears:
         if speech_s < 0.3:
             self._finish_preview(pump, "")
             LAST_TIMING["transcribe"] = 0.0
+            LAST_COMMAND_MISS = "too-short"
             log.info("Command clip held only %.1fs of speech — "
                      "not transcribing it", speech_s)
             return "", "en"
@@ -4230,8 +4594,16 @@ class Ears:
                       type(exc).__name__, exc)
             _fire_status("[CRASH-GUARD] transcription failed — "
                          "kept listening")
+            # v6.13: this failure used to exist ONLY in the
+            # Python log (nalox.log) — the synced diagnostics
+            # never saw it. It is a logbook ERROR now, so
+            # logsync uploads it early like every other fault.
+            _logbook_error("[ears] command transcription "
+                           "failed (crash-guard) — kept "
+                           "listening")
             text, lang, ear_src = "", "en", "local"
         LAST_TIMING["transcribe"] = time.monotonic() - _t0
+        LAST_COMMAND_MISS = None if text else "engines-empty"
         log.info("Command heard: %r (language: %s)", text, lang)
         # v6.7 F: the FINAL transcript finalizes the preview
         # bubble ("" cancels it — nothing was really heard).

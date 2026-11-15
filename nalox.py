@@ -242,6 +242,35 @@ def _wake_ack(cfg):
     return f"Yes, {_addr(cfg)}?", "en"
 
 
+def _missed_command_line(brain, cfg):
+    """The spoken answer to a wake that heard NO command
+    (v6.13 silent-path fix).
+
+    The wake was acknowledged out loud — Arjun is standing
+    there talking to Nalox — so an empty command listen
+    must be ANSWERED, never met with silence (his
+    2026-11-15 22:24 IST report: he spoke, and nothing at
+    all came back). One short honest line in his reply
+    language: the learned preference when there is one
+    (Bengali, by his standing order), else the configured
+    default language."""
+    lang = None
+    try:
+        lang = brain._pref_lang()
+    except Exception:
+        lang = None
+    if not lang:
+        lang = str((cfg or {}).get("default_language")
+                   or "bn").lower()
+    if lang.startswith("hi"):
+        return ("माफ़ कीजिए, मैं सुन नहीं पाया — "
+                "एक बार फिर कहिए।")
+    if lang.startswith("en"):
+        return "Sorry, I couldn't hear that — please say it again."
+    return (f"দুঃখিত {_bn_name(cfg)}, কথাটা শুনতে পাইনি — "
+            "আবার একবার বলুন।")
+
+
 def _set_app_user_model_id():
     """Windows taskbar identity (v4.7).
 
@@ -1713,6 +1742,27 @@ def main():
                 _ears_mod.LAST_TIMING.get("record", 0.0))
             _tr_s = float(_ears_mod.LAST_TIMING.get("transcribe", 0.0))
             if not command:
+                # v6.13 SILENT-PATH FIX: the wake was ACKED
+                # out loud, so an empty command here used to
+                # loop back in TOTAL silence — the owner's
+                # 22:24 IST field report ("কথা শুনছে, কিন্তু
+                # কোনো লেখা আসে না"). The miss is now
+                # ANSWERED with one short honest line. When
+                # real speech was captured but every
+                # transcription path returned empty
+                # (ears.LAST_COMMAND_MISS == "engines-empty")
+                # it is a system fault, not a quiet room: a
+                # logbook ERROR goes with the answer, so
+                # logsync uploads it early.
+                if getattr(_ears_mod, "LAST_COMMAND_MISS",
+                           None) == "engines-empty":
+                    logbook.log(
+                        "ERROR",
+                        "[ears] speech was captured but "
+                        "every transcription path returned "
+                        "empty — answered with the "
+                        "could-not-hear line")
+                say(_missed_command_line(brain, cfg))
                 hudstatus("listening")
                 continue
             run_command(command, cmd_lang, _rec_s, _tr_s)

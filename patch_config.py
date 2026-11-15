@@ -119,6 +119,9 @@ PATCH_IF_ABSENT = {
     "ears_wake_threads": 2,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
+    # v6.13: big-model device preference (see config.py) —
+    # added when absent; his value is preserved.
+    "ears_big_device": "auto",
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"
