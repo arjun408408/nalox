@@ -185,6 +185,87 @@ def look_at_screen():
     return {"image": path, "text": ocr_image(path)}
 
 
+# ------------------------------------------------- local vision (v6.8)
+# The owner's ChatGPT consultation settled on Qwen3-VL 8B as
+# the free local vision model, and his PC has an 8 GB NVIDIA
+# GPU — so when Ollama is up, the screenshot itself (not just
+# its OCR text) is described locally: faster, offline, and it
+# sees layout/icons/images OCR never could. ANY failure —
+# server down, model not pulled (404), timeout, empty answer
+# — returns None and the caller uses the OCR path exactly as
+# before. The timeout is generous: a vision model is slower
+# than chat, and a local call costs nothing per second.
+OLLAMA_VISION_TIMEOUT_S = 60.0
+
+
+def describe_screen_ollama(cfg, image_path, lang=None):
+    """Describe a screenshot with the LOCAL Ollama vision
+    model (config ollama_vision_model, default
+    "qwen3-vl:8b"). Returns the description in the reply
+    language, or None on any failure. One log line either
+    way: success names the model that answered; failure
+    names the reason the regular path is taking over."""
+    cfg = cfg or {}
+    model = (cfg.get("ollama_vision_model")
+             or "qwen3-vl:8b").strip() or "qwen3-vl:8b"
+    url = (cfg.get("ollama_url")
+           or "http://localhost:11434").rstrip("/")
+    try:
+        import base64
+        with open(image_path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode("ascii")
+    except Exception as exc:
+        log.info("[vision] ollama vision skipped — cannot "
+                 "read the screenshot: %s", exc)
+        return None
+    if lang == "bn":
+        lang_line = ("Reply in Bengali, in one or two short "
+                     "sentences. ")
+    elif lang == "hi":
+        lang_line = ("Reply in Hindi, in one or two short "
+                     "sentences. ")
+    else:
+        lang_line = ("Reply in English, in one or two short "
+                     "sentences. ")
+    prompt = ("Describe what is on this computer screen. "
+              + lang_line
+              + "If there is an error message, a chat "
+                "message or anything that needs attention, "
+                "say what it is and what it means. Do not "
+                "invent anything you cannot see.")
+    try:
+        import requests
+        resp = requests.post(
+            url + "/api/chat",
+            json={"model": model,
+                  "messages": [{"role": "user",
+                                "content": prompt,
+                                "images": [b64]}],
+                  "stream": False},
+            timeout=OLLAMA_VISION_TIMEOUT_S)
+    except Exception as exc:
+        log.info("[vision] ollama vision unavailable "
+                 "(%s: %s) — using the regular path",
+                 type(exc).__name__, exc)
+        return None
+    if resp.status_code != 200:
+        log.info("[vision] ollama vision unavailable "
+                 "(HTTP %s — is %s pulled?) — using the "
+                 "regular path", resp.status_code, model)
+        return None
+    try:
+        text = ((resp.json().get("message") or {})
+                .get("content") or "").strip()
+    except Exception:
+        text = ""
+    if not text:
+        log.info("[vision] ollama vision returned nothing "
+                 "— using the regular path")
+        return None
+    log.info("[vision] answered by ollama %s", model)
+    return text
+
+
 # ------------------------------------------------------------- camera
 def capture_camera(path=None):
     """Take one webcam photo (JPG). Returns the path, or None.

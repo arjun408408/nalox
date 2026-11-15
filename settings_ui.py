@@ -366,6 +366,19 @@ def _build(tk, parent, cfg):
     tk.OptionMenu(row, bn_var, *bn_displays).pack(side="left",
                                                   fill="x",
                                                   expand=True)
+    # v6.8: Google Cloud TTS key — the MALE Bengali voice
+    # (bn-IN-Standard-B). The free translate voice Nalox
+    # falls back to is female and cannot change; this key
+    # (free tier, SETUP-GOOGLE-VOICE.txt in the Nalox
+    # folder) turns on the male voice. Masked like every
+    # key; empty = the layer stays off, zero delay.
+    gt_key = field(fr, "Google TTS key (male Bengali voice)",
+                   cfg.get("google_tts_api_key"), show="*")
+    tk.Label(fr, text="Free key — steps in "
+                      "SETUP-GOOGLE-VOICE.txt (Nalox folder). "
+                      "Paste it here only, never in chat.",
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(
+                 anchor="w", padx=10)
     # v5.1: cloud hearing toggle — Gemini/Groq transcribe his
     # commands (far better Bengali/Hindi than the local model);
     # off = local Whisper only, clips never leave the laptop.
@@ -381,6 +394,7 @@ def _build(tk, parent, cfg):
     def collect_voice():
         return {"elevenlabs_api_key": el_key.get().strip(),
                 "elevenlabs_voice_id": el_voice.get().strip(),
+                "google_tts_api_key": gt_key.get().strip(),
                 "robot_voice": bool(robot_var.get()),
                 "bn_voice": bn_values[bn_displays.index(bn_var.get())],
                 "cloud_ears": "auto" if cloud_var.get() else "off",

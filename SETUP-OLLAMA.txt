@@ -16,17 +16,34 @@ Follow these 3 steps once, on your laptop:
    - Install হলে Ollama নিজে থেকেই background-এ চলতে থাকে —
      system tray-তে ওর icon দেখতে পাবে।
 
-2) Brain-এর model টা নামাও (একটাই command)
+2) Model দুটো নামাও (brain + চোখ)
    - Start menu-তে "PowerShell" বা "Terminal" খোলো।
-   - ঠিক এই লাইনটা লিখে Enter চাপো:
+   - একে একে ঠিক এই দুটো লাইন লিখে Enter চাপো:
 
          ollama pull qwen3:8b
+         ollama pull qwen3-vl:8b
 
-   - প্রায় 5 GB download হবে — শেষ হলে "success" লিখবে।
-     এই একবারই ইন্টারনেট লাগবে; এরপর থেকে model টা তোমার
+   - প্রথমটা (~5 GB) হলো brain — তোমার কথার উত্তর দেবে।
+     দ্বিতীয়টা (~6 GB) হলো চোখ — Nalox তোমার screen
+     দেখে বলতে পারবে স্ক্রিনে কী আছে (শুধু লেখা পড়া না,
+     পুরো ছবিটাই দেখে বুঝবে)।
+   - Download শেষ হলে "success" লিখবে। এই একবারই
+     ইন্টারনেট লাগবে; এরপর থেকে model গুলো তোমার
      laptop-এই থাকবে, ইন্টারনেট ছাড়াই চলবে।
+   - তোমার PC-তে NVIDIA graphics card (8 GB VRAM)
+     আছে — Ollama model গুলো নিজে থেকেই ওই GPU-তে
+     চালাবে, তাই উত্তর আসবে অনেক fast।
 
-3) Nalox restart করো
+3) GPU-তে চলছে কিনা যাচাই করো (একটা command)
+   - Nalox চালু রেখে ওকে বলো: "আমার স্ক্রিনে কী আছে?"
+   - তারপর PowerShell-এ এই লাইনটা চালাও:
+
+         ollama ps
+
+   - Model-এর নামের পাশে "100% GPU" লেখা থাকলেই বুঝবে
+     সব ঠিক আছে — model টা graphics card-এই চলছে।
+
+4) Nalox restart করো
    - Nalox-এর tray icon → Restart (অথবা Nalox বন্ধ করে আবার
      চালু করো)।
    - Log-এ (📋 Log) এই লাইনটা এলেই বুঝবে হয়ে গেছে:
@@ -37,9 +54,11 @@ Follow these 3 steps once, on your laptop:
 বাংলাতেই (তোমার শেখানো ভাষাতেই)।
 
 জরুরি কথা / Notes:
-- Model টা laptop-এ জায়গা নেবে (~5 GB) আর উত্তর দিতে
-  cloud-এর চেয়ে একটু বেশি সময় নিতে পারে — ওটা শেষ ভরসা
-  (last resort), প্রতিদিনের brain না।
+- Model দুটো laptop-এ জায়গা নেবে (সব মিলিয়ে ~11 GB)
+  আর cloud-এর চেয়ে উত্তর দিতে একটু বেশি সময় নিতে
+  পারে — তবে তোমার GPU থাকায় screen পড়াটা fast-ই হবে।
+  Brain টা শেষ ভরসা (last resort), প্রতিদিনের brain না;
+  চোখের model টা শুধু screen দেখার সময়ই জাগে।
 - অন্য model চাইলে Settings-এ না গিয়ে PowerShell-এ
   `ollama pull qwen2.5:7b` বা `ollama pull llama3.1:8b`
   চালালেই Nalox নিজে খুঁজে নেবে — কোনটা আছে সেটা ও নিজেই
@@ -48,6 +67,11 @@ Follow these 3 steps once, on your laptop:
   Nalox আগের মতোই cloud brain দিয়ে চলবে।
 
 (English summary: Install Ollama from ollama.com, run
-`ollama pull qwen3:8b` once in PowerShell, restart Nalox.
-Free, no account, no key. Afterwards Nalox keeps answering —
-in Bengali — even with no internet and every cloud AI down.)
+`ollama pull qwen3:8b` (the brain) and
+`ollama pull qwen3-vl:8b` (the eyes — Nalox reads your
+screen with it) once in PowerShell, restart Nalox. Ask
+Nalox "what is on my screen?" and run `ollama ps` — the
+model should show "100% GPU" on your NVIDIA card. Free,
+no account, no key. Afterwards Nalox keeps answering —
+in Bengali — even with no internet and every cloud AI
+down, and it can describe your screen fully offline.)

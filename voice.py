@@ -227,6 +227,38 @@ GOOGLE_TTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
 GOOGLE_TTS_TIMEOUT = 15.0
 GOOGLE_TTS_MAX_CHARS = 180  # the endpoint's per-request limit
 
+# ------------------------------------------------------------- v6.8
+# GOOGLE CLOUD TEXT-TO-SPEECH — the MALE Bengali voice. The
+# translate_tts layer above speaks Bengali with a FEMALE
+# voice and that endpoint has no other (field 2026-11-15
+# 20:26 IST — the owner: "নালক্স নাম তো ছেলে… বাংলা ভয়েস
+# মেয়ে বলছে, এটা ঠিক করবে"; his standing rule since v4.9
+# is a male Bengali voice). Cloud TTS has one: bn-IN
+# Standard-B. It needs his own free Google Cloud API key
+# (config google_tts_api_key, Settings → Voice; the free
+# tier covers 1M characters/month — see
+# SETUP-GOOGLE-VOICE.txt). No key pasted = the layer is
+# never attempted and costs zero delay. Engine name in the
+# chain/logs/state: "google-cloud-tts", sitting between
+# edge-tts and the translate layer.
+GOOGLE_CLOUD_TTS_URL = ("https://texttospeech.googleapis.com"
+                        "/v1/text:synthesize")
+GOOGLE_CLOUD_TTS_TIMEOUT = 15.0
+GOOGLE_CLOUD_TTS_MAX_CHARS = 800  # well under the API's limit
+
+
+def google_cloud_voice(lclass):
+    """(languageCode, voice name) for a language class
+    (v6.8): the Standard-B voices are the MALE ones —
+    Bengali bn-IN-Standard-B is the point of the layer;
+    Hindi/English use their Standard-B for consistency.
+    Pure — unit-testable."""
+    if lclass == "bn":
+        return "bn-IN", "bn-IN-Standard-B"
+    if lclass == "hi":
+        return "hi-IN", "hi-IN-Standard-B"
+    return "en-IN", "en-IN-Standard-B"
+
 # Session circuit breakers for the network fallback engines
 # (edge-tts, Google TTS), mirroring the v4.8 ElevenLabs breaker:
 # ENGINE_BREAK_FAILURES consecutive failures park the engine for
@@ -255,8 +287,8 @@ ENGINE_BREAK_FAILURES = 2
 # success clears the block and reclaims first place.
 VOICE_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "voice_state.json")
-_VOICE_ENGINES = ("elevenlabs", "edge-tts", "google-tts",
-                  "pyttsx3", "powershell")
+_VOICE_ENGINES = ("elevenlabs", "edge-tts", "google-cloud-tts",
+                  "google-tts", "pyttsx3", "powershell")
 _VOICE_CLASSES = ("bn", "hi", "en")
 
 
@@ -452,7 +484,7 @@ class Speaker:
         boot on the worst voice and never retry the good
         ones."""
         if engine not in ("elevenlabs", "edge-tts",
-                          "google-tts"):
+                          "google-cloud-tts", "google-tts"):
             return
         changed = False
         last_good = self._vstate.setdefault("last_good", {})
@@ -976,6 +1008,59 @@ class Speaker:
         asyncio.run(_make_bounded())
         return self._play_mp3_interruptible(tmp)
 
+    # ---------- Google Cloud Text-to-Speech (v6.8, online) ----------
+    def _speak_google_cloud(self, text, lang=None):
+        """Google Cloud TTS — the male-voice layer (v6.8).
+
+        The translate_tts layer below speaks Bengali with a
+        female voice and offers no alternative; this API has
+        bn-IN-Standard-B, a MALE Bengali voice (the owner's
+        standing rule: Nalox is a boy, his Bengali voice is
+        male). One REST call per chunk: POST
+        texttospeech.googleapis.com/v1/text:synthesize with
+        his key as the ?key= parameter (the shape this API
+        documents for API-key auth), the voice picked by the
+        text's language class (google_cloud_voice), MP3 out —
+        base64 audioContent, decoded and concatenated, then
+        played through the SAME MCI path as every network
+        engine, so barge-in/stop behaves identically. Any
+        non-200 (a 400 on a voice name included) raises —
+        an engine failure, and the chain moves on."""
+        import base64
+
+        import requests
+        key = (self.cfg.get("google_tts_api_key") or "").strip()
+        if not key:
+            raise RuntimeError("Google Cloud TTS key not set")
+        language_code, voice_name = google_cloud_voice(
+            google_tts_lang(text, lang))
+        audio = b""
+        for piece in google_tts_chunks(
+                text, limit=GOOGLE_CLOUD_TTS_MAX_CHARS):
+            resp = requests.post(
+                GOOGLE_CLOUD_TTS_URL,
+                params={"key": key},
+                json={"input": {"text": piece},
+                      "voice": {"languageCode": language_code,
+                                "name": voice_name},
+                      "audioConfig": {"audioEncoding": "MP3"}},
+                timeout=GOOGLE_CLOUD_TTS_TIMEOUT)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Google Cloud TTS HTTP {resp.status_code}")
+            content = (resp.json().get("audioContent") or "")
+            if not content:
+                raise RuntimeError(
+                    "Google Cloud TTS returned no audio")
+            audio += base64.b64decode(content)
+        if not audio:
+            raise RuntimeError("Google Cloud TTS returned no audio")
+        tmp = os.path.join(tempfile.gettempdir(),
+                           "nalox_google_cloud.mp3")
+        with open(tmp, "wb") as fh:
+            fh.write(audio)
+        return self._play_mp3_interruptible(tmp)
+
     # ---------- Google Translate TTS (v6.6, online) ----------
     def _speak_google(self, text, lang=None):
         """Google's voice — the layer that exists so a Bengali
@@ -1156,6 +1241,30 @@ class Speaker:
             except Exception as exc:
                 self._failed("edge-tts", exc)
                 self._note_net_failure("edge-tts", "edge-tts")
+            return None
+        if engine == "google-cloud-tts":
+            # 2a) Google Cloud TTS (v6.8) — the MALE Bengali
+            # voice (bn-IN-Standard-B), the fix for the
+            # translate layer's female voice. Only attempted
+            # when his Google Cloud key is pasted (Settings →
+            # Voice): no key = ineligible, zero delay. Same
+            # breaker/stickiness/persistence bookkeeping as
+            # every network engine; the robot path skips it
+            # like the other MP3 layers.
+            _gc_key = (self.cfg.get("google_tts_api_key")
+                       or "").strip()
+            if not _gc_key or robot \
+                    or self._engine_parked("google-cloud-tts"):
+                return None
+            try:
+                result = self._speak_google_cloud(text, lang)
+                self._note_net_success("google-cloud-tts")
+                self._spoken("google-cloud-tts", text, result)
+                return result
+            except Exception as exc:
+                self._failed("google-cloud-tts", exc)
+                self._note_net_failure("google-cloud-tts",
+                                       "Google Cloud TTS")
             return None
         if engine == "google-tts":
             # 2b) Google TTS (v6.6) — one more network voice

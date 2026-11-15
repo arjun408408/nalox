@@ -107,6 +107,13 @@ PATCH_IF_ABSENT = {
     # v6.7: Ollama candidate list for the offline brain's
     # model walk — added when absent; his edits are kept.
     "ollama_models": ["qwen3:8b", "qwen2.5:7b", "llama3.1:8b"],
+    # v6.8: the local vision model for screen reading —
+    # added when absent; his edits are kept.
+    "ollama_vision_model": "qwen3-vl:8b",
+    # v6.8: Google Cloud TTS key (male Bengali voice) —
+    # added empty when absent; the layer stays off until
+    # he pastes a key (SETUP-GOOGLE-VOICE.txt).
+    "google_tts_api_key": "",
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"

@@ -70,6 +70,11 @@ DEFAULTS = {
     "bn_voice": "bn-BD-PradeepNeural",
     # --- v2: ElevenLabs voice (top priority when the key is set) ---
     "elevenlabs_api_key": "",
+    # v6.8: Google Cloud Text-to-Speech key — the MALE
+    # Bengali voice (bn-IN-Standard-B). Empty = the Cloud
+    # layer is never attempted (see voice.py,
+    # SETUP-GOOGLE-VOICE.txt).
+    "google_tts_api_key": "",
     "elevenlabs_voice_id": "auq43ws1oslv0tO4BDa7",
     # --- v2: power skills (leads / demo sites / email) ---
     "home_location": "",
@@ -155,6 +160,11 @@ DEFAULTS = {
     # the model that answers is remembered as ollama_model.
     # qwen3:8b is the one SETUP-OLLAMA.txt tells him to pull. ---
     "ollama_models": ["qwen3:8b", "qwen2.5:7b", "llama3.1:8b"],
+    # v6.8: the local VISION model for screen reading
+    # (vision.describe_screen_ollama) — Qwen3-VL 8B, the
+    # pick from the owner's ChatGPT consultation; runs on
+    # his NVIDIA GPU via Ollama.
+    "ollama_vision_model": "qwen3-vl:8b",
     "ollama_url": "http://localhost:11434",
     "openai_api_key": "",
     "openai_model": "gpt-4o-mini",

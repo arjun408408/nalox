@@ -214,6 +214,57 @@ def open_app(name):
     return f"Sorry, I could not find {name} on this laptop."
 
 
+# v6.8: the close side of open_app (field 2026-11-15 20:26
+# IST: "ক্রোম বন্ধ করো" — a CLOSE command — was answered
+# "Opening chrome." and Chrome OPENED, because no close
+# path existed at all). Process image names per app;
+# taskkill /F ends them, the same full-control rules as
+# every other action. Returns "Closing {name}." when at
+# least one process was actually ended, else None (the
+# caller words the "not open" reply in the right language).
+APP_PROCESSES = {
+    "chrome": ["chrome.exe"],
+    "google chrome": ["chrome.exe"],
+    "browser": ["chrome.exe"],
+    "notepad": ["notepad.exe"],
+    "calculator": ["CalculatorApp.exe", "calc.exe"],
+    "explorer": ["explorer.exe"],
+    "file explorer": ["explorer.exe"],
+    "vscode": ["Code.exe"],
+    "vs code": ["Code.exe"],
+    "visual studio code": ["Code.exe"],
+    "spotify": ["Spotify.exe"],
+    "paint": ["mspaint.exe"],
+    "word": ["winword.exe"],
+    "excel": ["excel.exe"],
+    "powerpoint": ["powerpnt.exe"],
+    "task manager": ["taskmgr.exe"],
+    "settings": ["SystemSettings.exe"],
+    "terminal": ["WindowsTerminal.exe", "cmd.exe"],
+    "cmd": ["cmd.exe"],
+}
+
+
+def close_app(name):
+    key = (name or "").strip().lower()
+    procs = APP_PROCESSES.get(key)
+    if not procs:
+        procs = [key.replace(" ", "") + ".exe"]
+    closed = False
+    for proc in procs:
+        try:
+            done = subprocess.run(
+                ["taskkill", "/IM", proc, "/F"],
+                capture_output=True, timeout=10)
+            if done.returncode == 0:
+                closed = True
+        except Exception:
+            continue
+    if closed:
+        return f"Closing {name}."
+    return None
+
+
 # ---------------------------------------------------------------- system
 def volume(action):
     if pyautogui is None:

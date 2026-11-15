@@ -472,6 +472,7 @@ _TOOL_STATUS = {
     "screenshot": "Taking a screenshot…",
     "take_camera_photo": "Taking a photo…",
     "open_app": "Opening the app…",
+    "close_app": "Closing the app…",
     "open_website": "Opening the website…",
     "open_folder": "Opening the folder…",
     "empty_recycle_bin": "Emptying the Recycle Bin…",
@@ -638,6 +639,8 @@ AGENT_TOOLS = [
           {"name": _str_prop("Website name or domain")}, ["name"]),
     _tool("open_app", "Open an app on the laptop (chrome, notepad, calculator, spotify...).",
           {"name": _str_prop("App name")}, ["name"]),
+    _tool("close_app", "Close an app on the laptop (chrome, notepad, calculator, spotify...). Use this whenever Arjun asks to close/quit something — never open_app for a close request.",
+          {"name": _str_prop("App name")}, ["name"]),
     _tool("open_folder", "Open a folder: downloads, documents, desktop, pictures, music or videos.",
           {"name": _str_prop("Folder name")}, ["name"]),
     _tool("empty_recycle_bin", "Empty the Windows Recycle Bin immediately. Full PC control is on — never ask for confirmation first."),
@@ -739,72 +742,13 @@ MODEL_WALK_BUDGET_S = 12.0
 # notes the offline brain once when it answers.
 OLLAMA_TIMEOUT_S = 30.0
 
-# ------------------------------------------------------------- v6.7 E
-# THE ANSWERING BRAIN IS REMEMBERED ACROSS RESTARTS
-# (brain_state.json, beside this file — USER DATA: never
-# shipped in packs, deny-listed in the updater, git-ignored).
-# v6.5 remembers the working MODEL inside config.json, but
-# WHICH provider answered died with the session, so every
-# boot's first commands re-walked the chain from the top
-# (field 2026-11-15 19:59 IST: replies still felt "অনেক
-# late" on a fresh boot). Now every agent-path success
-# persists (provider, model, wall time); the NEXT PROCESS
-# gives that provider the first attempt of its first
-# command — still through every guard — and boot validation
-# checks it first so the truthful brain line is fast. Two
-# disciplines keep it honest:
-#   * previous-process only: a state THIS process wrote is
-#     never re-read as "last session" (this process already
-#     knows its own chain works; the file is for the next
-#     boot);
-#   * freshness: state older than BRAIN_STATE_MAX_AGE_S
-#     (7 days) is ignored — a week-old winner is a rumour.
-# A failed remembered attempt falls straight into the
-# normal chain, and the next success anywhere re-remembers.
-BRAIN_STATE_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "brain_state.json")
-BRAIN_STATE_MAX_AGE_S = 7 * 24 * 3600
-_REM_LOAD_LOCK = threading.Lock()
-_BRAIN_STATE_WRITTEN_BY_US = False
-_BRAIN_PROVIDERS = ("freellm", "anthropic", "openrouter",
-                    "gemini", "groq", "openai", "ollama")
-
-
-def _load_brain_state():
-    """The previous process's (provider, model), or None:
-    nothing saved, state too old, odd shape, or the file is
-    THIS process's own writing (see the note above)."""
-    if _BRAIN_STATE_WRITTEN_BY_US:
-        return None
-    try:
-        with open(BRAIN_STATE_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if not isinstance(data, dict):
-            return None
-        provider = str(data.get("provider") or "").strip()
-        if provider not in _BRAIN_PROVIDERS:
-            return None
-        ts = float(data.get("ts") or 0)
-        if not ts or time.time() - ts > BRAIN_STATE_MAX_AGE_S:
-            return None
-        return provider, str(data.get("model") or "").strip()
-    except Exception:
-        return None
-
-
-def _save_brain_state(provider, model):
-    """Persist the answering provider + model (guarded — a
-    failed write costs the head start, never the answer)."""
-    global _BRAIN_STATE_WRITTEN_BY_US
-    _BRAIN_STATE_WRITTEN_BY_US = True
-    try:
-        with open(BRAIN_STATE_PATH, "w", encoding="utf-8") as fh:
-            json.dump({"provider": provider,
-                       "model": model or "",
-                       "ts": time.time()}, fh,
-                      ensure_ascii=False, indent=1)
-    except Exception:
-        pass
+# ------------------------------------------------------------- v6.8
+# brain_state.json (the v6.7 E cross-session provider memory)
+# is REMOVED: under the owner's Groq-only order there is one
+# cloud provider, so there is no provider choice left to
+# remember — and Groq's working MODEL is remembered by the
+# candidate walk in config (groq_model), where it belongs.
+# The file stays on the updater deny-list (user data).
 
 # ------------------------------------------------------------- v6.5
 # MODEL CANDIDATE WALK (provider repair — field log 2026-11-15
@@ -1790,6 +1734,103 @@ class _Confirm:
         self.kind = kind  # "shutdown" | "restart" | "forget"
 
 
+# ------------------------------------------------------------- v6.8
+# ACT, DON'T NARRATE (field 2026-11-15 20:40 IST): told
+# "এই মেসেজটা ওপেন করে, একে রিপ্লাই দাও", Nalox answered
+# "রিপ্লাই দিতে পারি" — a capability CLAIM — and did
+# nothing. Weak models do this; the guard below makes it
+# structurally hard regardless of provider: an action
+# request answered with ZERO tool calls and a reply that is
+# substantially "I can / I will / আমি … পারি" gets ONE
+# stern retry, and a retry that still only narrates is
+# replaced by an honest line — the false claim never
+# reaches his ears. Genuine ability QUESTIONS ("তুমি কি
+# রিপ্লাই দিতে পারো?", "can you …?") are not commands: a
+# capability answer is correct there and the guard stays
+# silent. Pure functions — unit-testable.
+
+_NARRATE_ACTION_EN = {"reply", "send", "message", "open",
+                      "type", "call", "write", "find",
+                      "close", "post"}
+_NARRATE_ACTION_ROMAN = {"pathao", "pathiye", "kholo",
+                         "khulo", "lekho", "likhe", "uttor",
+                         "jobab"}
+_NARRATE_ACTION_BN = ("রিপ্লাই", "পাঠাও", "পাঠিয়ে",
+                      "মেসেজ", "খোলো", "খুলে", "লেখো",
+                      "লিখে", "কল করো", "ফোন করো",
+                      "উত্তর দাও", "জবাব", "বন্ধ করো",
+                      "খুঁজে দাও")
+_NARRATE_CLAIM_BN = ("করতে পারি", "দিতে পারি", "পাঠাতে পারি",
+                     "খুলতে পারি", "লিখতে পারি", "করে দেব",
+                     "করে দিব", "দিয়ে দেব", "পাঠিয়ে দেব",
+                     "পারব")
+_NARRATE_STERN = (
+    "\n\n[IMPORTANT — Nalox system note: your previous reply "
+    "only SAID you could do it and took NO action, but the "
+    "owner asked for the action itself. Do it NOW with the "
+    "tools, in this turn: run every step you can, then "
+    "confirm what was actually done. If one step is truly "
+    "impossible, do the rest and say exactly which step "
+    "blocked and why. Never answer an action request with a "
+    "bare promise or capability claim.]")
+
+
+def _is_ability_question(text):
+    """True when the utterance ASKS about ability (v6.8) —
+    interrogative markers per the owner's examples: a
+    question mark, Bengali "কি … পারো/পারবে", or English
+    "can you / could you". A capability answer is the
+    CORRECT reply to these, so the narrate guard must not
+    fire."""
+    t = text or ""
+    if "?" in t:
+        return True
+    if "কি" in t and ("পারো" in t or "পারবে" in t
+                      or "পারেন" in t):
+        return True
+    return bool(re.search(r"\b(can|could)\s+you\b",
+                          t.lower()))
+
+
+def _looks_like_action_request(text):
+    """True when the utterance asks for an ACTION (v6.8):
+    an imperative/action verb in English, romanized
+    Bengali/Hindi, or Bengali script — and NOT an ability
+    question (those are answered, not executed)."""
+    if _is_ability_question(text):
+        return False
+    toks = set(_normalise_asr(text or "").split())
+    if toks & _NARRATE_ACTION_EN:
+        return True
+    if toks & _NARRATE_ACTION_ROMAN:
+        return True
+    raw = text or ""
+    return any(p in raw for p in _NARRATE_ACTION_BN)
+
+
+def _is_capability_claim(reply):
+    """True when a reply is substantially a bare capability
+    / intent claim (v6.8): short, no question back, no
+    negation (an honest "পারি না / I can't" is a refusal,
+    not a false claim), and carrying one of the claim
+    patterns — Bengali "…তে পারি / করে দেব / পারব", English
+    "I can / I will / I'll / let me" closers."""
+    r = (reply or "").strip()
+    if not r or len(r) > 240 or "?" in r:
+        return False
+    low = r.lower()
+    if "পারি না" in r or "পারব না" in r or "can't" in low \
+            or "cannot" in low or "can not" in low:
+        return False
+    if any(p in r for p in _NARRATE_CLAIM_BN):
+        return True
+    if "পারি" in r:
+        return True
+    return any(p in low for p in
+               ("i can ", "i can.", "i will ", "i'll ",
+                "let me ", "i am able to", "i'm able to"))
+
+
 class Brain:
     def __init__(self, cfg, speaker):
         self.cfg = cfg
@@ -1921,6 +1962,10 @@ class Brain:
         # two runs can never interleave.
         self._validate_lock = threading.Lock()
         self._last_agent_fail = None
+        # v6.8: tools executed so far in this process — the
+        # ACT-DON'T-NARRATE guard snapshots it around a
+        # provider call (see _agent_openai_compatible).
+        self._tool_run_count = 0
         self._validate_thread = None
         try:
             import config as _cfg_module
@@ -2146,6 +2191,18 @@ class Brain:
         dash_reply = self._dashboard_intents(text)
         if dash_reply is not None:
             return dash_reply
+
+        # ---- v6.8: APP CLOSE / OPEN (deterministic) ----
+        # BEFORE the standby family below and before every
+        # open path: a CLOSE verb must never be answered by
+        # opening the app (field 2026-11-15 20:26 IST: "ক্রোম
+        # বন্ধ করো" → "Opening chrome." + Chrome OPENED —
+        # the utterance fell past the standby phrase into the
+        # content rules, whose chrome rule only knows open).
+        # See _app_control_intents.
+        app_reply = self._app_control_intents(text)
+        if app_reply is not None:
+            return app_reply, None
 
         # ---- stop = STANDBY, never exit (v5.4 — the owner's
         # hard rule, 2026-11-15) ----
@@ -2863,6 +2920,16 @@ class Brain:
             return self._loc(f"I could not capture the screen, {self._addr()}.",
                              f"স্ক্রিনের ছবি তুলতে পারলাম না, {self._addr_bn()}।")
         text = (result.get("text") or "").strip()
+        # v6.8: LOCAL VISION first — when Ollama is up, its
+        # vision model describes the screenshot directly in
+        # the reply language (it sees the whole screen, not
+        # just OCR text); any failure falls through to the
+        # OCR + brain summary below, unchanged.
+        if self._ollama_available():
+            desc = vision.describe_screen_ollama(
+                self.cfg, result.get("image"), self.lang)
+            if desc:
+                return desc
         if not text:
             return self._loc(
                 f"I captured the screen, {self._addr()}, but I could not read "
@@ -3308,6 +3375,123 @@ class Brain:
                 merged.append(mapped[i])
                 i += 1
         return merged
+
+    # ------------------------------------------------ v6.8 app control
+    # (surface form, actions key, English display, Bengali
+    # display) — longest surfaces first so "file explorer"
+    # beats "explorer" and "google chrome" beats "chrome".
+    # YouTube's actions key is "chrome": the site lives in
+    # the browser, so closing YouTube closes the browser —
+    # the only honest close a website has.
+    _APP_CONTROL_TARGETS = (
+        ("visual studio code", "vscode", "visual studio code",
+         "visual studio code"),
+        ("google chrome", "chrome", "chrome", "ক্রোম"),
+        ("file explorer", "file explorer", "file explorer",
+         "file explorer"),
+        ("task manager", "task manager", "task manager",
+         "task manager"),
+        ("calculator", "calculator", "calculator",
+         "ক্যালকুলেটর"),
+        ("ক্যালকুলেটর", "calculator", "calculator",
+         "ক্যালকুলেটর"),
+        ("powerpoint", "powerpoint", "powerpoint", "powerpoint"),
+        ("browser", "chrome", "browser", "ব্রাউজার"),
+        ("ব্রাউজার", "chrome", "browser", "ব্রাউজার"),
+        ("notepad", "notepad", "notepad", "নোটপ্যাড"),
+        ("নোটপ্যাড", "notepad", "notepad", "নোটপ্যাড"),
+        ("spotify", "spotify", "spotify", "স্পটিফাই"),
+        ("স্পটিফাই", "spotify", "spotify", "স্পটিফাই"),
+        ("youtube", "chrome", "YouTube", "ইউটিউব"),
+        ("chrome", "chrome", "chrome", "ক্রোম"),
+        ("settings", "settings", "settings", "settings"),
+        ("terminal", "terminal", "terminal", "terminal"),
+        ("explorer", "explorer", "explorer", "explorer"),
+        ("vs code", "vscode", "vs code", "vs code"),
+        ("vscode", "vscode", "vscode", "vscode"),
+        ("paint", "paint", "paint", "paint"),
+        ("excel", "excel", "excel", "excel"),
+        ("word", "word", "word", "word"),
+        ("cmd", "cmd", "cmd", "cmd"),
+    )
+    _APP_CLOSE_TOKENS = {"close", "quit", "exit", "kill",
+                         "bondho", "bandho", "bondo", "bond"}
+    _APP_OPEN_TOKENS = {"open", "launch", "start", "kholo",
+                        "khulo", "khol", "ওপেন", "খোলো",
+                        "খুলুন", "খোল"}
+
+    def _app_control_intents(self, text):
+        """Deterministic app close/open (v6.8) — the fix for
+        the field bug where "ক্রোম বন্ধ করো" OPENED Chrome.
+
+        A CLOSE verb (close / quit / exit / kill, Bengali
+        বন্ধ / बंद, romanized bondho / bandho / bondo /
+        bond) beside a known app target closes it — checked
+        in _handle_single BEFORE the standby family (whose
+        "বন্ধ করো" trigger the utterance also contains) and
+        before every open path, so with a close verb present
+        open_app can never fire for the utterance. An OPEN
+        verb beside a target opens it, with the confirmation
+        in the reply language (pref bn: "ক্রোম খুলছি।" /
+        "ক্রোম বন্ধ করছি।"; pref en: "Opening chrome." /
+        "Closing chrome."). The spoken line always names the
+        action actually taken.
+
+        Guards: Hindi keeps its own handlers (its lines are
+        Hindi); a phone mention belongs to the phone
+        intents; "studio" belongs to the website path
+        (YouTube Studio); no target or no verb → None, and
+        the rest of the router proceeds exactly as before
+        (a bare "বন্ধ করো" still means standby, "ল্যাপটপ
+        বন্ধ" still means PC shutdown)."""
+        if self.lang == "hi":
+            return None
+        nt = _normalise_asr(text)
+        ntoks = nt.split()
+        tset = set(ntoks)
+        if "phone" in tset or "ফোন" in text:
+            return None
+        if "studio" in tset:
+            return None
+        target = None
+        for surface, key, disp_en, disp_bn in \
+                self._APP_CONTROL_TARGETS:
+            if surface.isascii():
+                hit = _tokens_run_in(
+                    ntoks, surface.split())
+            else:
+                hit = surface in text
+            if hit:
+                target = (key, disp_en, disp_bn)
+                break
+        if target is None:
+            return None
+        key, disp_en, disp_bn = target
+        is_close = bool(tset & self._APP_CLOSE_TOKENS) \
+            or "বন্ধ" in text or "बंद" in text
+        if is_close:
+            result = actions.close_app(key)
+            if result:
+                return self._loc(f"Closing {disp_en}.",
+                                 f"{disp_bn} বন্ধ করছি।")
+            return self._loc(
+                f"{disp_en} is not open right now.",
+                f"{disp_bn} এখন খোলা নেই।")
+        is_open = bool(tset & self._APP_OPEN_TOKENS) \
+            or "খোলো" in text or "খুলুন" in text \
+            or "ওপেন" in text
+        if is_open:
+            if disp_en == "YouTube":
+                actions.open_youtube()
+                return self._loc("Opening YouTube.",
+                                 "ইউটিউব খুলছি।")
+            result = actions.open_app(key)
+            if result and str(result).lower().startswith(
+                    "sorry"):
+                return result
+            return self._loc(f"Opening {disp_en}.",
+                             f"{disp_bn} খুলছি।")
+        return None
 
     def _dashboard_intents(self, text):
         """LOCAL Command Center routing (v5.5, garble-tolerant
@@ -5165,12 +5349,13 @@ class Brain:
                   "connection failure (app closed?)")
 
     def _agent_available(self):
-        """True when calling an agent provider is worth it at all:
-        a pasted cloud key (the call itself is then the check —
-        the configured path is unchanged) or a cached-reachable
-        Ollama. False means the local fallback must be served
-        with ZERO network delay (v4.4)."""
-        if self._cloud_configured():
+        """True when calling the brain is worth it at all:
+        the Groq key is pasted (v6.8: Groq is the only cloud
+        brain — the call itself is then the check) or a
+        cached-reachable Ollama stands by. False means the
+        local fallback must be served with ZERO network delay
+        (v4.4)."""
+        if (self.cfg.get("groq_api_key") or "").strip():
             return True
         return self._ollama_available()
 
@@ -5187,24 +5372,19 @@ class Brain:
                         "ollama": "Ollama", "local": "Local"}
     # (provider, cfg key field, models URL, label) — GET {base}/
     # models with the key is the cheapest honest "is this key
-    # alive?" check each provider offers (Anthropic included).
-    # Tuple order = agent priority = status-mode priority.
-    # v5.0: FreeLLMAPI leads; its URL is None here because the
-    # base URL is CONFIGURABLE (cfg freellm_base_url) — the
-    # validator builds it per-config.
+    # alive?" check. Tuple order = status-mode priority.
+    # v6.8: GROQ ONLY (owner's order, 2026-11-15 20:31 IST —
+    # "সবচেয়ে বেশি ফার্স্ট যে রিপ্লাই দিচ্ছে তাকে রেখে
+    # বাকিগুলো মুছে ফেলো": Groq answered fast in every field
+    # log while FreeLLMAPI/Gemini timed out and the rest 401'd,
+    # so Groq is now the ONLY cloud brain — the only key
+    # validation checks, the only provider the chain tries.
+    # His other keys stay in Settings untouched; Nalox simply
+    # never calls them. Ollama remains the silent offline
+    # last resort (no key to validate; _note_ollama_at_boot).
     _KEY_CHECKS = (
-        ("freellm", "freellm_api_key", None, "FreeLLMAPI"),
-        ("anthropic", "anthropic_api_key",
-         "https://api.anthropic.com/v1/models", "Claude"),
-        ("openrouter", "openrouter_api_key",
-         "https://openrouter.ai/api/v1/models", "OpenRouter"),
-        ("gemini", "gemini_api_key",
-         "https://generativelanguage.googleapis.com/v1beta/openai/models",
-         "Gemini"),
         ("groq", "groq_api_key",
          "https://api.groq.com/openai/v1/models", "Groq"),
-        ("openai", "openai_api_key",
-         "https://api.openai.com/v1/models", "OpenAI"),
     )
     _HOT_RELOAD_KEYS = ("freellm_api_key", "freellm_base_url",
                         "freellm_model",
@@ -5537,15 +5717,6 @@ class Brain:
             return
         results = {}
         _checks = list(self._KEY_CHECKS)
-        # v6.7 E: the remembered provider is validated FIRST,
-        # so the truthful brain line settles on the likely
-        # answerer immediately instead of after the whole
-        # list. (Stable sort — every other provider keeps
-        # its relative order.)
-        _rem = self._remembered_state()
-        if _rem:
-            _checks.sort(
-                key=lambda c: 0 if c[0] == _rem[0] else 1)
         for prov, field, url, label in _checks:
             key = (self.cfg.get(field) or "").strip()
             if not key:
@@ -6132,6 +6303,23 @@ class Brain:
                    "the recycle bin or cleaning temporary files "
                    "— just do them and report. Replies are at "
                    "most two short sentences.")
+        # v6.8: ACT, DON'T NARRATE — the WhatsApp field
+        # failure (2026-11-15 20:40 IST): asked to open a
+        # message and reply to it, the brain answered
+        # "রিপ্লাই দিতে পারি" and did NOTHING. A capability
+        # claim is not an action; the guard in
+        # _agent_openai_compatible retries once when it
+        # happens anyway, but the prompt states the rule
+        # first.
+        prompt += (" If the request asks for an ACTION — "
+                   "reply, send, open, type, call, write, "
+                   "find — pursue it with tool calls in THIS "
+                   "turn. Never end a turn with a bare "
+                   "capability or intent claim (\"I can do "
+                   "that\", \"আমি করে দেব\") as the whole "
+                   "answer. If one step is impossible, do "
+                   "every step you CAN and state exactly "
+                   "which step blocked and why.")
         # v6.6: CONVERSATIONAL CLOSE — the one mannerism the
         # owner picked from the MARK LIV demo video he studied
         # (2026-11-15): its replies feel alive because they so
@@ -6198,6 +6386,7 @@ class Brain:
     # ------------------------------------------------------------ tools
     def _run_tool(self, name, args):
         """Execute one agent tool call; returns a short result string."""
+        self._tool_run_count += 1
         args = args or {}
         # v5.2: the logbook/log file keeps the RAW [tool] line
         # (debugging needs the real name + args); the HUD shows
@@ -6270,6 +6459,10 @@ class Brain:
                 return actions.open_website(str(args.get("name", "")))
             if name == "open_app":
                 return actions.open_app(str(args.get("name", "")))
+            if name == "close_app":
+                return actions.close_app(
+                    str(args.get("name", ""))) or (
+                        "That app is not open right now.")
             if name == "open_folder":
                 return actions.open_folder(str(args.get("name", "")))
             if name == "empty_recycle_bin":
@@ -6336,6 +6529,16 @@ class Brain:
             if name == "read_my_screen":
                 import vision
                 result = vision.look_at_screen()
+                # v6.8: LOCAL VISION first — when Ollama is
+                # up, its vision model (qwen3-vl:8b) describes
+                # the screenshot itself, in the reply
+                # language; any failure falls back to the
+                # OCR text below, exactly as before.
+                if self._ollama_available():
+                    desc = vision.describe_screen_ollama(
+                        self.cfg, result.get("image"), self.lang)
+                    if desc:
+                        return desc[:2000]
                 screen_text = (result.get("text") or "").strip()
                 if screen_text:
                     return screen_text[:2000]
@@ -6447,132 +6650,42 @@ class Brain:
         except Exception:
             return False
 
-    # ------------------------------------------------ v6.7 E state
-    def _remembered_state(self):
-        """The previous process's (provider, model), loaded
-        once per Brain instance (see _load_brain_state).
-        Double-checked locking: the constructor's validation
-        thread and the first command can arrive together."""
-        if getattr(self, "_rem_loaded", False):
-            return getattr(self, "_rem_state", None)
-        with _REM_LOAD_LOCK:
-            if not getattr(self, "_rem_loaded", False):
-                self._rem_state = _load_brain_state()
-                self._rem_loaded = True
-        return getattr(self, "_rem_state", None)
-
-    def _remember_provider(self, provider, model):
-        """An agent-path success: persist who answered (v6.7
-        E) so the NEXT boot starts there."""
-        if provider:
-            _save_brain_state(provider, model or "")
-
-    _REMEMBERED_BASES = {
-        "openrouter": "https://openrouter.ai/api/v1",
-        "gemini": ("https://generativelanguage.googleapis.com"
-                   "/v1beta/openai"),
-        "groq": "https://api.groq.com/openai/v1",
-        "openai": "https://api.openai.com/v1",
-    }
-
-    def _try_remembered(self, text):
-        """The first-command head start (v6.7 E): the provider
-        that answered in the PREVIOUS session gets this
-        instance's first agent attempt — through the same
-        gates (key present, not validation-rejected,
-        FreeLLMAPI reachable + not demoted) and the same
-        guards as the chain. Once per instance: a failure
-        falls into the normal chain below, and FreeLLMAPI's
-        demotion bookkeeping runs exactly as its chain
-        attempt's would."""
-        if getattr(self, "_rem_tried", False):
-            return None
-        self._rem_tried = True
-        st = self._remembered_state()
-        if not st:
-            return None
-        prov, model = st
-        label = self._PROVIDER_LABELS.get(prov, prov)
-        try:
-            if prov == "freellm":
-                key = (self.cfg.get("freellm_api_key")
-                       or "").strip()
-                if not key or self._provider_rejected("freellm") \
-                        or not self._freellm_available():
-                    return None
-                reply = self._agent_openai_compatible(
-                    text, self._freellm_base(), key,
-                    model or (self.cfg.get("freellm_model",
-                                           "auto") or "auto"),
-                    label="FreeLLMAPI", provider="freellm",
-                    timeout=FREELLM_TIMEOUT_S)
-                if reply:
-                    _lb("BRAIN", "FreeLLMAPI answered (remembered)")
-                    return reply
-                self._freellm_note_failure()
-                return None
-            if prov == "anthropic":
-                if (self.cfg.get("anthropic_api_key")
-                        or "").strip() \
-                        and not self._provider_rejected("anthropic"):
-                    reply = self._agent_anthropic(text)
-                    if reply:
-                        _lb("BRAIN", "Claude answered (remembered)")
-                    return reply
-                return None
-            if prov == "ollama":
-                reply = self._agent_ollama(text)
-                if reply:
-                    _lb("BRAIN", "Ollama answered (remembered)")
-                return reply
-            field = self._PROVIDER_KEY_FIELDS.get(prov)
-            base = self._REMEMBERED_BASES.get(prov)
-            if field and base:
-                key = (self.cfg.get(field) or "").strip()
-                if not key or self._provider_rejected(prov):
-                    return None
-                reply = self._agent_openai_compatible(
-                    text, base, key,
-                    model or self.cfg.get(prov + "_model", ""),
-                    label=label, provider=prov)
-                if reply:
-                    _lb("BRAIN", f"{label} answered (remembered)")
-                return reply
-        except Exception:
-            return None
-        return None
+    # ------------------------------------------------ v6.8
+    # brain_state.json is GONE from the chain (owner's
+    # Groq-only order): with exactly one cloud provider, the
+    # v6.7 E cross-session provider memory had nothing left
+    # to remember — Groq's working MODEL is still remembered
+    # by the candidate walk in config (groq_model), which is
+    # where that knowledge belongs. The file itself stays on
+    # the updater deny-list (it is user data on his disk).
 
     def _agent_reply(self, text):
-        """Try each LLM provider in priority order; None if none work.
+        """The brain (v6.8): GROQ, then the offline Ollama —
+        nothing else is ever tried.
 
-        v4.0 order: Claude (Anthropic, when its key is set) → Groq →
-        OpenAI → Ollama (local, always last). Any provider failure
-        falls through to the next one.
-        v4.8 order: Claude → GEMINI (Google AI Studio, via its
-        OpenAI-compatible endpoint) → Groq → OpenAI → Ollama — and
-        any provider whose key validation already REJECTED is
-        skipped instantly (its failure is logged at validation;
-        re-failing it per command only burns time).
-        v4.9 order: Claude → OPENROUTER (one key, many models —
-        the default model IS Claude, reached via OpenRouter) →
-        Gemini → Groq → OpenAI → Ollama, same skip-rejected rule.
-        v5.0 order: FREELLMAPI → Claude → OpenRouter → Gemini →
-        Groq → OpenAI → Ollama. FreeLLMAPI leads — over every
-        direct key — because the router does its OWN failover
-        across its ~78-model chain (a model failing inside it
-        must not break the conversation), and because it is the
-        owner's explicit instruction. It is tried only when its
-        reachability cache says the app is up: a closed app is
-        skipped with zero delay, and a live call is capped at
-        10 s and falls through (v6.3 fast switching — every
-        provider in the chain is capped at 10 s) — never
-        retried twice in one command, never allowed to freeze
-        the conversation.
+        The owner's order (2026-11-15 20:31 IST, after a week
+        of field logs): "সবচেয়ে বেশি ফার্স্ট যে রিপ্লাই
+        দিচ্ছে তাকে রেখে বাকিগুলো মুছে ফেলো" — keep the
+        fastest replier, remove the rest. Groq answered in
+        seconds in every log while FreeLLMAPI and Gemini
+        burned ~10 s a command on timeouts and Claude /
+        OpenRouter / OpenAI sat rejected or empty; the
+        per-command provider walk WAS the remaining latency.
+        So the chain is now: Groq (with its v6.5 model
+        candidate walk + remembered working model and every
+        reply guard) → Ollama, the silent OFFLINE last
+        resort, reached only when Groq fails entirely and a
+        local server is actually answering (its cached probe
+        costs the normal path nothing). His other keys stay
+        in Settings untouched — Nalox simply never calls
+        them. If Groq fails and Ollama is absent, None comes
+        back and _chat_fallback speaks the honest line.
 
-        v4.3: before calling anyone, a question of 3+ words quietly
-        searches Arjun's indexed documents; the top-2 snippets ride
-        along in the system prompt (self._doc_context). Silent on
-        any failure — the chat must never notice the memory hiccup.
+        v4.3: before calling anyone, a question of 3+ words
+        quietly searches Arjun's indexed documents; the
+        top-2 snippets ride along in the system prompt
+        (self._doc_context). Silent on any failure — the
+        chat must never notice the memory hiccup.
         """
         self._doc_context = ""
         try:
@@ -6585,126 +6698,31 @@ class Brain:
                         for p, s in hits)[:900]
         except Exception:
             self._doc_context = ""
-        # v4.4: no provider available -> NO network at all. The
-        # local fallback must cost ~0.0 s of brain time, not the
-        # old flat ~3.0 s Ollama probe timeout.
+        # v4.4: no provider available -> NO network at all.
+        # The local fallback must cost ~0.0 s of brain time.
         if not self._agent_available():
             return None
-        # v4.8: this attempt starts clean — _brain_fail re-marks
-        # the failure below if a provider errors, so the honest
-        # fallback judges THIS call, not an ancient one.
+        # v4.8: this attempt starts clean — _brain_fail
+        # re-marks the failure below if a provider errors, so
+        # the honest fallback judges THIS call, not an
+        # ancient one.
         with self._status_lock:
             self._last_agent_fail = None
-        # v6.7 E: the remembered provider (last session's
-        # answerer) gets the first attempt of this boot —
-        # see _try_remembered. Once only; the normal chain
-        # below is otherwise exactly as it was.
-        reply = self._try_remembered(text)
-        if reply:
-            return reply
-        # v5.0 order: FreeLLMAPI → Claude → OpenRouter → Gemini
-        # → Groq → OpenAI → Ollama. A provider whose key
-        # validation already REJECTED is skipped instantly (7b)
-        # — its failure is logged; no command should pay for a
-        # doomed call again. FreeLLMAPI additionally needs its
-        # reachability cache to say the app is up.
-        # v6.0 C(2): ADAPTIVE ORDER — while FreeLLMAPI's
-        # recent average is slow (> 8 s), the direct
-        # providers get their turn FIRST and FreeLLMAPI is
-        # deferred to just before Ollama; when the router
-        # recovers, the standing FreeLLMAPI-first order
-        # returns on its own. See _freellm_should_defer.
-        defer_freellm = self._freellm_should_defer()
-        if defer_freellm:
-            try:
-                import perflevel
-                _lb("BRAIN",
-                    "[perf] FreeLLMAPI is slow right now "
-                    f"(avg {perflevel.provider_avg('freellm', min_samples=3):.1f}s) "
-                    "— trying the direct providers first")
-            except Exception:
-                pass
-
-        def _try_freellm():
-            freellm_key = (self.cfg.get("freellm_api_key")
-                           or "").strip()
-            if not freellm_key \
-                    or self._provider_rejected("freellm") \
-                    or not self._freellm_available():
-                return None
-            reply = self._agent_openai_compatible(
-                text, self._freellm_base(), freellm_key,
-                self.cfg.get("freellm_model", "auto") or "auto",
-                label="FreeLLMAPI", provider="freellm",
-                timeout=FREELLM_TIMEOUT_S)
-            if reply:
-                _lb("BRAIN", "FreeLLMAPI answered")
-                return reply
-            self._freellm_note_failure()
-            return None
-
-        if not defer_freellm:
-            reply = _try_freellm()
-            if reply:
-                return reply
-        if (self.cfg.get("anthropic_api_key") or "").strip() \
-                and not self._provider_rejected("anthropic"):
-            reply = self._agent_anthropic(text)
-            if reply:
-                _lb("BRAIN", "Claude answered")
-                return reply
-        openrouter_key = (self.cfg.get("openrouter_api_key")
-                          or "").strip()
-        if openrouter_key \
-                and not self._provider_rejected("openrouter"):
-            reply = self._agent_openai_compatible(
-                text, "https://openrouter.ai/api/v1",
-                openrouter_key,
-                self.cfg.get("openrouter_model",
-                             "anthropic/claude-sonnet-4.5"),
-                label="OpenRouter", provider="openrouter")
-            if reply:
-                _lb("BRAIN", "OpenRouter answered")
-                return reply
-        gemini_key = (self.cfg.get("gemini_api_key") or "").strip()
-        if gemini_key and not self._provider_rejected("gemini"):
-            reply = self._agent_openai_compatible(
-                text,
-                "https://generativelanguage.googleapis.com/v1beta/openai",
-                gemini_key,
-                self.cfg.get("gemini_model", "gemini-2.5-flash"),
-                label="Gemini", provider="gemini")
-            if reply:
-                _lb("BRAIN", "Gemini answered")
-                return reply
         groq_key = (self.cfg.get("groq_api_key") or "").strip()
         if groq_key and not self._provider_rejected("groq"):
             reply = self._agent_openai_compatible(
                 text, "https://api.groq.com/openai/v1", groq_key,
-                self.cfg.get("groq_model", "llama-3.3-70b-versatile"),
+                self.cfg.get("groq_model",
+                             "llama-3.3-70b-versatile"),
                 label="Groq", provider="groq")
             if reply:
                 _lb("BRAIN", "Groq answered")
-                return reply
-        openai_key = (self.cfg.get("openai_api_key") or "").strip()
-        if openai_key and not self._provider_rejected("openai"):
-            reply = self._agent_openai_compatible(
-                text, "https://api.openai.com/v1", openai_key,
-                self.cfg.get("openai_model", "gpt-4o-mini"),
-                label="OpenAI", provider="openai")
-            if reply:
-                _lb("BRAIN", "OpenAI answered")
-                return reply
-        if defer_freellm:
-            reply = _try_freellm()
-            if reply:
                 return reply
         reply = self._agent_ollama(text)
         if reply:
             _lb("BRAIN", "Ollama answered")
         return reply
 
-    # ------------------------------------------------- Claude (v4.0)
     def _anthropic_tools(self):
         """AGENT_TOOLS converted to the Anthropic tool format."""
         tools = []
@@ -6731,13 +6749,6 @@ class Brain:
             reply = self._agent_anthropic_impl(text)
         except Exception:
             reply = None
-        if reply:
-            # v6.7 E: remember who answered (next boot's head
-            # start).
-            self._remember_provider(
-                "anthropic",
-                self.cfg.get("anthropic_model",
-                             "claude-sonnet-4-5"))
         try:
             import perflevel
             perflevel.record_provider(
@@ -6836,122 +6847,32 @@ class Brain:
             return None
 
     def _plain_chat(self, prompt, writing=False):
-        """One-shot chat completion WITHOUT tools — for writing tasks
-        like a YouTube comment reply (youtube_tools.make_reply).
+        """One-shot chat completion WITHOUT tools — for writing
+        tasks like a YouTube comment reply
+        (youtube_tools.make_reply).
 
-        Same provider priority as _agent_reply: FreeLLMAPI →
-        Claude → OpenRouter → Gemini → Groq → OpenAI → Ollama
-        (v5.0). Returns the text, or None if no brain is
-        reachable.
+        v6.8: the same Groq-only rule as _agent_reply (the
+        owner's order) — Groq with its model candidate walk,
+        then the offline Ollama last resort. Returns the
+        text, or None if no brain is reachable.
 
-        v5.7.1: writing=True when the result is text the owner
-        READS (comment replies, email drafts) — the reply then
-        skips the spoken two-line length cap in _guard_reply,
-        while the script and CoT guards still vet it. Spoken
-        uses (e.g. the summarise_text tool, whose output is
-        read aloud) keep the default writing=False.
+        v5.7.1: writing=True when the result is text the
+        owner READS (comment replies, email drafts) — the
+        reply then skips the spoken two-line length cap in
+        _guard_reply, while the script and CoT guards still
+        vet it. Spoken uses (e.g. the summarise_text tool,
+        whose output is read aloud) keep the default
+        writing=False.
         """
-        # FreeLLMAPI (v5.0), no tools — the local router leads
-        # plain chat too, under the same rules as the agent:
-        # reachability cache decides, 10 s cap (v6.3), fall through.
-        fl_key = (self.cfg.get("freellm_api_key") or "").strip()
-        if fl_key and not self._provider_rejected("freellm") \
-                and self._freellm_available():
-            try:
-                import requests
-                resp = requests.post(
-                    self._freellm_base() + "/chat/completions",
-                    headers={"Authorization": f"Bearer {fl_key}",
-                             "Content-Type": "application/json"},
-                    json={"model": self.cfg.get("freellm_model",
-                                                "auto") or "auto",
-                          "messages": [
-                              {"role": "system",
-                               "content": ("You are Nalox, Arjun's "
-                                           "assistant. Reply with ONLY "
-                                           "the text asked for — no "
-                                           "quotes, no preamble.")},
-                              {"role": "user", "content": prompt}],
-                          "max_tokens": 300},
-                    timeout=FREELLM_TIMEOUT_S)
-                if resp.status_code == 200:
-                    reply = (resp.json()["choices"][0]["message"]
-                             .get("content") or "").strip()
-                    reply = self._guard_reply(reply, "FreeLLMAPI",
-                                              writing=writing)
-                    if reply:
-                        _lb("BRAIN", "FreeLLMAPI answered (plain chat)")
-                        return reply
-                else:
-                    self._brain_fail(
-                        "FreeLLMAPI",
-                        f"HTTP {resp.status_code} — "
-                        f"{_err_snippet(resp)} (plain chat)",
-                        provider="freellm",
-                        http_status=resp.status_code)
-            except Exception as exc:
-                self._brain_fail(
-                    "FreeLLMAPI",
-                    f"{type(exc).__name__}: {exc} (plain chat)"[:160],
-                    provider="freellm")
-            self._freellm_note_failure()
-        # Claude (Anthropic), no tools.
-        key = (self.cfg.get("anthropic_api_key") or "").strip()
-        if key and not self._provider_rejected("anthropic"):
-            try:
-                import requests
-                resp = requests.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={"x-api-key": key,
-                             "anthropic-version": "2023-06-01",
-                             "Content-Type": "application/json"},
-                    json={"model": self.cfg.get(
-                              "anthropic_model", "claude-sonnet-4-5"),
-                          "max_tokens": 300,
-                          "system": ("You are Nalox, Arjun's assistant. "
-                                     "Reply with ONLY the text asked "
-                                     "for — no quotes, no preamble."),
-                          "messages": [{"role": "user",
-                                        "content": prompt}]},
-                    timeout=PROVIDER_TIMEOUT_S)
-                if resp.status_code == 200:
-                    blocks = resp.json().get("content") or []
-                    reply = " ".join(
-                        b.get("text", "") for b in blocks
-                        if b.get("type") == "text").strip()
-                    reply = self._guard_reply(reply, "Claude",
-                                              writing=writing)
-                    if reply:
-                        _lb("BRAIN", "Claude answered (plain chat)")
-                        return reply
-                self._brain_fail(
-                    "Claude",
-                    f"HTTP {resp.status_code} — "
-                    f"{_err_snippet(resp)} (plain chat)",
-                    provider="anthropic",
-                    http_status=resp.status_code)
-            except Exception as exc:
-                self._brain_fail(
-                    "Claude",
-                    f"{type(exc).__name__}: {exc} (plain chat)"[:160],
-                    provider="anthropic")
-        # OpenRouter / Gemini / Groq / OpenAI, no tools (v4.8:
-        # Gemini joins plain chat too — if it is his only working
-        # key, YouTube replies and summaries must run on it as
-        # well; v4.9: OpenRouter joins at the head of the line,
-        # right after direct Anthropic, same reasoning).
+        # Groq, no tools (v6.8: the only cloud brain — see
+        # _agent_reply for the owner's order and the field
+        # evidence behind it).
+        # v6.8: Groq is the ONLY entry (owner's Groq-only
+        # order) — the walk/budget/guard body below is the
+        # v6.5/v6.6 machinery, unchanged.
         for cfg_key, base_url, model_key, model_default, label, prov in (
-                ("openrouter_api_key",
-                 "https://openrouter.ai/api/v1",
-                 "openrouter_model", "anthropic/claude-sonnet-4.5",
-                 "OpenRouter", "openrouter"),
-                ("gemini_api_key",
-                 "https://generativelanguage.googleapis.com/v1beta/openai",
-                 "gemini_model", "gemini-2.5-flash", "Gemini", "gemini"),
                 ("groq_api_key", "https://api.groq.com/openai/v1",
-                 "groq_model", "llama-3.3-70b-versatile", "Groq", "groq"),
-                ("openai_api_key", "https://api.openai.com/v1",
-                 "openai_model", "gpt-4o-mini", "OpenAI", "openai")):
+                 "groq_model", "llama-3.3-70b-versatile", "Groq", "groq"),):
             api_key = (self.cfg.get(cfg_key) or "").strip()
             if not api_key or self._provider_rejected(prov):
                 continue
@@ -7139,9 +7060,6 @@ class Brain:
                 if cand != candidates[0]:
                     self._remember_working_model(
                         "ollama", cand, "Ollama")
-                # v6.7 E: remember who answered (next boot's
-                # head start).
-                self._remember_provider("ollama", cand)
                 return reply
             return None  # a real failure — the impl logged it
         # Every candidate was a name Ollama has not pulled:
@@ -7249,12 +7167,48 @@ class Brain:
         failure stops the walk at once (it is a provider
         failure, already logged by the impl)."""
         _t0 = time.time()
+        _tools_before = self._tool_run_count
         try:
             reply = self._agent_openai_walk(
                 text, base_url, key, model, label=label,
                 provider=provider, timeout=timeout)
         except Exception:
             reply = None
+        # v6.8 ACT, DON'T NARRATE: the turn ended with ZERO
+        # tool calls, the request asked for an action, and
+        # the reply is a bare capability claim ("আমি রিপ্লাই
+        # দিতে পারি।") — retry ONCE with the stern note
+        # appended; the retry's tools execute normally. A
+        # retry that answers honestly without claiming (it
+        # names the blocker) is accepted; a retry that STILL
+        # only narrates is replaced by the honest line — the
+        # false claim never reaches his ears. Ability
+        # questions never reach here (_looks_like_action_
+        # request excludes them).
+        if reply and self._tool_run_count == _tools_before \
+                and _looks_like_action_request(text) \
+                and _is_capability_claim(reply):
+            _lb("BRAIN",
+                "[brain] reply only CLAIMED the action (no "
+                "tool ran) — retrying with a direct "
+                "instruction")
+            log.warning("[brain] capability claim with no "
+                        "action — one stern retry")
+            try:
+                reply2 = self._agent_openai_walk(
+                    text + _NARRATE_STERN, base_url, key, model,
+                    label=label, provider=provider,
+                    timeout=timeout)
+            except Exception:
+                reply2 = None
+            if reply2 and self._tool_run_count != _tools_before:
+                reply = reply2
+            elif reply2 and not _is_capability_claim(reply2):
+                reply = reply2
+            else:
+                reply = self._loc(
+                    "Sorry sir, I could not do that just now.",
+                    "দুঃখিত sir, কাজটা এখন করে উঠতে পারলাম না।")
         try:
             import perflevel
             perflevel.record_provider(
@@ -7271,14 +7225,9 @@ class Brain:
         walk providers. Non-walk providers (FreeLLMAPI, OpenAI)
         keep the exact single-model behaviour."""
         if provider not in _MODEL_WALK_PROVIDERS:
-            reply = self._agent_openai_compatible_impl(
+            return self._agent_openai_compatible_impl(
                 text, base_url, key, model, label=label,
                 provider=provider, timeout=timeout)
-            if reply:
-                # v6.7 E: remember who answered (next boot's
-                # head start).
-                self._remember_provider(provider, model)
-            return reply
         candidates = self._model_candidates(provider) or [model]
         last_miss = None
         _walk_start = time.monotonic()
@@ -7318,10 +7267,6 @@ class Brain:
                 if cand != candidates[0]:
                     self._remember_working_model(
                         provider, cand, label)
-                # v6.7 E: remember who answered (next boot's
-                # head start) — the candidate that answered,
-                # head or walked-to alike.
-                self._remember_provider(provider, cand)
                 return reply
             return None  # a real provider failure — impl logged it
         # Every candidate was a dead name: ONE failure line.

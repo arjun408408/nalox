@@ -70,6 +70,7 @@ FAILED_RETRY_S = 6 * 3600    # a failed version waits a cycle
 _COPY_FILE_SUFFIXES = (".py",)
 _COPY_FILES = {"version.txt", "SETUP-YOUTUBE.txt",
                "SETUP-OLLAMA.txt",
+               "SETUP-GOOGLE-VOICE.txt",
                "UPDATE-README.txt", "README.md", "FOR-AI.md",
                ".gitignore"}
 _COPY_DIRS = ("skills", "assets", "platform-tools", "phone-app")

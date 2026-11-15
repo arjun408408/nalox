@@ -1,0 +1,57 @@
+Nalox — পুরুষ বাংলা ভয়েস / Male Bengali Voice Setup (একবারই লাগবে / one time only)
+====================================================================================
+কেন এটা লাগবে / Why:
+এখন Nalox বাংলা বলতে যে FREE Google voice টা ব্যবহার করে
+(Google Translate-এর voice) সেটা একটা মেয়ের গলা — ওই
+voice-এ ছেলের গলা বেছে নেওয়ার কোনো উপায়ই নেই। তুমি বলেছ
+Nalox ছেলে, ওর বাংলা গলা ছেলেরই হতে হবে। Google-এর আরেকটা
+সার্ভিস — Google Cloud Text-to-Speech — সেখানে ছেলের বাংলা
+গলা আছে (bn-IN-Standard-B)। সেটা চালু করতে একটা FREE API
+key লাগে। Free tier-এ প্রতি মাসে ১০ লাখ (1 million) character
+ফ্রি — Nalox-এর জন্য যথেষ্টের বেশি। মোট ৫ মিনিট লাগবে।
+
+Follow these steps once, on your laptop:
+
+1) Google Cloud Console-এ যাও
+   - Browser-এ খোলো: console.cloud.google.com
+   - তোমার Google account দিয়ে sign in করো।
+   - উপরে project-এর নামের জায়গায় ক্লিক করে একটা project
+     বানাও (নাম যেকোনো, যেমন "nalox-voice") — আগের কোনো
+     project থাকলে সেটাও চলবে।
+
+2) Cloud Text-to-Speech API চালু করো
+   - বামদিকের menu → "APIs & Services" → "Library"।
+   - Search করো: Cloud Text-to-Speech API
+   - ওটায় ক্লিক করে "Enable" চাপো।
+
+3) API key বানাও
+   - "APIs & Services" → "Credentials"।
+   - উপরে "+ Create Credentials" → "API key"।
+   - Key টা তৈরি হয়ে screen-এ দেখাবে — ওটা copy করো।
+
+4) Key টা Nalox-এর Settings-এ বসাও
+   - Nalox খোলো → ⚙ Settings → 🎙 Voice section।
+   - "Google TTS key (male Bengali voice)" ঘরে key টা
+     paste করো।
+   - Save & Restart চাপো।
+
+ব্যস! এরপর থেকে Nalox বাংলা বলবে ছেলের গলায়।
+
+জরুরি কথা / Notes:
+- Key টা গোপন রাখো — শুধু Settings-এই paste করো, কখনো
+  chat-এ বা কাউকে পাঠিও না।
+- Key না বসালেও Nalox চলবে আগের মতোই (মেয়ের গলার free
+  voice দিয়ে) — এই setup টা শুধু গলা বদলানোর জন্য।
+- কোনো card/billing লাগে না এই free tier-এর জন্য; Google
+  যদি billing চায়, থেমে যাও — আমাকে (Muse-কে) বলো,
+  অন্য পথ দেখব।
+
+(English summary: the free Google Translate voice Nalox
+uses for Bengali is female with no alternative. Google
+Cloud Text-to-Speech has a male Bengali voice
+(bn-IN-Standard-B), free for 1M characters/month. Create a
+project at console.cloud.google.com, enable the Cloud
+Text-to-Speech API, create an API key under APIs &
+Services → Credentials, and paste it into Nalox Settings →
+Voice → "Google TTS key (male Bengali voice)". Keep the
+key private — Settings only, never in chat.)

@@ -725,10 +725,64 @@ def _device_name(idx):
 BIG_COMMAND_MODEL = "large-v3-turbo"
 COMMAND_FALLBACK_MODEL = "small"
 _big_model_down = False
+# v6.8: WHY the big model failed (exception class + short
+# message) — the v6.7 line carried no reason, so a transient
+# boot-time download failure (the owner's hotspot had just
+# started) was indistinguishable from a broken cache, and
+# the latch meant it was never retried. The parent logs the
+# reason once (it rides the worker's detail notice).
+_big_model_error = ""
+# v6.8: ONE background retry of a PRELOAD-time failure,
+# this long after it (a boot fetch over a just-started
+# hotspot is exactly the failure that heals itself). Tests
+# scale the constant down.
+BIG_MODEL_RETRY_DELAY_S = 240.0
+
+
+def _retry_big_model(res_q=None):
+    """ONE background retry of the big model load (v6.8).
+
+    Runs on a worker-side daemon thread so the serial job
+    loop never blocks — wake decodes keep flowing while the
+    ~1.6 GB fetch runs. Loads WITHOUT holding _models_lock
+    (a multi-minute download must not freeze decodes on the
+    small model), then swaps the model in under the lock.
+    Success clears the latch and posts "big-model-ready";
+    failure re-latches and posts the retry-failed detail —
+    the parent logs each exactly once. Only ever started
+    for a preload-phase failure (see the "upgrade" job in
+    _tx_process_main); a decode-phase failure stays latched
+    for the session, as before."""
+    global _big_model_down, _big_model_error
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel(BIG_COMMAND_MODEL, device="cpu",
+                             compute_type="int8")
+    except Exception as exc:
+        _big_model_error = f"{type(exc).__name__}: {exc}"[:140]
+        _big_model_down = True
+        if res_q is not None:
+            try:
+                res_q.put((0, "notice",
+                           ("big-model-retry-failed",
+                            _big_model_error)))
+            except Exception:
+                pass
+        return False
+    with _models_lock:
+        _models[BIG_COMMAND_MODEL] = model
+    _big_model_down = False
+    _big_model_error = ""
+    if res_q is not None:
+        try:
+            res_q.put((0, "notice", "big-model-ready"))
+        except Exception:
+            pass
+    return True
 
 
 def _get_model(name):
-    global _big_model_down
+    global _big_model_down, _big_model_error
     if name == BIG_COMMAND_MODEL and _big_model_down:
         name = COMMAND_FALLBACK_MODEL
     with _models_lock:
@@ -738,16 +792,22 @@ def _get_model(name):
             try:
                 _models[name] = WhisperModel(
                     name, device="cpu", compute_type="int8")
-            except Exception:
+            except Exception as exc:
                 if name != BIG_COMMAND_MODEL:
                     raise
                 # The big model could not load — latch the
                 # session fallback and serve "small" under the
                 # big name too, so no caller ever retries the
-                # download or hears silence over it.
+                # download or hears silence over it. v6.8:
+                # the REASON is kept (and logged) — a preload
+                # failure earns ONE background retry later
+                # (see _retry_big_model); the parent decides.
                 _big_model_down = True
+                _big_model_error = (
+                    f"{type(exc).__name__}: {exc}")[:140]
                 log.warning("[ears] big local model unavailable "
-                            "— using small")
+                            "(%s) — using small for now",
+                            _big_model_error)
                 if COMMAND_FALLBACK_MODEL in _models:
                     _models[name] = _models[COMMAND_FALLBACK_MODEL]
                 else:
@@ -945,6 +1005,11 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                  -> transcribe(...) (text, lang)
       "file"     (path, model_name)
                  -> _transcribe_file_local(...) (text, lang)
+      "upgrade"  (v6.8) -> starts ONE background retry of
+                 the big command model (a daemon thread runs
+                 _retry_big_model) and answers "started" at
+                 once — the serial loop never blocks on the
+                 download, so wake jobs keep flowing.
     A job that raises answers None (the parent reads that as
     "nothing heard"); a job that never answers is killed by
     the parent's deadline. None on the request queue is the
@@ -984,13 +1049,22 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             _get_model(_name)
         except Exception:
             pass
-    # v6.7: if the big command model failed to load, _get_model
-    # latched the session fallback to "small" — the worker's
-    # own logging is disabled, so the fact rides a one-way
-    # "notice" to the parent, which logs the honest line once.
+    # v6.8: WHICH phase the big-model latch set in — a
+    # preload failure (usually the one-time download over a
+    # just-started hotspot) earns ONE background retry; a
+    # failure during a real decode stays latched. Captured
+    # here, before any job can latch it the other way.
+    _preload_failed = bool(_big_model_down)
     _notice_sent = False
     if _big_model_down:
         try:
+            # v6.8: the detail (phase + reason) rides FIRST,
+            # so the parent's fallback line can carry the
+            # reason and arm the retry.
+            res_q.put((0, "notice",
+                       ("big-model-detail",
+                        "preload" if _preload_failed else "decode",
+                        _big_model_error)))
             res_q.put((0, "notice", "big-model-fallback"))
             _notice_sent = True
         except Exception:
@@ -1041,12 +1115,30 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             elif kind == "file":
                 path, model_name = payload
                 result = _transcribe_file_local(path, model_name)
+            elif kind == "upgrade":
+                # v6.8: the parent armed the one background
+                # retry of the big model (preload failure).
+                # Answer at once; the load runs on a daemon
+                # thread so this loop — and wake listening —
+                # never waits on a download.
+                if not _big_model_down:
+                    result = "already"
+                else:
+                    threading.Thread(
+                        target=_retry_big_model, args=(res_q,),
+                        daemon=True,
+                        name="nalox-ears-big-retry").start()
+                    result = "started"
         except Exception:
             result = None
         if _big_model_down and not _notice_sent:
             # v6.7: the fallback latched on a job, not at
-            # preload — tell the parent now (once).
+            # preload — tell the parent now (once). v6.8:
+            # the detail (decode phase + reason) rides first.
             try:
+                res_q.put((0, "notice",
+                           ("big-model-detail", "decode",
+                            _big_model_error)))
                 res_q.put((0, "notice", "big-model-fallback"))
                 _notice_sent = True
             except Exception:
@@ -1134,6 +1226,18 @@ class _TxWorkerClient:
         self._consec_timeouts = 0
         self._cooldown_until = 0.0
         self._throttle = _LogThrottle()
+        # v6.8 big-model retry state: "none" (nothing heard)
+        # / "armed" (preload failed, retry due at
+        # _big_retry_at) / "sent" (upgrade job away) /
+        # "done" (turbo live) / "latched" (decode failure or
+        # the retry failed — small for the session). The
+        # detail notice fills _big_detail = (phase, reason).
+        # _big_retry_sent is client-LIFETIME: one retry per
+        # Nalox process, however often the worker respawns.
+        self._big_state = "none"
+        self._big_detail = None
+        self._big_retry_at = 0.0
+        self._big_retry_sent = False
 
     # ------------------------------------------------ lifecycle
     def _spawn(self):
@@ -1159,6 +1263,13 @@ class _TxWorkerClient:
                 self._factory(self._cfg)
             self._ready = False
             self._start_logged = False
+            # v6.8: a fresh worker re-runs its own preload —
+            # its notices re-decide the big-model state (the
+            # one-retry budget itself is NOT reset: it is
+            # per Nalox process, see __init__).
+            self._big_state = "none"
+            self._big_detail = None
+            self._big_retry_at = 0.0
             return True
         except Exception as exc:
             log.error("[ears] could not start the "
@@ -1216,15 +1327,65 @@ class _TxWorkerClient:
             self._ready = True
             return "ready", None
         if mkind == "notice":
-            # v6.7: a one-way worker notice. The only one is
-            # the big-model fallback: the worker's logging is
-            # disabled, so the parent logs the honest line —
-            # once (the throttle keys it), and the wait that
-            # absorbed this message is unaffected.
-            if result == "big-model-fallback":
+            # v6.7: a one-way worker notice — the worker's
+            # logging is disabled, so the parent logs the
+            # honest line, once per kind (the throttle keys
+            # it), and the wait that absorbed the message is
+            # unaffected. v6.8 adds the DETAIL (phase +
+            # reason, sent just before the fallback notice),
+            # the READY notice (the background retry landed
+            # turbo) and the RETRY-FAILED detail.
+            if isinstance(result, tuple) and result \
+                    and result[0] == "big-model-detail":
+                try:
+                    _phase = result[1] if len(result) > 1 \
+                        else "decode"
+                    _reason = result[2] if len(result) > 2 \
+                        else ""
+                    self._big_detail = (_phase, _reason)
+                    if _phase == "preload" \
+                            and not self._big_retry_sent \
+                            and self._big_state in ("none",
+                                                    "armed"):
+                        self._big_state = "armed"
+                        self._big_retry_at = (
+                            time.monotonic()
+                            + BIG_MODEL_RETRY_DELAY_S)
+                    elif _phase != "preload":
+                        self._big_state = "latched"
+                except Exception:
+                    pass
+            elif isinstance(result, tuple) and result \
+                    and result[0] == "big-model-retry-failed":
+                _reason = result[1] if len(result) > 1 else ""
+                self._big_state = "latched"
+                try:
+                    self._throttle.emit(
+                        "big-model-retry-failed",
+                        "[ears] big local model still "
+                        "unavailable (%s) — staying with small"
+                        % (_reason or "unknown error"))
+                except Exception:
+                    pass
+            elif result == "big-model-ready":
+                self._big_state = "done"
+                try:
+                    self._throttle.emit(
+                        "big-model-ready",
+                        "[ears] big local model ready — using "
+                        "large-v3-turbo")
+                except Exception:
+                    pass
+            elif result == "big-model-fallback":
+                _reason = ""
+                if self._big_detail:
+                    _reason = self._big_detail[1] or ""
                 try:
                     self._throttle.emit(
                         "big-model-fallback",
+                        "[ears] big local model unavailable "
+                        "(%s) — using small for now" % _reason
+                        if _reason else
                         "[ears] big local model unavailable "
                         "— using small")
                 except Exception:
@@ -1442,12 +1603,50 @@ class _TxWorkerClient:
         return self._timeout_recovery(job_id, kind, started)
 
     # ------------------------------------------------ requests
+    def _maybe_big_retry(self):
+        """Fire the ONE background big-model retry (v6.8)
+        when it falls due. Called at the top of request()
+        (the caller holds _call_lock): sends an "upgrade"
+        job and pumps briefly for its ack/result — the
+        worker answers at once ("started") because the load
+        itself runs on its own thread, so this costs the
+        current request ~nothing and wake listening is never
+        interrupted. The outcome arrives later as notices
+        (big-model-ready / big-model-retry-failed), absorbed
+        by _classify during ordinary waits. Best-effort: any
+        failure just leaves the state "sent" — no second
+        try, ever."""
+        if self._big_state != "armed" or self._big_retry_sent:
+            return
+        if time.monotonic() < self._big_retry_at:
+            return
+        if self._proc is None or self._req_q is None \
+                or not self._proc.is_alive():
+            return
+        self._big_retry_sent = True
+        self._big_state = "sent"
+        self._next_id += 1
+        job_id = self._next_id
+        try:
+            self._req_q.put((job_id, "upgrade",
+                             BIG_COMMAND_MODEL))
+        except Exception:
+            return
+        try:
+            self._pump(2.0, job_id, "upgrade",
+                       want=("result",))
+        except Exception:
+            pass
+
     def request(self, kind, payload, deadline):
         """One job: the worker's result, or None (timeout /
         crash / backoff / cooldown / closed)."""
         with self._call_lock:
             if self._closed:
                 return None
+            # v6.8: the armed big-model retry fires lazily
+            # on the first request past its due time.
+            self._maybe_big_retry()
             now = time.monotonic()
             if kind in _AUTO_KINDS and now < self._cooldown_until:
                 # Cascade guard: fail fast — the wake loop
