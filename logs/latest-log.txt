@@ -1,35 +1,10 @@
 Nalox log sync
 Version: 7.3
-Synced: 2026-11-16 08:26:18 (laptop local time)
+Synced: 2026-11-16 08:36:30 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:39:57 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:40:06 [SYSTEM] [ears] heard via cloud:groq
-14:40:06 [MIC] [heard] নায় লোক্স ওপেন যোর সেটিংগ
-14:40:06 [YOU] [mic] heard: নায় লোক্স ওপেন যোর সেটিংগ
-14:40:10 [BRAIN] [tool] open_app {'name': 'power options'}
-14:40:13 [BRAIN] [tool] open_app {'name': 'settings'}
-14:40:16 [BRAIN] [tool] open_app {'name': 'control panel'}
-14:40:19 [BRAIN] FreeLLMAPI answered
-14:40:19 [NALOX] NALOX: <dots_function_call> <invoke name="search_files"> <parameter name="query"> power options </parameter> </invoke> </dots_function_call>
-14:40:23 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-14:40:25 [VOICE] via pyttsx3: <dots_function_call> <invoke name="search_files"> <parameter name="query"> power options </parameter> </invoke> </dots_function_call>
-14:40:25 [SYSTEM] [timing] wake→record 6.5s, transcribe 2.3s, brain 13.4s, speak 5.6s
-14:40:25 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:40:31 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:40:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-14:41:10 [MIC] [heard] nalox,
-14:41:10 [MIC] [mic] wake word heard
-14:41:10 [WAKE] [wake] wake word heard
-14:41:10 [NALOX] NALOX: Yes Sir, I'm coming for you.
-14:41:13 [VOICE] via pyttsx3: Yes Sir, I'm coming for you.
-14:41:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-14:42:31 [MIC] [heard] लू workloads कूूूू
-14:42:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-14:43:03 [MIC] [heard] nalox open tax manager
-14:43:03 [MIC] [mic] wake word heard
 14:43:04 [WAKE] [wake] wake word heard
 14:43:04 [NALOX] NALOX: Yes Sir, I'm coming for you.
 14:43:04 [BRAIN] [tool] open_app {'name': 'settings'}
@@ -1683,6 +1658,24 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 08:25:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 08:25:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=16 blip=2 short=0 peak=0.0846
 08:26:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:26:22 [SYSTEM] [logsync] log sent
+08:26:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=17 blip=4 short=0 peak=0.0751
+08:27:09 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:27:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=2 short=0 peak=0.0680
+08:28:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:28:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=2 seg=7 blip=0 short=0 peak=0.0513
+08:28:56 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:29:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=17 blip=1 short=0 peak=0.1449
+08:30:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=6 blip=0 short=0 peak=0.0864
+08:31:27 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:31:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=1 short=0 peak=0.0705
+08:32:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=6 short=0 peak=0.0872
+08:33:30 [MIC] [heard] i don't know how lovys good morning.
+08:33:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=6 blip=2 short=0 peak=0.0485
+08:34:47 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:34:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=7 short=0 peak=0.0670
+08:35:17 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+08:35:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=1 short=0 peak=0.0700
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
