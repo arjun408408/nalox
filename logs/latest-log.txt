@@ -1,48 +1,10 @@
 Nalox log sync
 Version: 8.1
-Synced: 2026-11-16 19:09:52 (laptop local time)
+Synced: 2026-11-16 19:18:59 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-11:58:25 [SYSTEM] [ears] big local model ready — using large-v3-turbo on cuda (float16)
-11:58:25 [SYSTEM] [ears] big local model loading…
-11:58:34 [SYSTEM] [ears] heard via cloud:groq
-11:58:34 [MIC] [heard] আমে বলছি যে তুমি আয় আমাত জনে একটা সংগ পিলে করো সংগ
-11:58:34 [YOU] [mic] heard: আমে বলছি যে তুমি আয় আমাত জনে একটা সংগ পিলে করো সংগ
-11:58:35 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
-11:58:35 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-11:58:36 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-11:58:37 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-11:58:41 [NALOX] NALOX: ওটা ঠিক ধরতে পারলাম না, sir।
-11:58:45 [VOICE] via google-tts: ওটা ঠিক ধরতে পারলাম না, sir।
-11:58:47 [SYSTEM] [timing] wake→record 7.5s, transcribe 3.5s, brain 6.8s, speak 6.1s
-11:58:47 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-11:59:09 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-11:59:19 [SYSTEM] [ears] heard via local
-11:59:59 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:00:01 [MIC] [heard] لگو مع جمال جکاتچ کور چرنیل لیکتے والا مع جمال جکاتچ کورچھا دمل لگو
-12:00:07 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:00:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=2 short=0 peak=0.2362 dec=9 (t6 b0 s3 r0) dmax=21.6s
-12:00:18 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:01:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=1 short=0 peak=0.2755 dec=15 (t13 b0 s2 r0) dmax=8.0s
-12:01:24 [MIC] [heard] nalox open chrome and play song
-12:01:28 [MIC] [mic] wake word heard
-12:01:28 [WAKE] [wake] wake word heard
-12:01:28 [NALOX] NALOX: Yes Sir,
-12:01:29 [VOICE] via tts-cache: Yes Sir,
-12:01:31 [YOU] [mic] heard: open chrome and play song
-12:01:33 [NALOX] NALOX: ক্রোম খুলছি। ইউটিউবে song চালাচ্ছি।
-12:01:36 [VOICE] via google-tts: ক্রোম খুলছি।
-12:01:39 [VOICE] via google-tts: ইউটিউবে song চালাচ্ছি।
-12:01:39 [SYSTEM] [timing] wake→record 6.3s, transcribe 8.8s, brain 2.5s, speak 5.4s
-12:01:39 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:01:54 [SYSTEM] [ears] heard via cloud:groq
-12:01:54 [MIC] [heard] पारफेट देखो यह
-12:01:54 [YOU] [mic] heard: पारफेट देखो यह
-12:01:55 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-12:01:56 [BRAIN] [tool] read_my_screen
-12:01:56 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
 12:01:57 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
 12:02:02 [NALOX] NALOX: ওটা ঠিক ধরতে পারলাম না, sir।
 12:02:06 [VOICE] via google-tts: ওটা ঠিক ধরতে পারলাম না, sir।
@@ -1477,6 +1439,38 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 19:09:42 [SYSTEM] [dashboard] Command Center closed.
 19:09:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 19:09:48 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:09:55 [SYSTEM] [logsync] log sent
+19:10:30 [SYSTEM] [sys] boot warm-up gate opened (120s)
+19:10:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=2 short=0 peak=0.0610 dec=8 (t7 b0 s1 r0) dmax=13.0s
+19:10:41 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:10:41 [VOICE] [voice] male voice cache warmed
+19:11:11 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:11:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=8 blip=3 short=0 peak=0.0598 dec=8 (t7 b0 s1 r0) dmax=13.0s
+19:12:20 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:12:30 [MIC] [heard] neste cnos, muda.
+19:12:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=10 blip=1 short=0 peak=0.0901 dec=7 (t6 b0 s0 r1) dmax=9.4s
+19:13:01 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:13:31 [MIC] [heard] é o zura desculpe.
+19:13:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=2 short=0 peak=0.1329 dec=10 (t9 b0 s1 r0) dmax=12.7s
+19:14:02 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:14:24 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:14:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=2 short=0 peak=0.1371 dec=9 (t9 b0 s0 r0) dmax=12.1s
+19:15:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=18 blip=3 short=0 peak=0.0706 dec=17 (t17 b0 s0 r0) dmax=12.6s
+19:15:39 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:15:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:15:54 [MIC] [heard] ساتھیہ پیسیمینے جا پیسیمینے جا
+19:16:28 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:16:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=1 short=0 peak=0.0933 dec=13 (t12 b0 s1 r0) dmax=13.0s
+19:16:52 [BRAIN] [brain] primary FreeLLMAPI answered (3796 ms)
+19:17:04 [VOICE] via edge-tts: হ্যাঁ, স্যার, জাগতে পারলাম। কি করতে পারি আজ?
+19:17:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=7 blip=3 short=0 peak=0.0325 dec=7 (t7 b0 s0 r0) dmax=0.3s
+19:17:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:18:21 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:18:26 [ERROR] Voice path edge-tts failed:
+19:18:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=5 short=0 peak=0.1051 dec=8 (t5 b0 s3 r0) dmax=13.0s
+19:18:36 [VOICE] via google-tts: Sorry, I could not find koro jake ami reply di ni tate reply diye bolo i am nalox talk me on this laptop.
+19:18:36 [VOICE] [voice] male voice unavailable — female fallback for this reply
+19:18:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
