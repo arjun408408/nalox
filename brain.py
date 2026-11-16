@@ -2421,6 +2421,27 @@ def _reply_names_blocker(reply):
                 "unavailable"))
 
 
+def _bn_token(text, word):
+    """True when `word` is a WHOLE Bengali token in
+    text (v8.1): tokens are split on whitespace +
+    punctuation ONLY — Bengali vowel signs are not word
+    breaks. (Both re \\b and \\w shred Bengali words:
+    \\w splits on the vowel signs, so "ভালক" reads as
+    "ভ" + "লক" and \\block\\b can never match Bengali
+    at all.) A substring inside a longer — possibly
+    garbled — token never matches: "ভালক" (the garbled
+    "ভালো কিছু" that fired the field lock at 18:11:30
+    IST, sync e5aa3f1c), "লক্ষ্য", "পলক", "ঝলক" are
+    not "লক"; "বন্ধু" is not "বন্ধ". Lock/close intents
+    key on this, never on a substring."""
+    if not text or not word:
+        return False
+    for tok in re.split(r"[\s.,!?।;:'\"()\[\]{}]+", text):
+        if tok == word:
+            return True
+    return False
+
+
 def _is_capability_claim(reply):
     """True when a reply is substantially a bare capability
     / intent claim (v6.8): short, no question back, no
@@ -2442,6 +2463,127 @@ def _is_capability_claim(reply):
     return any(p in low for p in
                ("i can ", "i can.", "i will ", "i'll ",
                 "let me ", "i am able to", "i'm able to"))
+
+
+# ------------------------------------------------------------- v8.1
+# FALSE ACTION CLAIMS, the progressive/completed family
+# (field 2026-11-16 18:12 IST): a heavily garbled request
+# was answered by the FreeLLMAPI lead in 1.5 s with "স্যার,
+# স্লাইড করে আপনার লেখা দেখাচ্ছি। …কোনটা করতে চান?" — a
+# present-progressive ACTION claim ("I'm sliding to show
+# your writing") in a turn where ZERO tools ran. The v6.8
+# capability detector above cannot see this shape: it is
+# not "I can", it is "I am doing / I have done" — a claim
+# about a PHYSICAL action (showing / sliding / opening /
+# typing / locking / playing…) that, with no tool
+# execution behind it, is simply false. The narrate guard
+# in _agent_openai_compatible now rejects this shape the
+# same way (one stern retry, then the honest line) on
+# every provider that wrapper serves — the Groq walk AND
+# the FreeLLMAPI lead alike. Pure function, conservative:
+# physical-action verbs only, honest negations and
+# blocker lines never match, and a sentence that is
+# itself a question is not a claim.
+_PROG_CLAIM_BN_PROG = (
+    # in-progress forms — "আমি … করছি / দেখাচ্ছি"
+    "দেখাচ্ছি", "দেখাচ্ছে", "খুলছি", "খুলে দিচ্ছি",
+    "চালাচ্ছি", "চালিয়ে দিচ্ছি", "বাজাচ্ছি", "পাঠাচ্ছি",
+    "পাঠিয়ে দিচ্ছি", "টাইপ করছি", "লক করছি", "বন্ধ করছি",
+    "বন্ধ করে দিচ্ছি", "স্লাইড করছি", "স্লাইড করে",
+    "সরাচ্ছি", "লিখছি", "লিখে দিচ্ছি", "খুঁজছি",
+    "খুঁজে দিচ্ছি", "নিয়ে যাচ্ছি")
+_PROG_CLAIM_BN_DONE = (
+    # completed forms — "… করে দিয়েছি / দিলাম"
+    "দেখিয়েছি", "দেখিয়ে দিয়েছি", "দেখিয়ে দিলাম",
+    "খুলে দিয়েছি", "খুলে দিলাম", "চালিয়ে দিয়েছি",
+    "চালিয়ে দিলাম", "বাজিয়ে দিয়েছি", "বাজিয়ে দিলাম",
+    "পাঠিয়ে দিয়েছি", "পাঠিয়ে দিলাম", "টাইপ করে দিয়েছি",
+    "টাইপ করে দিলাম", "লক করে দিয়েছি", "লক করে দিলাম",
+    "বন্ধ করে দিয়েছি", "বন্ধ করে দিলাম", "লিখে দিয়েছি",
+    "লিখে দিলাম", "খুঁজে দিয়েছি", "খুঁজে দিলাম")
+_PROG_CLAIM_EN_PROG = re.compile(
+    r"\bi(?:'m| am)\s+(?:now\s+)?"
+    r"(opening|showing|typing|writing|playing|sending|"
+    r"locking|closing|sliding|scrolling|searching|"
+    r"looking|creating|making)\b")
+_PROG_CLAIM_EN_DONE = re.compile(
+    r"\bi(?:'ve| have)\s+"
+    r"(opened|shown|typed|written|sent|locked|closed|"
+    r"played|created)\b"
+    r"|\bi\s+(opened|typed|sent|locked|played|shown)\b")
+
+
+def _claim_sentences(reply):
+    """The claim-bearing sentences of a reply (v8.1),
+    or None when the reply is disqualified up front
+    (empty / over-long / an honest negation or blocker
+    line — a truthful report, never a false claim). A
+    sentence that is itself a question makes no claim
+    and is skipped."""
+    r = (reply or "").strip()
+    if not r or len(r) > 400:
+        return None
+    if "পারছি না" in r or "পারলাম না" in r \
+            or "পারি না" in r or "হয়নি" in r \
+            or "হলো না" in r:
+        return None
+    low = r.lower()
+    if "can't" in low or "cannot" in low \
+            or "can not" in low or "unable" in low:
+        return None
+    try:
+        sents = _split_sentences(r)
+    except Exception:
+        sents = [r]
+    if not sents:
+        sents = [r]
+    return [s.strip() for s in sents
+            if s and s.strip()
+            and not s.strip().endswith("?")
+            and "?" not in s]
+
+
+def _is_progressive_action_claim(reply):
+    """True when a reply CLAIMS a physical action in
+    progress OR completed (v8.1) — "দেখাচ্ছি", "স্লাইড
+    করে … দেখাচ্ছি", "খুলে দিয়েছি", "I'm opening…",
+    "I've typed…". This is the FIRST-answer bar: with
+    zero tools behind the turn, either shape is a
+    false claim and buys the stern retry."""
+    sents = _claim_sentences(reply)
+    if sents is None:
+        return False
+    for s in sents:
+        if any(p in s for p in _PROG_CLAIM_BN_PROG
+               + _PROG_CLAIM_BN_DONE):
+            return True
+        low = s.lower()
+        if _PROG_CLAIM_EN_PROG.search(low) \
+                or _PROG_CLAIM_EN_DONE.search(low):
+            return True
+    return False
+
+
+def _is_inprogress_claim(reply):
+    """True when a reply claims a physical action IN
+    PROGRESS only (v8.1) — "দেখাচ্ছি", "I'm opening…".
+    This is the RETRY-acceptance bar in the narrate
+    guard: after the stern retry ordered the work, a
+    COMPLETED-form report ("ক্রোম খুলে দিয়েছি।") is
+    the owner's own mandated completion manner and is
+    taken at face value (the v7.4 rule), but a reply
+    that is STILL narrating in progress ("…দেখাচ্ছি")
+    has not answered the order — it is rejected and
+    the honest line stands."""
+    sents = _claim_sentences(reply)
+    if sents is None:
+        return False
+    for s in sents:
+        if any(p in s for p in _PROG_CLAIM_BN_PROG):
+            return True
+        if _PROG_CLAIM_EN_PROG.search(s.lower()):
+            return True
+    return False
 
 
 class Brain:
@@ -3924,8 +4066,16 @@ class Brain:
                 actions.volume("mute")
                 return "মিউট করলাম।"
 
-        # Lock
-        if "লক" in text:
+        # Lock — v8.1: WHOLE-WORD only. The bare
+        # substring "লক" matched inside the garbled
+        # "ভালক" (field 2026-11-16 18:11:30 IST, sync
+        # e5aa3f1c — "ভালক কিছু লিখো" for "ভালো কিছু")
+        # and answered a Notepad request with "ল্যাপটপ
+        # লক করছি" for an action that never ran. A mask
+        # list cannot cover garbles (they are unbounded),
+        # so the intent keys on _bn_token: "লক" must be
+        # its own token. "ল্যাপটপ লক করো" still locks.
+        if _bn_token(text, "লক"):
             actions.lock_pc()
             return "ল্যাপটপ লক করছি।"
 
@@ -4318,8 +4468,14 @@ class Brain:
         if target is None:
             return None
         key, disp_en, disp_bn = target
+        # v8.1: the Bengali/Hindi close verbs are WHOLE
+        # tokens too — the same substring class as the
+        # lock misfire ("বন্ধ" lives inside "বন্ধু",
+        # "बंद" inside "बंदर"): a friend's name must
+        # never close an app.
         is_close = bool(tset & self._APP_CLOSE_TOKENS) \
-            or "বন্ধ" in text or "बंद" in text
+            or _bn_token(text, "বন্ধ") \
+            or _bn_token(text, "बंद")
         if is_close:
             result = actions.close_app(key)
             if result:
@@ -4329,8 +4485,9 @@ class Brain:
                 f"{disp_en} is not open right now.",
                 f"{disp_bn} এখন খোলা নেই।")
         is_open = bool(tset & self._APP_OPEN_TOKENS) \
-            or "খোলো" in text or "খুলুন" in text \
-            or "ওপেন" in text
+            or _bn_token(text, "খোলো") \
+            or _bn_token(text, "খুলুন") \
+            or _bn_token(text, "ওপেন")
         if is_open:
             # v7.7 (item H): a SECOND action clause rides
             # on this open — "নোটপ্যাড ওপেন করে আমার নামে
@@ -4392,15 +4549,20 @@ class Brain:
             or any(w in t for w in self._DASH_WORDS)
         if not has_dash and not (
                 tokset & self._DASH_CENTER_TOKENS
-                and ("close" in tokset or "বন্ধ" in t
-                     or "बंद" in t)):
+                and ("close" in tokset
+                     or _bn_token(t, "বন্ধ")
+                     or _bn_token(t, "बंद"))):
             return None
         rlang = _text_lang(t, self.lang)
+        # v8.1: whole tokens for the Bengali/Hindi verbs
+        # too ("বন্ধ" inside "বন্ধু" must never close
+        # the Command Center — the lock-misfire class).
         is_close = bool(re.search(r"\b(close|hide)\b", t)) \
-            or "বন্ধ" in t or "बंद" in t \
+            or _bn_token(t, "বন্ধ") or _bn_token(t, "बंद") \
             or "close" in tokset or "hide" in tokset
         is_open = bool(re.search(r"\b(open|show|bring up)\b", t)) \
-            or "খোলো" in t or "খুলুন" in t or "দেখাও" in t \
+            or _bn_token(t, "খোলো") or _bn_token(t, "খুলুন") \
+            or _bn_token(t, "দেখাও") \
             or "खोलो" in t or "दिखाओ" in t \
             or "open" in tokset or "show" in tokset \
             or "kholo" in tokset or "khulo" in tokset
@@ -8629,6 +8791,18 @@ class Brain:
                    "answer. If one step is impossible, do "
                    "every step you CAN and state exactly "
                    "which step blocked and why.")
+        # v8.1: WRITING TASKS COMPOSE (field 2026-11-16
+        # 18:11 IST): asked to write something good in his
+        # name in Notepad, the chain opened Notepad and
+        # type_text typed his own garbled INSTRUCTION back
+        # into the document ("আমাই জেনা নোটপ্যাড - শিলাকো")
+        # — the instruction is not the content.
+        prompt += (" When a task asks you to WRITE "
+                   "content in an app — a note, a letter, a "
+                   "message in his name — COMPOSE proper "
+                   "content for the request and type THAT; "
+                   "never type the owner's spoken instruction "
+                   "itself into the document.")
         # v6.6: CONVERSATIONAL CLOSE — the one mannerism the
         # owner picked from the MARK LIV demo video he studied
         # (2026-11-15): its replies feel alive because they so
@@ -9039,8 +9213,9 @@ class Brain:
             if self._pref_lang() != "bn":
                 return None
             candidate = str(candidate)
-            if _looks_like_action_request(text) \
-                    and _is_capability_claim(candidate):
+            if (_looks_like_action_request(text)
+                    and _is_capability_claim(candidate)) \
+                    or _is_progressive_action_claim(candidate):
                 # v7.7 (item J): the v7.6 rule returned None
                 # here — "a bare capability narration is the
                 # narrate guard's business, never rescued".
@@ -10252,9 +10427,20 @@ class Brain:
         # false claim never reaches his ears. Ability
         # questions never reach here (_looks_like_action_
         # request excludes them).
-        if reply and self._tool_run_count == _tools_before \
-                and _looks_like_action_request(text) \
-                and _is_capability_claim(reply):
+        # v8.1: the progressive/completed FALSE-CLAIM
+        # shape joins the trigger — a reply claiming a
+        # physical action in progress or done ("স্লাইড
+        # করে আপনার লেখা দেখাচ্ছি") with zero tools behind
+        # it is rejected exactly like a capability claim,
+        # whether or not the (possibly garbled) request
+        # itself read as an action request: no chat answer
+        # slides, types or locks anything.
+        _false_claim = bool(
+            reply and self._tool_run_count == _tools_before
+            and ((_looks_like_action_request(text)
+                  and _is_capability_claim(reply))
+                 or _is_progressive_action_claim(reply)))
+        if _false_claim:
             _lb("BRAIN",
                 "[brain] reply only CLAIMED the action (no "
                 "tool ran) — retrying with a direct "
@@ -10286,7 +10472,14 @@ class Brain:
                 reply2 = None
             if reply2 and self._tool_run_count != _tools_before:
                 reply = reply2
-            elif reply2 and not _is_capability_claim(reply2):
+            elif reply2 and not _is_capability_claim(reply2) \
+                    and not _is_inprogress_claim(reply2):
+                # v8.1: a retry that STILL only narrates
+                # in progress ("…দেখাচ্ছি") is not
+                # accepted either — the honest line below
+                # replaces it. A completed-form report is
+                # the owner's mandated completion manner
+                # and stands (the v7.4 acceptance rule).
                 reply = reply2
             else:
                 reply = self._loc(

@@ -4460,6 +4460,33 @@ PENDING_PARTIAL_GRACE_S = 3.0  # take_pending_command waits
                                # in-flight live wake to land
                                # its remainder
 
+# ------------------------------------------------------------- v8.1
+# LIVE TEXT IS THE INPUT OF RECORD (the owner's design
+# order, 2026-11-16 18:10 IST — his own diagnosis):
+# Telegram commands work PERFECTLY because they arrive as
+# TEXT; voice commands die because the audio never
+# survives the batch transcription pipeline. So the live
+# Bengali caption stops being a preview and becomes the
+# input itself: he speaks -> the live text appears -> on
+# pause THAT text goes to the brain, exactly like a
+# Telegram message -> the reply comes by voice. The batch
+# decode keeps running, demoted to FALLBACK: it is used
+# only when an utterance's live text is empty/unusable,
+# and a batch result that lands after the live text
+# already fired the turn is logged as superseded, never
+# delivered twice. The machinery below is the v6.7/v7.5
+# preview stream re-prioritised, not replaced: the ears
+# core accumulates every partial a pump delivers (a
+# recorder hook on _PreviewPump), INDEPENDENT of any chat
+# surface's visibility — tray/hidden mode accumulates
+# too.
+LIVE_FINAL_WAIT_S = 2.0     # after a command segment
+                            # closes, wait at most this
+                            # long for the live stream's
+                            # final-snapshot decode before
+                            # the batch fallback is
+                            # consulted
+
 
 def _make_tx_client(cfg, lane):
     """Build one lane's _TxWorkerClient (v6.12).
@@ -4480,8 +4507,19 @@ class _PreviewPump:
     transcriptions to the sink. All failures are silent —
     a preview that cannot run simply never appears."""
 
-    def __init__(self, sink):
+    def __init__(self, sink, recorder=None):
         self._sink = sink
+        # v8.1: an optional recorder hook — called with
+        # every partial this pump DELIVERS, whether or not
+        # any chat surface is visible. The ears core passes
+        # its live accumulator (Ears._live_note), so the
+        # live text of the current utterance exists in the
+        # core even in tray/hidden mode. With a recorder
+        # attached the decode below runs even when the sink
+        # is hidden (the text is the input of record now,
+        # not decoration); without one the v6.7 rule stands
+        # (a hidden sink drops snapshots — no wasted work).
+        self._recorder = recorder
         # v6.12: the preview worker is its own lane too
         # (tiny-only, cpu_threads from ears_preview_threads).
         self._client = _make_tx_client(
@@ -4550,7 +4588,13 @@ class _PreviewPump:
                 self._stop_evt.wait(0.05)
                 continue
             audio, seq = _slot
-            if not self._sink_visible():
+            # v8.1: with a recorder attached the decode runs
+            # even when every surface is hidden — the live
+            # text is the input of record, and tray mode
+            # must accumulate it too. Without a recorder the
+            # v6.7 economy stands.
+            if not self._sink_visible() \
+                    and self._recorder is None:
                 continue  # hidden mid-recording — drop it
             got = None
             try:
@@ -4569,6 +4613,15 @@ class _PreviewPump:
                         self._last_text = text
                         self._last_audio_len = len(audio)
                         self._last_seq = seq
+                    # v8.1: the ears core hears every
+                    # delivered partial through the recorder
+                    # hook (its live accumulator), independent
+                    # of the UI sinks entirely.
+                    if self._recorder is not None:
+                        try:
+                            self._recorder(text)
+                        except Exception:
+                            pass
                     try:
                         self._sink.update(text)
                     except Exception:
@@ -4660,6 +4713,30 @@ class _WakePartialSink:
             # no trace (the dashboard trio's cancel).
             self.bubble_open = False
             self._ears._wake_caption_finish("")
+
+
+class _LiveTextSink:
+    """The sink for a HIDDEN command recording's preview
+    pump (v8.1): when a preview sink is wired but no chat
+    surface is visible, _start_preview starts no UI
+    session (the v6.7 rule) — yet the live text must
+    still accumulate, because it is the command's input
+    of record now, not a display extra. This sink reports
+    visible (so the pump decodes) and swallows the
+    display callbacks; the pump's recorder hook
+    (Ears._live_note) does the accumulating."""
+
+    def visible(self):
+        return True
+
+    def begin(self):
+        pass
+
+    def update(self, text):
+        pass
+
+    def finish(self, text):
+        pass
 
 
 class Ears:
@@ -4786,6 +4863,31 @@ class Ears:
         # v7.5: when the current _pending_command was set
         # (its staleness guard — see take_pending_command).
         self._pending_command_at = 0.0
+        # v8.1: the LIVE TEXT accumulator — the input of
+        # record. Every preview pump (the wake loop's, a
+        # command recording's, a headless tray-mode pump)
+        # reports each delivered partial here through its
+        # recorder hook, so the current utterance's live
+        # text exists in the core whether or not any chat
+        # surface is visible. _live_begin() opens a fresh
+        # utterance; partials are cumulative snapshots of
+        # one utterance, so the newest simply replaces.
+        self._live_lock = threading.Lock()
+        self._live_text = ""
+        # v8.1: job ids whose one-breath remainder the
+        # LIVE text already delivered at the wake loop's
+        # drain — the batch handler must not deliver it a
+        # second time (see _handle_wake_segment).
+        self._live_command_jobs = set()
+        # v8.1: where the current _pending_command came
+        # from — "live" or "batch" (the dashboard marker
+        # reads the per-turn source via last_input_source).
+        self._pending_source = "batch"
+        # v8.1: the input source of the most recent
+        # command handed upward — "live caption" /
+        # "batch ears" / "" (nothing yet). nalox.py pushes
+        # it to the Command Center's SYSTEM panel.
+        self.last_input_source = ""
         # v7.0: the mic stream watchdog — ONE per Ears (=
         # per process), so its restart budget and its
         # once-per-session spoken alert span every
@@ -4841,11 +4943,47 @@ class Ears:
         finish(text) — finish("") cancels the preview."""
         self._preview_sink = sink
 
+    # ---------- v8.1: the live-text accumulator ----------
+    def _live_begin(self):
+        """Open a fresh utterance in the live accumulator
+        (v8.1): the previous utterance's text is done
+        with — whatever the pumps deliver from here
+        belongs to the speech now in progress."""
+        with self._live_lock:
+            self._live_text = ""
+
+    def _live_note(self, text):
+        """One delivered live partial (v8.1): the pumps'
+        recorder hook. Partials are cumulative snapshots
+        of the utterance in progress, so the newest
+        replaces — the accumulator always holds the
+        fullest live reading so far."""
+        text = (text or "").strip()
+        if not text:
+            return
+        with self._live_lock:
+            self._live_text = text
+
+    def _live_snapshot(self):
+        """The current utterance's accumulated live text
+        (v8.1) — "" when the live stream has produced
+        nothing usable yet."""
+        with self._live_lock:
+            return self._live_text
+
     def _start_preview(self):
         """Open a preview session for one command recording
         (v6.7 F): only when a sink is wired AND the dashboard
         is visible — a hidden dashboard means no wasted work.
-        Returns the running _PreviewPump, or None."""
+        Returns the running _PreviewPump, or None.
+
+        v8.1: a visible session's pump ALSO carries the
+        live recorder, and the accumulator opens fresh —
+        the recording's live text is its input of record
+        now, accumulated in the core alongside the
+        display. (A hidden dashboard still starts no
+        session here — the headless pump is
+        _start_live_pump's separate job.)"""
         sink = getattr(self, "_preview_sink", None)
         if sink is None:
             return None
@@ -4855,7 +4993,28 @@ class Ears:
             sink.begin()
         except Exception:
             return None
-        pump = _PreviewPump(sink)
+        self._live_begin()
+        pump = _PreviewPump(sink, recorder=self._live_note)
+        pump.start()
+        return pump
+
+    def _start_live_pump(self):
+        """The HEADLESS live pump (v8.1): when a preview
+        sink is wired but no chat surface is visible
+        (tray mode, dashboard hidden), _start_preview
+        starts no session — yet the live text must still
+        accumulate, because it is the command's input of
+        record, not a display extra. This pump decodes
+        into a swallow-everything sink; only the recorder
+        hook (the core accumulator) hears it. With NO
+        sink wired at all there is no live stream to tap
+        and this returns None, exactly as before."""
+        sink = getattr(self, "_preview_sink", None)
+        if sink is None:
+            return None
+        self._live_begin()
+        pump = _PreviewPump(_LiveTextSink(),
+                            recorder=self._live_note)
         pump.start()
         return pump
 
@@ -4943,15 +5102,66 @@ class Ears:
         _fire_wake_callback()
         self._partial_wake_event.set()
 
-    def _set_pending_command(self, text, lang):
+    def _set_pending_command(self, text, lang, source="batch"):
         """Store the one-breath remainder with its stamp
         (v7.5): take_pending_command refuses a remainder
         older than PENDING_COMMAND_TTL_S — a partial-woken
         segment's batch job can land its remainder after
         the main loop already moved on, and a stale
-        command must never execute at a later wake."""
+        command must never execute at a later wake.
+
+        v8.1: source names where the remainder came from
+        — "live" (the live caption, the input of record)
+        or "batch" (the batch decode, the fallback)."""
         self._pending_command = (text, lang)
         self._pending_command_at = time.monotonic()
+        self._pending_source = source
+        if source == "live":
+            self.last_input_source = "live caption"
+
+    def _arm_live_remainder(self):
+        """Deliver the just-closed wake segment's command
+        from its LIVE text (v8.1) — called by the wake
+        loop on the partial-wake drain path, where the
+        segment's final live partial is known. When that
+        partial passes the race bar (not garbage, a
+        plausible {en,bn,hi} script, not a prompt echo,
+        coverage ≥ PARTIAL_MIN_COVERAGE — a hallucinated
+        non-{en,bn,hi} partial is UNUSABLE here, exactly
+        as in the command race) and carries a remainder
+        past the wake name, the remainder becomes the
+        pending command NOW, sourced "live", and the
+        segment's batch job is marked so its own
+        remainder delivery is superseded (logged, never
+        a second brain.handle). Returns True when the
+        live text delivered the command."""
+        try:
+            job_id = self._last_job_id
+            got = self._wake_partials.get(job_id)
+            if not got:
+                return False
+            cand = _partial_race_candidate(got[0], got[1])
+            if cand is None:
+                return False
+            text, lang = cand
+            if not looks_like_wake_word(text):
+                return False
+            remainder, rlang = split_wake_remainder(text, lang)
+            if looks_like_wake_up(text):
+                remainder = _strip_wake_up_phrase(remainder)
+            if not remainder or is_garbage(remainder):
+                return False
+            self._live_command_jobs.add(job_id)
+            while len(self._live_command_jobs) > 8:
+                self._live_command_jobs.discard(
+                    min(self._live_command_jobs))
+            self._set_pending_command(remainder, rlang,
+                                      source="live")
+            log.info("[ears] live text → brain: %s",
+                     remainder[:60])
+            return True
+        except Exception:
+            return False
 
     def stop(self):
         self._stop.set()
@@ -5128,6 +5338,11 @@ class Ears:
                      "command (%.0fs old): %r",
                      time.monotonic() - _at, pending[0])
             return None
+        # v8.1: a batch-sourced remainder marks the turn's
+        # input source (a live-sourced one already did, in
+        # _set_pending_command).
+        if getattr(self, "_pending_source", "batch") != "live":
+            self.last_input_source = "batch ears"
         return pending
 
     def _pending_might_land(self):
@@ -6078,7 +6293,19 @@ class Ears:
                                  crlang, remainder)
                         remainder, rlang = cand, crlang
             took = time.monotonic() - started
-            self._set_pending_command(remainder, rlang)
+            if _job_id is not None and _job_id in getattr(
+                    self, "_live_command_jobs", ()):
+                # v8.1: the LIVE text of this segment
+                # already delivered its remainder at the
+                # wake (the input of record) — this batch
+                # remainder is a duplicate of a turn that
+                # already fired. Logged, never delivered:
+                # no second brain.handle for one utterance.
+                self._live_command_jobs.discard(_job_id)
+                log.info("[ears] batch result superseded "
+                         "by live text: %r", remainder)
+            else:
+                self._set_pending_command(remainder, rlang)
             LAST_TIMING["record"] = len(audio) / SAMPLE_RATE
             LAST_TIMING["transcribe"] = took
             log.info("One-breath command: %r (%s)", remainder, rlang)
@@ -6383,8 +6610,13 @@ class Ears:
                                 wake_sink = _WakePartialSink(
                                     self)
                                 wake_pump = _PreviewPump(
-                                    wake_sink)
+                                    wake_sink,
+                                    recorder=self._live_note)
                                 wake_pump.start()
+                            # v8.1: a fresh segment opens a
+                            # fresh utterance in the live
+                            # accumulator.
+                            self._live_begin()
                             wake_sink.begin_segment()
                             live_seg_base_seq = \
                                 wake_pump.submit_seq()
@@ -6406,9 +6638,30 @@ class Ears:
                 # snapshot's decode to land (it decides the
                 # handler's escalation economy and joins the
                 # one-breath re-hear race).
+                # v8.1: when the live partial already fired
+                # this segment's wake (the drain), the FULL
+                # segment is submitted as the live stream's
+                # final snapshot and the wait extends to
+                # LIVE_FINAL_WAIT_S — the live text of
+                # record must cover the whole utterance, or
+                # the coverage bar would refuse a remainder
+                # the owner plainly spoke (the same
+                # final-snapshot pattern listen_for_command
+                # uses). Non-drain segments keep the 0.8 s
+                # harvest exactly as before.
                 _ptxt, _pcov = "", 0.0
                 if live_open and wake_pump is not None:
-                    _pdl = time.monotonic() + 0.8
+                    _draining = partial_deadline is not None \
+                        or self._partial_wake_event.is_set()
+                    if _draining:
+                        try:
+                            wake_pump.submit(audio)
+                        except Exception:
+                            pass
+                        _pdl = time.monotonic() \
+                            + LIVE_FINAL_WAIT_S
+                    else:
+                        _pdl = time.monotonic() + 0.8
                     while True:
                         _pt, _pl, _ps = wake_pump \
                             .last_partial(
@@ -6451,6 +6704,13 @@ class Ears:
                 if _drain:
                     # The wake already fired on the partial;
                     # the batch job confirms it behind us.
+                    # v8.1: the segment's LIVE text is the
+                    # input of record — if it carries the
+                    # command, deliver it as the pending
+                    # command NOW (the batch job's own
+                    # remainder is superseded when it lands;
+                    # see _arm_live_remainder).
+                    self._arm_live_remainder()
                     return True
         finally:
             if wake_pump is not None:
@@ -6575,7 +6835,12 @@ class Ears:
         # v6.7 F: live hearing preview — started only when
         # the Command Center is visible (see _start_preview);
         # the loop below merely drops snapshots into it.
+        # v8.1: when the surface is hidden the HEADLESS
+        # live pump runs instead — the live text is the
+        # command's input of record now, in tray mode too.
         pump = self._start_preview()
+        if pump is None:
+            pump = self._start_live_pump()
         heard_chunks = []
         last_submit = 0.0
         with self._open_stream(sd) as stream:
@@ -6635,40 +6900,91 @@ class Ears:
         # partial's snapshot spanned; below
         # PARTIAL_MIN_COVERAGE the race ignores it.
         _ptext, _plen = "", 0
-        if pump is not None:
-            try:
-                _ptext, _plen, _pseq = pump.last_partial()
-            except Exception:
-                _ptext, _plen = "", 0
         _coverage = 0.0
-        try:
-            if _plen and audio is not None and len(audio):
-                _coverage = _plen / float(len(audio))
-        except Exception:
-            _coverage = 0.0
-        try:
-            text, lang, ear_src = transcribe_command_best(
-                audio, self.cfg["whisper_command_model"], self.cfg,
-                initial_prompt=COMMAND_PROMPT,
-                local_fn=self._local_command,
-                partial_text=_ptext or None,
-                partial_coverage=_coverage)
-        except Exception as exc:
-            log.error("[CRASH-GUARD] command transcription "
-                      "escaped containment: %s: %s",
-                      type(exc).__name__, exc)
-            _fire_status("[CRASH-GUARD] transcription failed — "
-                         "kept listening")
-            # v6.13: this failure used to exist ONLY in the
-            # Python log (nalox.log) — the synced diagnostics
-            # never saw it. It is a logbook ERROR now, so
-            # logsync uploads it early like every other fault.
-            _logbook_error("[ears] command transcription "
-                           "failed (crash-guard) — kept "
-                           "listening")
-            text, lang, ear_src = "", "en", "local"
+        if pump is not None:
+            # v8.1: the FULL segment is the live stream's
+            # final snapshot — submit it and give its
+            # decode a short bounded wait (at most
+            # LIVE_FINAL_WAIT_S, ending early the moment a
+            # validating partial lands), so the live text
+            # of record covers the whole utterance, not
+            # just the part heard before the pause.
+            try:
+                pump.submit(audio)
+            except Exception:
+                pass
+            _live_deadline = time.monotonic() \
+                + LIVE_FINAL_WAIT_S
+            while True:
+                try:
+                    _ptext, _plen, _pseq = pump.last_partial()
+                except Exception:
+                    _ptext, _plen = "", 0
+                try:
+                    if _plen and audio is not None \
+                            and len(audio):
+                        _coverage = _plen / float(len(audio))
+                except Exception:
+                    _coverage = 0.0
+                if _partial_race_candidate(_ptext,
+                                            _coverage) \
+                        is not None:
+                    break
+                if time.monotonic() >= _live_deadline \
+                        or self._stop.is_set():
+                    break
+                time.sleep(0.05)
+        # v8.1: THE LIVE TEXT IS THE INPUT OF RECORD. A
+        # live reading that passes the race bar (not
+        # garbage, a plausible {en,bn,hi} script — a
+        # hallucinated non-{en,bn,hi} partial is UNUSABLE
+        # and falls through to the batch path — not a
+        # prompt echo, coverage ≥ PARTIAL_MIN_COVERAGE)
+        # IS the command: it goes to the brain directly
+        # and the batch race never runs for this
+        # utterance. The batch pipeline below is the
+        # FALLBACK, consulted only when the live text was
+        # empty/unusable.
+        _live_cand = _partial_race_candidate(_ptext,
+                                             _coverage) \
+            if pump is not None else None
+        if _live_cand is not None:
+            text, lang = _live_cand
+            ear_src = "live-partial"
+            self.last_input_source = "live caption"
+            log.info("[ears] live text → brain: %s",
+                     text[:60])
+        else:
+            try:
+                text, lang, ear_src = transcribe_command_best(
+                    audio, self.cfg["whisper_command_model"],
+                    self.cfg,
+                    initial_prompt=COMMAND_PROMPT,
+                    local_fn=self._local_command,
+                    partial_text=_ptext or None,
+                    partial_coverage=_coverage)
+            except Exception as exc:
+                log.error("[CRASH-GUARD] command transcription "
+                          "escaped containment: %s: %s",
+                          type(exc).__name__, exc)
+                _fire_status("[CRASH-GUARD] transcription "
+                             "failed — kept listening")
+                # v6.13: this failure used to exist ONLY in
+                # the Python log (nalox.log) — the synced
+                # diagnostics never saw it. It is a logbook
+                # ERROR now, so logsync uploads it early
+                # like every other fault.
+                _logbook_error("[ears] command transcription "
+                               "failed (crash-guard) — kept "
+                               "listening")
+                text, lang, ear_src = "", "en", "local"
         LAST_TIMING["transcribe"] = time.monotonic() - _t0
         LAST_COMMAND_MISS = None if text else "engines-empty"
+        # v8.1: a batch-delivered command marks the turn's
+        # input source for the Command Center marker (the
+        # live branch set its own above).
+        if text and ear_src != "live-partial":
+            self.last_input_source = "batch ears"
         log.info("Command heard: %r (language: %s)", text, lang)
         # v6.7 F: the FINAL transcript finalizes the preview
         # bubble ("" cancels it — nothing was really heard).

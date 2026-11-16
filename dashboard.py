@@ -526,8 +526,9 @@ _NOTICE_HEADLINES = {
     "7.10": "free brain pool এবার নিজে নিজে চলবে",
     "7.11": "Loading screen: সব ready হয়ে তবেই খুলবে",
     "8.0": "FreeLLMAPI brain, আসল loading",
+    "8.1": "Live caption-ই এবার আসল কান",
 }
-_NOTICE_HEADLINE_NOW = "FreeLLMAPI brain, আসল loading"
+_NOTICE_HEADLINE_NOW = "Live caption-ই এবার আসল কান"
 
 # v8.0: a version may own its WHOLE banner line when the
 # standard "v<version> — <headline>" shape cannot carry
@@ -535,6 +536,8 @@ _NOTICE_HEADLINE_NOW = "FreeLLMAPI brain, আসল loading"
 _NOTICE_FULL = {
     "8.0": ("✅ Updated to v8.0 (FINAL) — "
             "FreeLLMAPI brain, আসল loading"),
+    "8.1": ("✅ Updated to v8.1 — "
+            "Live caption-ই এবার আসল কান"),
 }
 
 
@@ -751,6 +754,7 @@ class Dashboard:
         self._visible = False
         self._status_state = "listening"
         self._brain_text = None
+        self._input_text = None  # v8.1: last input source
         self._chat = deque(maxlen=MAX_CHAT_LINES)
         self._chat_lock = threading.Lock()
         # v6.5 LIVE CHAT SYNC: the streaming NALOX bubble —
@@ -824,6 +828,7 @@ class Dashboard:
         self._level_label = None
         self._clock_label = None
         self._brain_label = None
+        self._input_label = None  # v8.1: "Last input" row
         self._mic_label = None
         self._mic_live_label = None  # v7.2: live mic readout
         self._stat_widgets = {}
@@ -1401,6 +1406,15 @@ class Dashboard:
         self._brain_text = str(text)
         self._send(("brain", str(text)))
 
+    def set_last_input(self, source):
+        """v8.1: the SYSTEM panel's input marker — where
+        the latest turn's words came from ("live caption"
+        when the live text of record carried the turn,
+        "batch ears" when the batch fallback did).
+        nalox.py pushes it as each command starts."""
+        self._input_text = str(source)
+        self._send(("input", str(source)))
+
     def set_update_notice(self, version):
         """v7.1: queue the one-time update banner. Called
         by nalox.py when the updater's marker pops at boot
@@ -1817,6 +1831,14 @@ class Dashboard:
             bg=PANEL, fg=MUTED, font=("Segoe UI", 10),
             wraplength=232, justify="left")
         self._brain_label.pack(anchor="w", padx=16, pady=(2, 2))
+        # v8.1: the input-source marker — "🎙 Last input:
+        # live caption" on turns the live text of record
+        # carried (the owner's v8.1 design made visible).
+        self._input_label = tk.Label(
+            left, text="🎙 Last input: —",
+            bg=PANEL, fg=MUTED, font=("Segoe UI", 10),
+            wraplength=232, justify="left")
+        self._input_label.pack(anchor="w", padx=16, pady=(2, 2))
         # v6.0: the ⚡ Nalox Level — measured speed (perflevel
         # over the session's [timing] samples + provider
         # health), refreshed by the same 1 s tick.
@@ -2499,6 +2521,14 @@ class Dashboard:
                 brain = self._brain_text or status.get("brain")
                 if brain and brain != "unknown":
                     self._brain_label.configure(text=brain)
+            if self._input_label is not None \
+                    and self._input_text:
+                try:
+                    self._input_label.configure(
+                        text="🎙 Last input: "
+                             + self._input_text)
+                except Exception:
+                    pass
             if self._level_label is not None:
                 try:
                     import perflevel
@@ -2912,6 +2942,11 @@ class Dashboard:
                     self._brain_text = payload
                     if self._brain_label is not None:
                         self._brain_label.configure(text=payload)
+                elif kind == "input":
+                    self._input_text = payload
+                    if self._input_label is not None:
+                        self._input_label.configure(
+                            text="🎙 Last input: " + payload)
                 elif kind == "cmd":
                     gen = _show_gen(payload)
                     if gen is not None:

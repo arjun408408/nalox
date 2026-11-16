@@ -1945,3 +1945,182 @@ down: test_v571 G4 48000 → 52000, test_v710 S5b
 4500 → 5500. No production-behaviour pin was
 weakened: test_v711's v7.11 banner / README / FOR-AI
 history checks pass unchanged.
+
+## v8.1 — "Live caption-ই এবার আসল কান" (2026-11-16)
+
+THE PRIORITY INVERSION (the owner's own design order,
+2026-11-16 18:10 IST, from his field diagnosis):
+Telegram commands worked perfectly because they arrive
+as TEXT; voice commands died because the audio never
+survived the batch transcription pipeline. So the LIVE
+CAPTION is now the input of record. He speaks → the
+live Bengali text appears → on pause THAT text goes to
+the brain exactly like a Telegram message → the reply
+comes by voice. The batch decode keeps running,
+demoted to FALLBACK.
+
+How it is built (ears.py — the v6.7/v7.5 preview
+machinery re-prioritised, not replaced):
+- The ears core accumulates every partial a preview
+  pump delivers (a recorder hook on _PreviewPump,
+  Ears._live_note/_live_begin/_live_snapshot),
+  INDEPENDENT of UI visibility: the wake pump, a
+  visible command preview, and a HEADLESS pump
+  (_start_live_pump, swallow-everything _LiveTextSink)
+  for tray/hidden mode all feed it. _start_preview's
+  v6.7 semantics are unchanged (hidden dashboard →
+  no UI session); the headless pump is a separate
+  start, and with no sink wired at all nothing starts
+  (the pre-v8.1 world exactly).
+- Command path (listen_for_command): the full segment
+  is submitted as the live stream's final snapshot and
+  awaited ≤ LIVE_FINAL_WAIT_S (2.0 s, early-exit on a
+  validating partial). A live reading that passes
+  _partial_race_candidate IS the command — logged
+  "[ears] live text → brain: …", ear source
+  "live-partial", and the batch race never runs for
+  that utterance. Otherwise transcribe_command_best
+  runs exactly as before (the partial still joins its
+  race, as in v7.5).
+- Wake path: unchanged until the partial-wake drain
+  returns, where _arm_live_remainder delivers the
+  segment's command from its final live partial when
+  it passes the same race bar and carries a remainder
+  (pending command, source "live"). The batch job id
+  is marked in _live_command_jobs; when the batch
+  handler later reaches its own remainder for that
+  job it logs "[ears] batch result superseded by live
+  text" and does NOT set the pending command — no
+  double brain.handle, ever. Cut jobs (D7) never arm.
+- USABILITY BAR (field steer, sync eb6f5524): the live
+  stream's tiny-class model hallucinated Chinese
+  ('我真的想喝杯') on the v8.0 wake lane — so a live
+  text that is garbage OR outside {en,bn,hi} (the
+  _partial_race_candidate bar: is_garbage +
+  _script_plausible + prompt-echo + coverage ≥ 0.7)
+  is UNUSABLE: it must not fire the wake remainder and
+  must not become a command; the batch fallback owns
+  the utterance. "The text he SEES is the text that
+  gets answered" applies only to live text in
+  {en,bn,hi} that passes is_garbage().
+- The could-not-hear line still fires only when BOTH
+  live text and batch result are empty for an
+  utterance with real speech (LAST_COMMAND_MISS
+  semantics unchanged) — the always-answer rule is
+  preserved: any usable live text is answered, however
+  garbled.
+- HONEST LIMIT: the live stream's model is the small
+  preview model — its Bengali is rougher than the big
+  model's. The trade the owner explicitly chose is
+  "the text he SEES is the text that gets answered"
+  (no invisible failure), with garble tolerance
+  downstream (brain ASR-tolerance + fuzzy matching).
+  The live stream's behaviour as the input of record
+  is first proven on his machine; on the VM it is
+  stub-proven only.
+
+Boot-probe diagnosability (Item 2, nalox.py): the gate
+verdict named failed stages but never their reasons.
+_boot_probe_detail_line now renders ONE logbook line —
+"[sys] boot probe detail: <label> ✓/⚠/✗ <detail>; …"
+— with every stage's own detail string verbatim,
+logged at the gate; a daemon (_boot_probe_late_watch,
+~15 min bound) re-logs the full block when a capped
+stage later resolves. Logging only — bootprobe.py and
+probe behaviour are untouched.
+
+Visible marker (Item 3): the Command Center SYSTEM
+panel gains "🎙 Last input: —" (dashboard.set_last_
+input, fed by nalox.py's run_command from
+ears.last_input_source — "live caption" / "batch
+ears"). Banner: "✅ Updated to v8.1 — Live caption-ই
+এবার আসল কান" (per-version table + _NOTICE_FULL).
+
+Two field defects fixed in scope (steers 18:12/18:19
+IST):
+- FALSE ACTION CLAIMS, progressive family (brain.py):
+  _is_progressive_action_claim detects a reply claiming
+  a physical action in progress/completed ("স্লাইড করে
+  আপনার লেখা দেখাচ্ছি", "I'm opening…") sentence-wise
+  (questions and honest negations/blockers never
+  match). In _agent_openai_compatible — which serves
+  BOTH the Groq walk and the FreeLLMAPI lead/chat — a
+  zero-tool turn ending in such a claim gets the v6.8
+  treatment (one stern retry; a retry that still only
+  claims is replaced by the honest Bengali line). The
+  language-rescue path applies the same bar (a
+  progressive claim is never translated into speech).
+- LOCK MISCLASSIFICATION (brain.py, deterministic
+  intents): PROVEN from sync e5aa3f1c — the heard line
+  "…নোটপেড আমার নামে ভালক কিছু লাখো।" ("ভালক" = the
+  garbled "ভালো কিছু") answered "ল্যাপটপ লক করছি" at
+  brain 0.0 s with no tool line: the Bengali lock
+  intent's bare substring "লক" matched INSIDE the
+  garbled token. A mask list cannot cover garbles
+  (they are unbounded), so lock/close/open verbs now
+  match on WHOLE TOKENS (brain._bn_token — split on
+  whitespace/punctuation only; \b and \w both shred
+  Bengali: \w splits on vowel signs, and \block\b can
+  never match Bengali at all). Applied at the Bengali
+  lock check, _app_control_intents' বন্ধ/बंद close
+  and খোলো/খুলুন/ওপেন open checks ("বন্ধ" inside
+  "বন্ধু" was the same bug), and _dashboard_intents'
+  close/open checks. A genuine "লক করো" / "বন্ধ করো"
+  still fires.
+- WRITING ECHO (brain.py system prompt): a new rule —
+  when a task asks to WRITE content in an app, compose
+  proper content for the request; never type the
+  owner's spoken instruction itself into the document
+  (field 18:11 IST: type_text typed his garbled
+  instruction into Notepad). Pinned by needle on the
+  production prompt.
+
+Known, deliberately NOT fixed here (reported, out of
+scope): edge-tts failed 18:05/18:11 IST — every field
+reply used the female google-tts fallback; worker-slow
+pauses between turns continue; 'Ears running test'
+failed at both v8.0 boots for a reason the log could
+not carry (Item 2 exists precisely so the next sync
+can say why).
+
+Tests: test_v81.py pins the live-primary path (wake +
+remainder with the batch path stubbed DEAD; follow-up
+live text → command; batch fallback when live is
+empty; batch-after-live does not re-fire; both-empty
+→ one could-not-hear evidence line; accumulation with
+all UI sinks hidden; hallucinated non-{en,bn,hi}
+partial neither wakes nor commands), the stage-detail
+log block (every stage + the ✗ reason verbatim), the
+lock masking (false-positive words never lock; a real
+লক করো still does), the progressive-claim guard
+(stubbed lead claim + zero tools → not spoken as-is;
+retry/tools/blocker cases kept), and the writing-rule
+prompt needle.
+
+One refinement inside the claim guard, pinned by
+test_v74 D1–D3 + test_v81 F4b: the FIRST-answer bar
+rejects both shapes (in-progress and completed), but
+the RETRY-acceptance bar is in-progress only
+(_is_inprogress_claim). After the stern retry ordered
+the work, a completed-form report ("ক্রোম খুলে
+দিয়েছি।") is the owner's mandated completion manner
+and is taken at face value (the v7.4 rule); a retry
+that is STILL narrating in progress ("…দেখাচ্ছি") is
+rejected and the honest line stands.
+
+Intentional test changes (disclosed): (1) the
+per-release needle sweep 8.0 → 8.1 in 32 suites —
+the version.txt current-version pin and the
+UPDATE.bat banner needle, one each; historical
+labels/references untouched (the WAKE_TX_DEADLINE
+= 8.0 constants and the v8.0 banner equality are not
+version pins and were left alone). (2) README scan
+windows grew where the prepended v8.1 block pushed
+older text down: the "leads with v7.11" checks
+[:2000] → [:4000] in 29 suites; test_v710 S5b
+[:3500] → [:4500]; test_v78 S6 [:3000] → [:4000];
+test_v79 S5b [:5500] → [:6500]. (3) test_v81 is
+new. No production-behaviour pin was weakened.
+Battery: 36 suites, 3,611 checks, 0 failures. The
+real-audio standalone Bengali proof passes (WOKE:
+True, COMMAND: 'open chrome').

@@ -1530,6 +1530,82 @@ def startup_youtube_check(cfg, speaker):
 
 
 # ------------------------------------------------------- reminders (v3)
+def _probe_stage_icon(status):
+    """One stage's mark for the boot-probe detail line
+    (v8.1): ✓ ready, ⚠ still warming / warning, ✗ failed."""
+    return {"ok": "✓", "warn": "⚠", "fail": "✗"}.get(
+        status, "⚠")
+
+
+def _boot_probe_detail_line(probe):
+    """ONE line naming EVERY boot-probe stage's outcome
+    + detail (v8.1): "[sys] boot probe detail: mic ✓ …;
+    Ears running test ✗ <reason>; …". The v8.0 gate
+    verdict named the FAILED stages but never their
+    REASONS — the stage functions' detail strings lived
+    only on the loading screen, so a synced log could
+    not say WHY "Ears running test" failed. Reasons here
+    are the stages' own detail strings, verbatim."""
+    try:
+        snap = probe.snapshot()
+    except Exception:
+        return None
+    if not snap:
+        return None
+    parts = []
+    for s in snap:
+        icon = _probe_stage_icon(s.get("status"))
+        detail = str(s.get("detail") or "").strip()
+        if s.get("capped") and not s.get("resolved"):
+            detail = (detail + " " if detail else "") \
+                + "(still warming)"
+        parts.append(f"{s.get('label')} {icon}"
+                     + (f" {detail}" if detail else ""))
+    return "[sys] boot probe detail: " + "; ".join(parts)
+
+
+def _log_boot_probe_detail(probe):
+    """Write the boot-probe detail block to the logbook
+    (v8.1) — once at the gate, and again from the late
+    watcher when a capped stage later resolves with a
+    different outcome. Logging only; never raises."""
+    try:
+        line = _boot_probe_detail_line(probe)
+        if line:
+            logbook.log("SYSTEM", line)
+    except Exception:
+        pass
+
+
+def _boot_probe_late_watch(probe, initial_line):
+    """Daemon (v8.1): after a CAPPED gate, some stages
+    were still warming; when one of them later resolves
+    (its outcome/detail changes), re-log the FULL detail
+    block so the synced log eventually carries every
+    stage's final reason. Bounded (~15 min, 5 s polls);
+    exits quietly when nothing is left unresolved."""
+    try:
+        last = initial_line
+        deadline = time.monotonic() + 900.0
+        while time.monotonic() < deadline:
+            time.sleep(5.0)
+            try:
+                snap = probe.snapshot()
+            except Exception:
+                return
+            if all(s.get("resolved") for s in snap):
+                line = _boot_probe_detail_line(probe)
+                if line and line != last:
+                    _log_boot_probe_detail(probe)
+                return
+            line = _boot_probe_detail_line(probe)
+            if line and line != last:
+                last = line
+                _log_boot_probe_detail(probe)
+    except Exception:
+        pass
+
+
 def _reminder_checker(store, speaker, cfg):
     """Background thread: every ~20 s, speak any reminders that are due."""
     user = _addr(cfg)
@@ -2217,6 +2293,27 @@ def main():
                     "screen failed) — opening the "
                     "Command Center the pre-v7.11 way "
                     f"({_verdict})")
+            # v8.1: the verdict above names WHICH stages
+            # failed; this block names WHY — every stage's
+            # outcome + its own detail string, in one
+            # logbook line, so a synced log can diagnose a
+            # failed stage without a screenshot. When the
+            # gate capped with stages still warming, a
+            # daemon re-logs the block as they resolve.
+            _log_boot_probe_detail(_boot_probe)
+            try:
+                if any(s.get("capped")
+                       and not s.get("resolved")
+                       for s in _snap):
+                    threading.Thread(
+                        target=_boot_probe_late_watch,
+                        args=(_boot_probe,
+                              _boot_probe_detail_line(
+                                  _boot_probe)),
+                        daemon=True,
+                        name="bootprobe-late").start()
+            except Exception:
+                pass
         except Exception as exc:
             log.warning("Boot gate failed: %s", exc)
         try:
@@ -2380,6 +2477,18 @@ def main():
         wake->record, transcribe, brain, speak.
         """
         _stage("thinking")
+        # v8.1: the visible input marker — the SYSTEM
+        # panel names where THIS turn's words came from
+        # ("🎙 Last input: live caption" when the live
+        # text of record carried the turn).
+        try:
+            if _dashboard is not None:
+                _src = getattr(ears, "last_input_source",
+                               "") or ""
+                if _src:
+                    _dashboard.set_last_input(_src)
+        except Exception:
+            pass
         hudlog(f"[mic] heard: {command}")
         hudstatus("thinking")
         _t0 = time.monotonic()
