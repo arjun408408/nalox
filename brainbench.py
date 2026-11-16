@@ -66,6 +66,46 @@ _SYSTEM = ("You are Nalox, Arjun's personal assistant. "
            "Reply in Bengali only, briefly — at most two "
            "short sentences.")
 
+# v7.6 (production parity): while a benchmark runs, the
+# transports carry the PRODUCTION system text instead of
+# the bench's own line above — the identity head of
+# brain.py's system prompt plus brain.py's OWN language
+# directive for this cfg, composed by brain.py's code
+# (see _production_system). The v7.4/v7.5 bench measured
+# a bare model against a one-line plea for Bengali and
+# reported Bengali 0% for every candidate; production
+# sends a much stronger directive, so the bench's
+# Bengali% must be measured under production conditions
+# to mean anything. Set by run_benchmark, cleared when
+# it returns; direct transport calls (tests) see None
+# and keep the v7.4 bench line.
+_ACTIVE_SYSTEM = None
+
+
+def _production_system(cfg):
+    """The system text bench requests carry (v7.6): the
+    production chat path's prompt head — the same
+    identity sentence brain._system_prompt opens with,
+    plus the SAME Bengali language directive it appends,
+    produced by brain.py's own _language_directive on a
+    shell Brain holding just this cfg (the directive
+    reads cfg + prefs only). Any failure keeps the
+    bench's own line — measuring must never break."""
+    try:
+        import brain as _brain
+        shell = _brain.Brain.__new__(_brain.Brain)
+        shell.cfg = cfg
+        shell._prefs = {}
+        directive = shell._language_directive()
+        name = str(cfg.get("assistant_name") or "Nalox")
+        user = str(cfg.get("user_name") or "Arjun")
+        return (f"You are {name}, {user}'s personal "
+                f"laptop assistant." + directive
+                + " Replies are at most two short "
+                  "sentences.")
+    except Exception:
+        return _SYSTEM
+
 GROQ_BASE = "https://api.groq.com/openai/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 GLM_MODELS = ("z-ai/glm-5.2", "z-ai/glm-5.2:free")
@@ -289,7 +329,8 @@ def _call_openai_compatible(base_url, key, model, prompt,
                  "Content-Type": "application/json"},
         json={"model": model,
               "messages": [
-                  {"role": "system", "content": _SYSTEM},
+                  {"role": "system",
+                   "content": _ACTIVE_SYSTEM or _SYSTEM},
                   {"role": "user", "content": prompt}],
               "max_tokens": _MAX_TOKENS,
               "stream": True},
@@ -348,7 +389,8 @@ def _call_ollama(base_url, model, prompt, budget_s):
         base_url + "/api/chat",
         json={"model": model,
               "messages": [
-                  {"role": "system", "content": _SYSTEM},
+                  {"role": "system",
+                   "content": _ACTIVE_SYSTEM or _SYSTEM},
                   {"role": "user", "content": prompt}],
               "stream": True},
         timeout=(3.0, max(1.0, budget_s)), stream=True)
@@ -566,6 +608,11 @@ def run_benchmark(cfg):
     mirrors the table into the logbook. Guarded: a
     failure inside still returns a result dict."""
     cfg = dict(cfg or {})
+    # v7.6: this run's requests carry the production
+    # system text (see _production_system); cleared on
+    # the way out so nothing outside a run inherits it.
+    global _ACTIVE_SYSTEM
+    _ACTIVE_SYSTEM = _production_system(cfg)
     started = time.monotonic()
     deadline = started + TEST_BUDGET_S
     rows = []
@@ -624,6 +671,7 @@ def run_benchmark(cfg):
                   f"the full set")
     lines.append(footer)
     _lb(footer)
+    _ACTIVE_SYSTEM = None
     return {"rows": rows, "lines": lines, "at": time.time()}
 
 

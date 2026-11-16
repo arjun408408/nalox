@@ -505,13 +505,26 @@ def running_version(base_dir=None):
         return "?"
 
 
+# v7.6: the banner headline is PER-VERSION — the banner a
+# marker names is the banner that version shipped with
+# (v7.1's exact line is pinned by its suite and must never
+# be rewritten by a later release). A version with no
+# entry of its own uses the current release's headline.
+_NOTICE_HEADLINES = {
+    "7.1": ("শোনা আর আটকাবে না, "
+            "greeting সঙ্গে সঙ্গে বলবে"),
+}
+_NOTICE_HEADLINE_NOW = "উত্তর এবার বাংলাতেই আসবে"
+
+
 def update_notice_text(version):
     """The one-time update banner's line (v7.1): the
-    version from the updater's marker + this release's
+    version from the updater's marker + that release's
     headline in the owner's words. Pure."""
     version = str(version or "?").strip() or "?"
-    return (f"✅ Updated to v{version} — শোনা আর আটকাবে না, "
-            "greeting সঙ্গে সঙ্গে বলবে")
+    tail = _NOTICE_HEADLINES.get(version,
+                                 _NOTICE_HEADLINE_NOW)
+    return f"✅ Updated to v{version} — {tail}"
 
 
 def collect_stats(prev_cpu_sample):

@@ -166,6 +166,21 @@ class Hud:
         self._logo_canvas = None
         self._wave_canvas = None
         self._status_state = "listening"
+        # v7.6 (captions on both surfaces): whether this
+        # window is currently SHOWN (it builds withdrawn —
+        # v6.2 silent start — and show()/hide() track it
+        # from there). nalox.py's HUD preview sink reads it
+        # so live partials stream to whichever surface the
+        # owner can actually see.
+        self._shown = False
+        # The live preview line's state (tk thread): a
+        # preview is open, and the final text it settled
+        # with (the matching "[mic] heard:" log line that
+        # follows is absorbed, not doubled — the same
+        # dedupe the Command Center's bubble does).
+        self._preview_on = False
+        self._preview_final = None
+        self._preview_final_at = 0.0
 
     # ------------------------------------------------ public API
     def start(self):
@@ -188,10 +203,38 @@ class Hud:
         self._send(("brain", str(text)))
 
     def show(self):
+        self._shown = True
         self._send(("cmd", "show"))
 
     def hide(self):
+        self._shown = False
         self._send(("cmd", "hide"))
+
+    def is_shown(self):
+        """v7.6: True when this window is up on screen
+        (built withdrawn; show()/hide() track it)."""
+        return bool(self._shown) and not self._failed
+
+    # -------------------------------- v7.6 live captions
+    def preview_begin(self):
+        """Open the live YOU line for speech in progress
+        (v7.6): the plain window's half of the two-surface
+        caption routing — partials land here whenever this
+        window is the visible one."""
+        self._send(("preview_begin", ""))
+
+    def preview_update(self, text):
+        """Replace the live YOU line's body with the
+        newest partial — as heard, Bengali as Bengali,
+        garble as garble (showing the hearing beats
+        showing nothing)."""
+        self._send(("preview", str(text or "")))
+
+    def preview_finish(self, text):
+        """Settle the live line with the FINAL transcript
+        (v7.6); an empty text discards the line (nothing
+        was really heard)."""
+        self._send(("preview_end", str(text or "")))
 
     def stop(self):
         self._send(("cmd", "quit"))
@@ -430,6 +473,7 @@ class Hud:
             log.warning("Could not open the Command Center: %s", exc)
 
     def _on_hide(self):
+        self._shown = False
         try:
             self._root.withdraw()
         except Exception:
@@ -661,13 +705,122 @@ class Hud:
         finally:
             widget.configure(state="disabled")
 
+    # ------------------------ v7.6 live captions (tk thread)
+    def _preview_consume_final(self, payload):
+        """True when a log line is the "[mic] heard:" twin
+        of the preview line that just settled with the
+        same text — that line is already on screen as the
+        settled preview, so the twin is absorbed instead
+        of doubling the owner's words."""
+        try:
+            if self._preview_final is None:
+                return False
+            if time.monotonic() - self._preview_final_at \
+                    > 10.0:
+                self._preview_final = None
+                return False
+            if not str(payload).startswith("[mic] heard: "):
+                return False
+            heard = str(payload)[len("[mic] heard: "):].strip()
+            if heard != self._preview_final:
+                return False
+            self._preview_final = None
+            return True
+        except Exception:
+            return False
+
+    def _tk_preview_begin(self):
+        widget = self._text
+        if widget is None or self._preview_on:
+            return
+        widget.configure(state="normal")
+        try:
+            widget.insert("end", "You  ", "you_name")
+            widget.insert("end", "…", "body")
+            widget.insert("end", "\n")
+            line = int(
+                widget.index("end-1c").split(".")[0]) - 1
+            if line < 1:
+                line = 1
+            widget.mark_set("nalox_preview", f"{line}.0")
+            self._preview_on = True
+            widget.see("end")
+        except Exception:
+            pass
+        finally:
+            widget.configure(state="disabled")
+
+    def _tk_preview_set(self, text):
+        text = str(text or "").strip()
+        if not text:
+            return
+        if not self._preview_on:
+            self._tk_preview_begin()
+            if not self._preview_on:
+                return
+        widget = self._text
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        try:
+            line = widget.index(
+                "nalox_preview").split(".")[0]
+            widget.delete(f"{line}.0", f"{line}.end")
+            widget.insert(f"{line}.0", "You  ", "you_name")
+            widget.insert(f"{line}.end", text, "body")
+            widget.see("end")
+        except Exception:
+            pass
+        finally:
+            widget.configure(state="disabled")
+
+    def _tk_preview_end(self, text):
+        if not self._preview_on:
+            return
+        text = str(text or "").strip()
+        widget = self._text
+        if widget is None:
+            self._preview_on = False
+            return
+        widget.configure(state="normal")
+        try:
+            line = widget.index(
+                "nalox_preview").split(".")[0]
+            if text:
+                widget.delete(f"{line}.0", f"{line}.end")
+                widget.insert(f"{line}.0", "You  ",
+                              "you_name")
+                widget.insert(f"{line}.end", text, "body")
+                self._preview_final = text
+                self._preview_final_at = time.monotonic()
+                widget.see("end")
+            else:
+                widget.delete(f"{line}.0",
+                              f"{line}.0 + 1 line")
+            try:
+                widget.mark_unset("nalox_preview")
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            widget.configure(state="disabled")
+        self._preview_on = False
+
     def _poll(self):
         """Drain the queue into the widgets; reschedule via after()."""
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
                 if kind == "log":
-                    self._append(payload)
+                    if not self._preview_consume_final(payload):
+                        self._append(payload)
+                elif kind == "preview_begin":
+                    self._tk_preview_begin()
+                elif kind == "preview":
+                    self._tk_preview_set(payload)
+                elif kind == "preview_end":
+                    self._tk_preview_end(payload)
                 elif kind == "status":
                     self._status_state = payload
                     label, fg, bg = STATUS_STYLES.get(

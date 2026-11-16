@@ -457,20 +457,96 @@ class _DashboardPreviewSink:
             return False
 
     def begin(self):
-        if _dashboard is not None:
+        # v7.6: each surface gates on its OWN visibility —
+        # the fan-out sink may start the pump for the OTHER
+        # surface; a hidden dashboard must not open (or be
+        # fed) a bubble nobody can see.
+        if self.visible() and _dashboard is not None:
             _dashboard.begin_you_preview()
 
     def update(self, text):
-        if _dashboard is not None:
+        if self.visible() and _dashboard is not None:
             _dashboard.update_you_preview(text)
 
     def finish(self, text):
-        if _dashboard is None:
+        if not self.visible() or _dashboard is None:
             return
         if text:
             _dashboard.end_you_preview(text)
         else:
             _dashboard.cancel_you_preview()
+
+
+class _HudPreviewSink:
+    """The live hearing preview's plain-window surface
+    (v7.6, item F): partials land in the HUD's conversation
+    view as an in-place "You …" line, so the owner sees his
+    words as he speaks even with the Command Center closed
+    — v7.5 field: he closed it mid-session and the screen
+    sat on a bare "Listening" while he talked. Same sink
+    contract as the dashboard's; every method gates on
+    THIS window being shown (it builds withdrawn)."""
+
+    def visible(self):
+        try:
+            return bool(_hud is not None and _hud.is_shown())
+        except Exception:
+            return False
+
+    def begin(self):
+        if self.visible():
+            _hud.preview_begin()
+
+    def update(self, text):
+        if self.visible():
+            _hud.preview_update(text)
+
+    def finish(self, text):
+        if self.visible():
+            _hud.preview_finish(text)
+
+
+class _MultiPreviewSink:
+    """Fan-out preview sink (v7.6, item F): the ears pump
+    streams whenever ANY surface is visible, and each
+    surface receives only while IT is visible — a hidden
+    Command Center no longer starves the visible plain
+    window, and vice versa. Wake semantics, the partial
+    matcher and the pump itself are untouched: this only
+    routes the same callbacks to both chat surfaces."""
+
+    def __init__(self, *sinks):
+        self._sinks = [s for s in sinks if s is not None]
+
+    def visible(self):
+        for sink in self._sinks:
+            try:
+                if sink.visible():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def begin(self):
+        for sink in self._sinks:
+            try:
+                sink.begin()
+            except Exception:
+                pass
+
+    def update(self, text):
+        for sink in self._sinks:
+            try:
+                sink.update(text)
+            except Exception:
+                pass
+
+    def finish(self, text):
+        for sink in self._sinks:
+            try:
+                sink.finish(text)
+            except Exception:
+                pass
 
 
 # v5.5.1: the last companion line _open_dashboard logged, keyed
@@ -1183,8 +1259,14 @@ def main():
     # YOU bubble (the Gemini-app feel he asked for). The
     # sink reads the dashboard global live (created lazily);
     # a hidden or absent dashboard means no previews at all.
+    # v7.6 F: the preview now fans out to BOTH chat
+    # surfaces (Command Center + the plain window's
+    # conversation view) — whichever one he can see shows
+    # his words live; neither surface's hidden state can
+    # starve the other.
     try:
-        ears.set_preview_sink(_DashboardPreviewSink())
+        ears.set_preview_sink(_MultiPreviewSink(
+            _DashboardPreviewSink(), _HudPreviewSink()))
     except Exception as exc:
         log.warning("Preview sink not registered: %s", exc)
 

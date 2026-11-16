@@ -790,3 +790,77 @@ key in Settings + his word), voice/TTS, phone app,
 Telegram, exit codes. NOT fixed here: the
 2026-11-16 07:50:14 exit-code-1 crash — still no
 traceback evidence; do not invent one.
+
+## v7.6 — "উত্তর এবার বাংলাতেই আসবে" (2026-11-16)
+
+Field evidence (v7.5 session 2026-11-16 10:19–10:21 IST):
+self-discovery worked (account walk gpt-oss-120b →
+qwen/qwen3.8-27b → allam-2-7b → gpt-oss-20b; validation
+remembered qwen/qwen3.8-27b), but the Brain Test showed
+EVERY production model scoring Bengali 0% — models answer
+Bengali prompts in English and the Bengali-only language
+guard discarded each reply, so the owner spoke, saw the
+caption, and heard nothing. Owner orders 11:12 + 11:18
+IST: (1) ~1-second replies are the target; (2) GROQ-ONLY
+IS REVERSED for the chat path — race every configured
+provider, fastest valid answer wins; (3) captions must be
+visible wherever he can see them.
+
+A. Reply-language rescue (brain.py): the language guard
+stashes a reply rejected on language ALONE (per-thread
+dict `_lang_rescue_candidates`); when the cascade ends
+answerless, `_rescue_wrong_language_reply` machine-
+translates the stash to Bengali (free Google Translate
+text endpoint, `_translate_to_bengali`, 3.5 s cap, never
+raises) and speaks it — log line "[brain] reply
+translated to Bengali (rescue)". Writing stays exempt;
+tool arguments are never translated; a bare capability
+narration is never rescued; the translated text must
+pass the script + language guards and the two-line cap.
+Translation failure → today's honest Bengali fallback,
+unchanged.
+B. Auto-model chat head: boot validation records its
+pick in `_validation_model` (kept apart from
+`_working_models`, so a power-tier answer can never move
+the chat head); with discovery present, `_model_candidates`
+leads the CHAT walk with it (power walk untouched;
+no discovery = v7.5 exactly). Boot logs "[brain] …
+auto chat head: <model>". `brain_status_line` shows
+"Brain: Groq · auto · <last-answered model> ⚡/💪" when
+discovery is active.
+C. Brain Test production parity (brainbench.py): bench
+requests carry the production system text (identity head
++ brain.py's own `_language_directive()` via a shell
+Brain) through the module global `_ACTIVE_SYSTEM`, set
+for the run only — transport signatures unchanged.
+D. Banner per-version table in dashboard.py
+(`_NOTICE_HEADLINES`; v7.1's exact line preserved);
+v7.6 headline "উত্তর এবার বাংলাতেই আসবে".
+E. Chat race (brain.py `_chat_race`): plain-chat turns
+race Groq (discovered/auto walk) + Gemini (key in
+Settings) + FreeLLMAPI (cached probe) — first
+guard-passing reply wins, losers abandoned (daemon
+threads, `_remember_chat` suppressed on racer threads,
+`_brain_fail` quiet). A language-only finisher becomes
+the rescue candidate and buys the field
+CHAT_RACE_GRACE_S (1.5 s) to be beaten by a native pass;
+first-finisher window CHAT_RACE_BUDGET_S (4.5 s). One
+[brain] line names the winner + ms. Fewer than two
+racers → the exact v7.5 serial path. The AGENT/action
+path is unchanged (Groq power walk + Ollama).
+F. Captions on both surfaces (nalox.py + hud.py): the
+preview sink is now `_MultiPreviewSink` fanning out to
+the dashboard sink and a new HUD sink; each sub-sink
+gates on its OWN visibility, so a hidden Command Center
+no longer starves the visible plain window (the v6.7
+pump only streamed when the dashboard was visible). The
+HUD grows an in-place mark-tracked "You …" preview line
+(`preview_begin/update/finish`) that absorbs the
+following "[mic] heard:" twin. Wake semantics, the
+partial matcher and ears.py are untouched.
+
+NOT in v7.6: ears/mic changes beyond F's sink routing,
+TTS engines, phone/Telegram, GLM (still unmeasurable —
+his OpenRouter account has zero credits and
+glm-5.2:free 404s), the exit-1 crash (no traceback
+exists; do not invent one).

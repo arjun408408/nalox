@@ -728,6 +728,28 @@ FREELLM_TIMEOUT_S = 10.0
 FREELLM_COOLDOWN_S = 300.0
 MODEL_WALK_BUDGET_S = 12.0
 
+# ------------------------------------------------------------- v7.6
+# CHAT RACE (the owner's order, 2026-11-16 11:12 IST,
+# explicitly reversing his 2026-11-15 Groq-only rule FOR
+# THE CHAT PATH): "check fast, if Gemini doesn't answer
+# switch, if Groq doesn't then FreeLLMAPI — everything,
+# so a reply lands fast." On a plain-chat turn the
+# configured providers now RACE (see Brain._chat_race):
+# the first reply passing every guard wins, losers are
+# abandoned daemon threads (the v7.3 transcribe race's
+# discipline). A finisher failing ONLY the language
+# guard becomes the rescue candidate and buys the field
+# CHAT_RACE_GRACE_S to be beaten by a native pass before
+# the translation rescue (item A) spends it. The whole
+# race window is CHAT_RACE_BUDGET_S — a chat turn must
+# never stack provider caps the way the old serial walk
+# did. The AGENT/action path is NOT raced: it keeps the
+# v7.4 power walk + Ollama last resort exactly.
+GEMINI_BASE = ("https://generativelanguage.googleapis.com"
+               "/v1beta/openai")
+CHAT_RACE_BUDGET_S = 4.5
+CHAT_RACE_GRACE_S = 1.5
+
 # ------------------------------------------------------------- v6.13
 # RATE-LIMIT RETRY (OpenJarvis import #3 — jittered backoff,
 # agents/hybrid/_openai_retry.py, shrunk to Nalox's
@@ -1450,6 +1472,70 @@ def _reply_wrong_language(text, pref):
     return False
 
 
+# --------------------------------------- v7.6: translation rescue
+# The field evidence (v7.5 session, 2026-11-16 10:19-10:21
+# IST): the Brain Test measured EVERY model on the owner's
+# Groq account answering his Bengali prompts in ENGLISH —
+# Bengali 0%, guards ✗ across the board (qwen3.8-27b,
+# allam-2-7b, gpt-oss-20b, gpt-oss-120b alike). Under the
+# v6.4 Bengali-only rule the language guard correctly
+# discarded each of those replies — and when EVERY model
+# does it, the cascade ends at the honest fallback and the
+# owner hears nothing at all. His words: in the FreeLLMAPI
+# days the replies were late, but they CAME. So the guard
+# keeps its verdict (an English reply is still a provider
+# failure — the walk, the stern retry and the v7.4 power
+# escalation all run exactly as before), but the LAST
+# otherwise-valid reply the guard rejected is no longer
+# thrown away: _agent_reply translates it to Bengali and
+# speaks THAT (see Brain._rescue_wrong_language_reply).
+# The translation route is the free Google Translate text
+# endpoint of the same family the Google Translate TTS
+# layer in voice.py already uses (translate_tts) — no key,
+# no new dependency.
+TRANSLATE_TEXT_URL = ("https://translate.googleapis.com"
+                      "/translate_a/single")
+TRANSLATE_TIMEOUT_S = 3.5
+_TRANSLATE_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; "
+                 "x64) AppleWebKit/537.36 (KHTML, like "
+                 "Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+
+def _translate_to_bengali(text):
+    """Translate ONE short reply text to Bengali via the
+    free Google Translate text endpoint (client=gtx, the
+    same public family as voice.py's translate_tts).
+    Returns the translated string, or None on ANY failure
+    — non-200, timeout, unparseable payload, empty result.
+    NEVER raises: the rescue that calls this must be able
+    to fall back to today's honest line when translation
+    is unavailable. Hard timeout TRANSLATE_TIMEOUT_S —
+    a rescue that hangs is worse than the fallback."""
+    try:
+        src = (text or "").strip()
+        if not src:
+            return None
+        import requests
+        resp = requests.get(
+            TRANSLATE_TEXT_URL,
+            params={"client": "gtx", "sl": "auto",
+                    "tl": "bn", "dt": "t", "q": src},
+            headers={"User-Agent": _TRANSLATE_UA,
+                     "Referer": "https://translate.google.com/"},
+            timeout=TRANSLATE_TIMEOUT_S)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        parts = []
+        for seg in (data[0] or []):
+            if seg and seg[0]:
+                parts.append(str(seg[0]))
+        out = "".join(parts).strip()
+        return out or None
+    except Exception:
+        return None
+
+
 # ------------------------------------------------- v5.6: CoT guard
 # The recycle-bin incident (2026-11-15 14:21): a reasoning
 # model inside the FreeLLMAPI chain answered "clean my
@@ -2124,6 +2210,38 @@ class Brain:
         # empty means _model_candidates returns the
         # configured walk untouched.
         self._discovered_models = {}
+        # v7.6 (auto-model): the model BOOT VALIDATION
+        # picked per walk provider — recorded by
+        # _remember_working_model ONLY on its answered=False
+        # (validation) calls, so a real answer (either tier)
+        # never rewrites it. When self-discovery produced a
+        # walk, the CHAT walk heads itself with this model
+        # (see _model_candidates): validation's pick is the
+        # one model PROVEN to answer on this account, and
+        # the field's pick (qwen/qwen3.8-27b) was also the
+        # fastest measured — the shipped walk head was a
+        # slower name the stale rule had kept in front.
+        self._validation_model = {}
+        # v7.6 (reply-language rescue): the LAST reply the
+        # language guard rejected on language ALONE this
+        # turn (it had already passed the markup, script
+        # and CoT stages of _guard_reply), keyed by THREAD
+        # IDENT — the chat race (below) runs providers on
+        # worker threads, and each thread's candidate is
+        # its own. Cleared at the start of every
+        # _agent_reply; consumed there when the whole
+        # cascade ends answerless — the reply is translated
+        # to Bengali instead of discarded (see
+        # _rescue_wrong_language_reply). No entry = nothing
+        # to rescue.
+        self._lang_rescue_candidates = {}
+        # v7.6 (chat race): per-thread flags for race
+        # workers — "quiet" silences _brain_fail's logbook
+        # line (a race loser's failure is expected, not
+        # news) and "racing" keeps _remember_chat from
+        # recording a reply the owner never heard (the
+        # race coordinator remembers the WINNER itself).
+        self._race_tls = threading.local()
         # v7.4: SMART ROUTING state — the tier of the last
         # ANSWER ("power" / "instant" / None before the
         # first routed answer); brain_status_line marks a
@@ -5532,6 +5650,17 @@ class Brain:
         (v4.4)."""
         if (self.cfg.get("groq_api_key") or "").strip():
             return True
+        # v7.6: the chat race widened the brain again (the
+        # owner's order reversing v6.8's Groq-only rule for
+        # the CHAT path) — a Gemini key or a live FreeLLMAPI
+        # gateway also makes the call worth trying.
+        if (self.cfg.get("gemini_api_key") or "").strip():
+            return True
+        try:
+            if self._freellm_available():
+                return True
+        except Exception:
+            pass
         return self._ollama_available()
 
     # ------------------------------------------------ v4.8 brain status
@@ -5885,6 +6014,37 @@ class Brain:
                         _take(_m)
             if _kept:
                 out = _kept
+                if not head_override:
+                    # v7.6 AUTO-MODEL CHAT HEAD (the owner's
+                    # "auto model" ask, 2026-11-16 11:12
+                    # IST): boot validation's pick leads the
+                    # CHAT walk. Validation proved that model
+                    # answers on this account, and in the
+                    # field its pick (qwen/qwen3.8-27b, the
+                    # Brain Test's fastest at 0.59 s to the
+                    # first token) sat BEHIND the shipped
+                    # head (openai/gpt-oss-120b, 1.06 s)
+                    # because the stale rule only kept the
+                    # stale name out of validation, not out
+                    # of the walk's front. The rest of the
+                    # discovered walk follows, deduped, order
+                    # preserved. Tier walks (head_override)
+                    # are NOT touched — the power walk keeps
+                    # the v7.4/v7.5 ordering exactly. With
+                    # no validation pick recorded, or a pick
+                    # the composed walk doesn't contain, the
+                    # v7.5 composition stands unchanged.
+                    _vm = (getattr(self, "_validation_model",
+                                   None) or {}).get(provider)
+                    if _vm:
+                        _vk = _model_key(_vm)
+                        for _i, _m in enumerate(out):
+                            if _model_key(_m) == _vk:
+                                if _i:
+                                    out = ([out[_i]]
+                                           + out[:_i]
+                                           + out[_i + 1:])
+                                break
         return out
 
     def _remember_working_model(self, provider, model, label,
@@ -5923,6 +6083,19 @@ class Brain:
             self._last_answered[provider] = model
             if tier is not None:
                 self._last_answer_tier = tier
+        else:
+            # v7.6 (auto-model): a VALIDATION remember also
+            # records the pick in _validation_model — kept
+            # apart from real answers on purpose: the chat
+            # walk heads itself with validation's pick (see
+            # _model_candidates), and a later real answer —
+            # above all a POWER-tier answer, which lands in
+            # _working_models under the same provider — must
+            # never move the chat head.
+            try:
+                self._validation_model[provider] = model
+            except Exception:
+                pass
         if single_key is None:
             single_key = keys[0]
         if str(self.cfg.get(single_key) or "").strip() == model:
@@ -5979,6 +6152,18 @@ class Brain:
                 _mark = ("💪" if getattr(
                     self, "_last_answer_tier", None) == "power"
                     else "⚡")
+                # v7.6: when walk self-discovery is active
+                # for this provider, the line says "auto" —
+                # the named model was reached through the
+                # account's OWN model list, not a shipped
+                # guess ("Brain: Groq · auto ·
+                # qwen/qwen3.8-27b ⚡"). The named model
+                # still comes from _last_answered only
+                # (Defect-1 discipline is untouched).
+                if (getattr(self, "_discovered_models", None)
+                        or {}).get(mode):
+                    return (f"Brain: {label} · auto · "
+                            f"{_wm} {_mark}")
                 return f"Brain: {label} · {_wm} {_mark}"
             return f"Brain: {label} ✓"
         if state == "rejected":
@@ -6204,6 +6389,16 @@ class Brain:
                             continue
                         self._remember_working_model(
                             prov, cand, label, answered=False)
+                        # v7.6 (auto-model): the pick is
+                        # logged ONCE here so the synced log
+                        # shows which model validation chose
+                        # as the chat head (see
+                        # _model_candidates).
+                        if ordered_ids:
+                            _lb("BRAIN",
+                                f"[brain] {label}: auto chat "
+                                f"head: {cand} (validation "
+                                f"pick — leads the chat walk)")
                         break
                 except Exception:
                     pass
@@ -6372,8 +6567,18 @@ class Brain:
         remembered for the honest fallback, and a 401/403 flips
         the live key state so the HUD tells the truth at once."""
         line = f"[BRAIN] {label} FAILED: {reason}"
-        _lb("ERROR", line)
-        log.error(line)
+        # v7.6: inside the chat race a provider failure is
+        # EXPECTED (that is what the race is for) — it stays
+        # out of the logbook and the failure record below
+        # still lands, so an all-providers-down turn keeps
+        # today's honest fallback. The python log keeps the
+        # line for debugging.
+        if getattr(getattr(self, "_race_tls", None),
+                   "quiet", False):
+            log.info("%s (chat race — silent)", line)
+        else:
+            _lb("ERROR", line)
+            log.error(line)
         with self._status_lock:
             self._last_agent_fail = (label, reason,
                                      time.monotonic())
@@ -6604,6 +6809,21 @@ class Brain:
             try:
                 self._guard_lang_trips = getattr(
                     self, "_guard_lang_trips", 0) + 1
+            except Exception:
+                pass
+            # v7.6: this reply passed the markup, script
+            # and CoT stages above and fails on LANGUAGE
+            # alone — remember it as the turn's rescue
+            # candidate. If the whole cascade still ends
+            # without an answer, _agent_reply translates
+            # THIS text to Bengali and speaks it instead
+            # of discarding it into silence (see
+            # _rescue_wrong_language_reply). The verdict
+            # itself is unchanged: None is returned and
+            # the cascade moves on exactly as before.
+            try:
+                self._lang_rescue_candidates[
+                    threading.get_ident()] = reply
             except Exception:
                 pass
             log.warning("[lang-guard] %s reply rejected "
@@ -6880,6 +7100,17 @@ class Brain:
         return prompt
 
     def _remember_chat(self, text, reply):
+        # v7.6: chat-race worker threads never write the
+        # history directly — a LOSING racer that finishes
+        # late (abandoned) must not record a reply the
+        # owner never heard. The race coordinator remembers
+        # the winning reply itself, on the calling thread.
+        try:
+            if getattr(getattr(self, "_race_tls", None),
+                       "racing", False):
+                return
+        except Exception:
+            pass
         self.chat_history.append({"role": "user", "content": text})
         self.chat_history.append({"role": "assistant", "content": reply})
         del self.chat_history[:-16]
@@ -7160,9 +7391,227 @@ class Brain:
     # where that knowledge belongs. The file itself stays on
     # the updater deny-list (it is user data on his disk).
 
+    # ------------------------------------------------ v7.6 rescue
+    def _pop_lang_rescue_candidate(self):
+        """This thread's language-guard rescue candidate
+        (see _guard_reply's v7.6 stash), removed and
+        returned — or None. Consuming (not peeking) keeps a
+        stale candidate from leaking into a later turn."""
+        try:
+            return self._lang_rescue_candidates.pop(
+                threading.get_ident(), None)
+        except Exception:
+            return None
+
+    def _rescue_wrong_language_reply(self, text):
+        """v7.6 REPLY-LANGUAGE RESCUE (item A): the cascade
+        ended without an answer, but the language guard
+        rejected an otherwise-valid reply on language alone
+        this turn — translate THAT reply to Bengali and
+        speak it, instead of discarding it into the honest
+        fallback while the owner hears nothing.
+
+        The candidate is only ever the FINAL spoken text:
+        tool calls and their arguments are never translated
+        (they executed, or not, long before this point —
+        this runs after every retry, at the end of
+        _agent_reply). All of the owner's rules still bind
+        the rescued text: pref must be bn; a bare
+        capability narration is the narrate guard's
+        business, never rescued; the translation must pass
+        the script guard and the language guard itself;
+        the two-line cap applies exactly as _guard_reply
+        applies it (an over-cap ACTION answer fails, a
+        chat answer is trimmed). Writing tasks never reach
+        here (the guard is skipped for them, so no
+        candidate is ever stashed). Any failure — no
+        candidate, translation unavailable, guards — returns
+        None and _chat_fallback speaks today's honest line,
+        unchanged."""
+        try:
+            candidate = self._pop_lang_rescue_candidate()
+            if not candidate or not str(candidate).strip():
+                return None
+            if self._pref_lang() != "bn":
+                return None
+            candidate = str(candidate)
+            if _looks_like_action_request(text) \
+                    and _is_capability_claim(candidate):
+                return None
+            translated = _translate_to_bengali(candidate)
+            if not translated:
+                return None
+            if not _reply_script_ok(translated):
+                return None
+            if _reply_wrong_language(translated, "bn"):
+                return None
+            if _reply_over_cap(translated):
+                if text is not None \
+                        and not _looks_like_question(text):
+                    return None
+                trimmed = _truncate_reply(translated)
+                if trimmed:
+                    translated = trimmed
+            log.info("[brain] reply translated to Bengali "
+                     "(rescue)")
+            _lb("BRAIN", "[brain] reply translated to "
+                         "Bengali (rescue)")
+            return translated
+        except Exception:
+            return None
+
+    # ------------------------------------------------ v7.6 chat race
+    def _chat_racers(self, text, tier, groq_key):
+        """The chat race's field (v7.6, item E): one
+        callable per provider that is ACTUALLY configured
+        and available — Groq (key pasted, not rejected;
+        its walk is the discovered/auto walk of item B),
+        Gemini (only when its Settings key exists),
+        FreeLLMAPI (only when the local gateway answers
+        its cached reachability probe). Each callable runs
+        that provider's candidate walk with the race's
+        per-call cap; the walk's guards apply unchanged.
+        Returns [(name, provider, callable)]."""
+        racers = []
+        if groq_key and not self._provider_rejected("groq"):
+            racers.append((
+                "Groq", "groq",
+                lambda: self._agent_openai_walk(
+                    text, "https://api.groq.com/openai/v1",
+                    groq_key,
+                    self.cfg.get("groq_model",
+                                 "llama-3.1-8b-instant"),
+                    label="Groq", provider="groq",
+                    timeout=CHAT_RACE_BUDGET_S, tier=tier)))
+        gem_key = (self.cfg.get("gemini_api_key")
+                   or "").strip()
+        if gem_key and not self._provider_rejected("gemini"):
+            racers.append((
+                "Gemini", "gemini",
+                lambda: self._agent_openai_walk(
+                    text, GEMINI_BASE, gem_key,
+                    self.cfg.get("gemini_model",
+                                 "gemini-2.5-flash"),
+                    label="Gemini", provider="gemini",
+                    timeout=CHAT_RACE_BUDGET_S)))
+        try:
+            fl_up = self._freellm_available()
+        except Exception:
+            fl_up = False
+        if fl_up:
+            fl_key = (self.cfg.get("freellm_api_key")
+                      or "").strip()
+            racers.append((
+                "FreeLLMAPI", "freellm",
+                lambda: self._agent_openai_walk(
+                    text, self._freellm_base(), fl_key,
+                    self.cfg.get("freellm_model", "auto"),
+                    label="FreeLLMAPI", provider="freellm",
+                    timeout=CHAT_RACE_BUDGET_S)))
+        return racers
+
+    def _chat_race(self, text, tier, groq_key):
+        """Race the configured chat providers (v7.6, item
+        E). Returns (ran, reply): ran=False when fewer
+        than two providers are configured (the caller then
+        takes the serial path, byte-identical to v7.5);
+        ran=True with reply=None when the race ran and
+        nobody passed the guards in time.
+
+        The first reply passing ALL guards wins at once;
+        losers are abandoned daemon threads whose late
+        results land in a dead result queue (their
+        _remember_chat is suppressed by the racing flag —
+        the coordinator remembers the WINNER). A finisher
+        failing ONLY the language guard deposits its text
+        as the rescue candidate and shortens the wait to
+        the grace window: a native pass from a still-
+        running provider beats the rescue, else the
+        candidate is handed to _agent_reply's rescue.
+        Provider failures inside the race are silent (the
+        quiet flag) — ONE [brain] line names the winner
+        and its milliseconds."""
+        racers = self._chat_racers(text, tier, groq_key)
+        if len(racers) < 2:
+            return False, None
+        import queue as _queue_mod
+        done = _queue_mod.Queue()
+
+        def _run(name, provider, fn):
+            try:
+                self._race_tls.quiet = True
+                self._race_tls.racing = True
+            except Exception:
+                pass
+            try:
+                reply = fn()
+            except Exception:
+                reply = None
+            cand = None
+            if not reply:
+                cand = self._pop_lang_rescue_candidate()
+            done.put((name, provider, reply, cand))
+
+        _t0 = time.monotonic()
+        for _name, _prov, _fn in racers:
+            try:
+                threading.Thread(
+                    target=_run, args=(_name, _prov, _fn),
+                    daemon=True,
+                    name=f"nalox-chat-race-{_prov}").start()
+            except Exception:
+                pass
+        pending = len(racers)
+        lang_cand = None
+        deadline = _t0 + CHAT_RACE_BUDGET_S
+        while pending > 0:
+            _left = deadline - time.monotonic()
+            if _left <= 0:
+                break
+            try:
+                name, provider, reply, cand = done.get(
+                    timeout=_left)
+            except Exception:
+                break
+            pending -= 1
+            if reply:
+                _ms = int((time.monotonic() - _t0) * 1000)
+                _lb("BRAIN", f"[brain] chat race: {name} "
+                             f"answered first ({_ms} ms)")
+                log.info("[brain] chat race: %s answered "
+                         "first (%d ms)", name, _ms)
+                try:
+                    import perflevel
+                    perflevel.record_provider(
+                        provider, time.monotonic() - _t0, True)
+                except Exception:
+                    pass
+                self._remember_chat(text, reply)
+                return True, reply
+            if cand and lang_cand is None:
+                lang_cand = cand
+                # Grace: a native pass may still beat the
+                # rescue — but the turn never waits past
+                # the grace for it.
+                deadline = min(
+                    deadline,
+                    time.monotonic() + CHAT_RACE_GRACE_S)
+        if lang_cand:
+            # Hand the candidate to this thread's rescue
+            # (item A) exactly as if the serial cascade's
+            # final guard rejection had stashed it here.
+            try:
+                self._lang_rescue_candidates[
+                    threading.get_ident()] = lang_cand
+            except Exception:
+                pass
+        return True, None
+
     def _agent_reply(self, text):
         """The brain (v6.8): GROQ, then the offline Ollama —
-        nothing else is ever tried.
+        nothing else is ever tried. (v7.6: true of the
+        AGENT/action path only — the CHAT path races, see
+        the v7.6 paragraph at the end of this docstring.)
 
         The owner's order (2026-11-15 20:31 IST, after a week
         of field logs): "সবচেয়ে বেশি ফার্স্ট যে রিপ্লাই
@@ -7187,6 +7636,14 @@ class Brain:
         top-2 snippets ride along in the system prompt
         (self._doc_context). Silent on any failure — the
         chat must never notice the memory hiccup.
+
+        v7.6: the CHAT path races the configured providers
+        (item E — the owner reversed the Groq-only rule
+        for chat: Groq / Gemini / FreeLLMAPI, first
+        guard-passing reply wins), and a cascade that ends
+        answerless gets the reply-language rescue (item A)
+        before _chat_fallback's honest line. The
+        AGENT/action path below is unchanged.
         """
         self._doc_context = ""
         try:
@@ -7209,14 +7666,34 @@ class Brain:
         # ancient one.
         with self._status_lock:
             self._last_agent_fail = None
+        # v7.6: a fresh turn starts with no rescue
+        # candidates — the guards refill this turn's own as
+        # providers answer (see _guard_reply).
+        try:
+            self._lang_rescue_candidates.clear()
+        except Exception:
+            pass
         groq_key = (self.cfg.get("groq_api_key") or "").strip()
-        if groq_key and not self._provider_rejected("groq"):
-            # v7.4: the smart-routing tier for this utterance
-            # (None = routing off = v7.3 exactly).
-            _tier = self._tier_for(text)
-            if _tier is not None:
-                log.info("[brain] smart routing: tier=%s",
-                         _tier)
+        # v7.4: the smart-routing tier for this utterance
+        # (None = routing off = v7.3 exactly).
+        _tier = self._tier_for(text)
+        if _tier is not None:
+            log.info("[brain] smart routing: tier=%s",
+                     _tier)
+        # v7.6 (item E): a plain-CHAT turn races the
+        # configured providers (see _chat_race); an ACTION
+        # turn never races — the agent path keeps the v7.4
+        # power walk exactly. When the race doesn't run
+        # (fewer than two providers configured), the serial
+        # Groq call below is v7.5 behaviour, untouched.
+        _race_ran = False
+        if not _looks_like_action_request(text):
+            _race_ran, reply = self._chat_race(
+                text, _tier, groq_key)
+            if reply:
+                return reply
+        if not _race_ran and groq_key \
+                and not self._provider_rejected("groq"):
             reply = self._agent_openai_compatible(
                 text, "https://api.groq.com/openai/v1", groq_key,
                 self.cfg.get("groq_model",
@@ -7228,7 +7705,16 @@ class Brain:
         reply = self._agent_ollama(text)
         if reply:
             _lb("BRAIN", "Ollama answered")
-        return reply
+            return reply
+        # v7.6 (item A): the cascade ended answerless —
+        # before the honest fallback, rescue the turn's
+        # language-guard candidate by translating it to
+        # Bengali (see _rescue_wrong_language_reply).
+        rescued = self._rescue_wrong_language_reply(text)
+        if rescued:
+            self._remember_chat(text, rescued)
+            return rescued
+        return None
 
     def _anthropic_tools(self):
         """AGENT_TOOLS converted to the Anthropic tool format."""
