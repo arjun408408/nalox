@@ -78,8 +78,20 @@ MARKER_NAME = "updated_to.txt"
 API_ROOT = "https://api.github.com/repos/"
 HTTP_TIMEOUT = 30          # every GitHub call is bounded
 CHECK_FIRST_DELAY_S = 60.0   # first check ~60 s after boot
-CHECK_INTERVAL_S = 30 * 60   # then every 30 min (v7.2; was 6 h)
-FAILED_RETRY_S = 30 * 60     # a failed version waits a cycle
+CHECK_INTERVAL_S = 5 * 60    # then every 5 min (v7.9 item G;
+                             # was 30 min v7.2–v7.8, 6 h before)
+FAILED_RETRY_S = 5 * 60      # a failed version waits a cycle
+# v7.9 (item G): the owner — "তুমি দিলেই অটোমেটিক আপডেট করে
+# নেবে" (when a version is pushed, Nalox takes it by
+# itself). Three parts: the 5-minute cadence above; a
+# Command-Center-open poke (poke_check, debounced so the
+# show path can never stampede GitHub); and a BUSY DEFERRAL
+# — a staged update never restarts mid-conversation: the
+# restart waits for the turn to end, capped, then applies
+# anyway (see _deferred_restart).
+POKE_DEBOUNCE_S = 120.0      # show-poke: ≤1 check per 2 min
+DEFER_POLL_S = 5.0           # busy re-check cadence
+DEFER_MAX_S = 600.0          # never defer a restart > 10 min
 
 # The UPDATE.bat apply set, mirrored: top-level code files,
 # docs and data folders. Anything not listed here is never
@@ -122,6 +134,75 @@ _NEVER_DIRS = {"logs", "captures", "leads", "demos",
 # the next scheduled check.
 _failed = {}
 _started = False
+
+# v7.9 (item G): state for the show-poke + busy deferral.
+# start_background registers the live (cfg, restart_fn) so
+# poke_check() — called from the dashboard's show path,
+# which has neither — can run a real check. The busy probe
+# is registered by nalox.py (set_busy_probe): True while a
+# voice turn is in progress (speaking / brain working).
+_poke_state = {"cfg": None, "restart_fn": None, "last": 0.0}
+_busy_probe = None
+
+
+def set_busy_probe(fn):
+    """Register the turn-busy probe (nalox.py). Guarded —
+    a broken probe must never break updating."""
+    global _busy_probe
+    _busy_probe = fn
+
+
+def _turn_busy():
+    """True when the registered probe says a voice turn is
+    in progress. No probe / probe error = not busy (v7.8
+    behaviour: restart immediately)."""
+    probe = _busy_probe
+    if probe is None:
+        return False
+    try:
+        return bool(probe())
+    except Exception:
+        return False
+
+
+def poke_check():
+    """v7.9 (item G): a Command Center open asks for an
+    update check NOW — debounced to at most one check per
+    POKE_DEBOUNCE_S from this trigger. The check runs on
+    its own daemon thread (the UI thread never waits on
+    HTTP). Returns "started" / "debounced" / "unregistered"
+    / "disabled". Never raises."""
+    try:
+        cfg = _poke_state.get("cfg")
+        if cfg is None:
+            return "unregistered"
+        if not cfg.get("auto_update", True):
+            return "disabled"
+        now = time.monotonic()
+        if now - float(_poke_state.get("last") or 0.0) \
+                < POKE_DEBOUNCE_S:
+            return "debounced"
+        _poke_state["last"] = now
+        restart_fn = _poke_state.get("restart_fn")
+
+        def _run():
+            try:
+                live = cfg
+                try:
+                    from config import load_config
+                    live = load_config()
+                except Exception:
+                    pass
+                check_and_update(live, restart_fn=restart_fn)
+            except Exception as exc:
+                log.warning("poked update check failed: %s",
+                            exc)
+
+        threading.Thread(target=_run, daemon=True,
+                         name="nalox-updater-poke").start()
+        return "started"
+    except Exception:
+        return "unregistered"
 
 
 def _lb(text):
@@ -461,14 +542,68 @@ def _default_restart():
     threading.Timer(1.0, _die).start()
 
 
+def _restart_now(restart_fn, remote, applied_count):
+    """The actual restart for an applied update (v7.9 item
+    G factored this out of check_and_update so the deferred
+    path fires the IDENTICAL sequence): the exiting line,
+    the v7.7 speech stop, then the restart callback."""
+    _lb(f"[sys] exiting (restart): self-update to v{remote} "
+        f"({applied_count} files applied)")
+    # v7.7: stop in-flight speech BEFORE the restart begins
+    # — the 2026-11-16 11:53 self-update restart exited
+    # code 1 with speech threads inside the voice layer.
+    try:
+        import voice as _voice_mod
+        _voice_mod.stop_for_exit()
+    except Exception:
+        pass
+    try:
+        (restart_fn or _default_restart)()
+    except Exception:
+        _default_restart()
+
+
+def _deferred_restart(restart_fn, remote, applied_count,
+                      probe=None, cap_s=None, poll_s=None):
+    """v7.9 (item G): poll the busy state until the voice
+    turn ends, then restart; after cap_s, restart anyway —
+    never cut a conversation mid-sentence, never wait
+    forever. Runs on a daemon thread from check_and_update;
+    tests drive it directly with a scripted probe and tiny
+    cap/poll. Returns "idle" or "cap"."""
+    if probe is None:
+        probe = _turn_busy
+    cap = DEFER_MAX_S if cap_s is None else float(cap_s)
+    poll = DEFER_POLL_S if poll_s is None else float(poll_s)
+    waited = 0.0
+    while True:
+        try:
+            busy = bool(probe())
+        except Exception:
+            busy = False
+        if not busy:
+            _lb("[update] conversation finished — "
+                "restarting for the update now")
+            _restart_now(restart_fn, remote, applied_count)
+            return "idle"
+        if waited >= cap:
+            _lb("[update] restart defer cap reached — "
+                "restarting for the update anyway")
+            _restart_now(restart_fn, remote, applied_count)
+            return "cap"
+        time.sleep(poll)
+        waited += poll
+
+
 def check_and_update(cfg, base_dir=BASE_DIR, http=None,
-                     restart_fn=None, force=False):
+                     restart_fn=None, force=False,
+                     busy_fn=None):
     """One update check. Returns a short status string:
 
         "not-configured"  repo/token not set — nothing done
         "disabled"        auto_update off (scheduled path)
         "current"         already on the newest version
-        "skipped-failed"  this version failed < 30 min ago
+        "skipped-failed"  this version failed < 5 min ago
         "updated"         applied; a restart is on its way
         "error: ..."      one failure, logged, nothing applied
 
@@ -510,32 +645,47 @@ def check_and_update(cfg, base_dir=BASE_DIR, http=None,
             "the next scheduled check")
         return "error: apply failed"
     write_updated_marker(remote, base_dir)
-    _lb(f"[sys] exiting (restart): self-update to v{remote} "
-        f"({len(applied)} files applied)")
-    # v7.7: stop in-flight speech BEFORE the restart begins
-    # — the 2026-11-16 11:53 self-update restart exited
-    # code 1 with speech threads inside the voice layer.
+    # v7.9 (item G): if a voice turn is in progress, the
+    # restart DEFERS until the turn ends (polled, capped at
+    # DEFER_MAX_S, then applied anyway) — the update is
+    # already staged + marked; only the restart waits. Not
+    # busy (the overwhelmingly common case, and every
+    # pre-v7.9 caller) = the v7.8 immediate path.
+    _busy = False
     try:
-        import voice as _voice_mod
-        _voice_mod.stop_for_exit()
+        _busy = bool(busy_fn()) if busy_fn is not None \
+            else _turn_busy()
     except Exception:
-        pass
-    try:
-        (restart_fn or _default_restart)()
-    except Exception:
-        _default_restart()
+        _busy = False
+    if _busy:
+        _lb(f"[update] v{remote} applied — restart deferred "
+            "until the current conversation ends "
+            f"(max {int(DEFER_MAX_S)}s)")
+        threading.Thread(
+            target=_deferred_restart,
+            args=(restart_fn, remote, len(applied)),
+            kwargs={"probe": busy_fn} if busy_fn is not None
+            else {},
+            daemon=True, name="nalox-updater-defer").start()
+        return "updated"
+    _restart_now(restart_fn, remote, len(applied))
     return "updated"
 
 
 def start_background(cfg, restart_fn=None):
     """The scheduled checker (called once from nalox.py's
-    boot): first check ~60 s after start, then every 30 min
-    (v7.2; 6-hourly through v7.1).
+    boot): first check ~60 s after start, then every 5 min
+    (v7.9 item G; 30 min v7.2–v7.8, 6-hourly through v7.1).
     Silent no-op when repo/token are unset or auto_update is
     off — check_and_update re-reads the live config each
     cycle, so values Arjun saves in Settings apply without a
-    restart of the checker itself. Never raises."""
+    restart of the checker itself. Never raises.
+
+    v7.9: also registers (cfg, restart_fn) for poke_check —
+    the Command Center's show path pokes through here."""
     global _started
+    _poke_state["cfg"] = cfg
+    _poke_state["restart_fn"] = restart_fn
     if _started:
         return
     _started = True

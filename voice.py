@@ -346,6 +346,29 @@ ENGINE_BREAK_FAILURES = 2
 # tests can shorten the backoff.
 EDGE_RETRY_BACKOFF_SECONDS = 0.8
 
+# v7.9 (item H) — MALE-FIRST for Bengali. The owner's
+# standing choice (v4.9) is the MALE edge voice
+# bn-BD-PradeepNeural, but the field truth (v6.15 Voice
+# Truth + every sync since) is that it had not been
+# ATTEMPTED since 2026-11-15 19:52 IST: the persisted
+# stickiness (voice_state.json last_good.bn = google-tts)
+# speaks first on every reply, so the FEMALE Google
+# Translate voice won ~18 h of replies and edge never got
+# a turn. The Google Cloud male voice is unreachable (the
+# billing-card wall — his key field is empty and stays
+# empty), so edge-tts is the only male Bengali voice there
+# is. Rule: a Bengali reply with the male voice configured
+# attempts edge-tts FIRST (ElevenLabs keeps canonical first
+# place — his own voice outranks every fallback while it
+# lives; its 402 block makes that attempt free), under a
+# hard per-reply budget so a double failure costs ~7 s,
+# not the unbounded worst case, before the female fallback
+# speaks. Next step if edge still fails in the field:
+# Piper's bn_BD voice (openSLR-based; gender/quality
+# unverified) — deliberately NOT in this release.
+MALE_BN_VOICE = "bn-BD-PradeepNeural"
+MALE_EDGE_BUDGET_S = 7.0
+
 
 def _edge_failure_retryable(exc):
     """True when an edge-tts synthesis failure is a network
@@ -588,6 +611,13 @@ class Speaker:
         # logged at most once per reply; say() resets this
         # with the rest of the per-reply state.
         self._edge_retry_noted = False
+        # v7.9 (item H): male-first state — the per-reply
+        # edge budget _say_impl arms for its male-first
+        # attempt (None = the unbounded v7.8 behaviour), and
+        # the once-per-reply fallback-line flags.
+        self._edge_budget_s = None
+        self._male_fb_pending = False
+        self._male_fb_noted = False
         self._net_fails = {}
         self._net_down_until = {}
         # v6.7 D: persisted voice health (voice_state.json) —
@@ -1317,8 +1347,21 @@ class Speaker:
         # the speaking flag) for minutes. 20 s is generous for
         # one short line; a timeout raises and say() falls
         # through to the next voice path as usual.
+        # v7.9 (item H): when _say_impl arms the male-first
+        # budget (self._edge_budget_s), the WHOLE attempt —
+        # first try + the v6.11 retry together — is bounded
+        # by it, so a double failure costs ~7 s, not 40+.
+        _budget = getattr(self, "_edge_budget_s", None)
+        _deadline = (time.monotonic() + float(_budget)) \
+            if _budget else None
+
         async def _make_bounded():
-            await asyncio.wait_for(_make(), timeout=20)
+            _timeout = 20
+            if _deadline is not None:
+                _timeout = max(
+                    0.5, min(20.0,
+                             _deadline - time.monotonic()))
+            await asyncio.wait_for(_make(), timeout=_timeout)
 
         # v6.11: ONE retry on a fresh connection for network
         # flakes (see _edge_failure_retryable). _make() builds
@@ -1340,6 +1383,12 @@ class Speaker:
                 if retried or not _edge_failure_retryable(exc) \
                         or _STOP_EVENT.is_set():
                     raise
+                # v7.9: no retry when the male-first budget
+                # is nearly spent — the fallback must start
+                # inside the budget, not after it.
+                if _deadline is not None and \
+                        _deadline - time.monotonic() < 1.0:
+                    raise
                 retried = True
                 time.sleep(EDGE_RETRY_BACKOFF_SECONDS)
         if retried:
@@ -1358,6 +1407,110 @@ class Speaker:
                     "edge-tts", text, voice_name,
                     mp3_bytes=_mp3)
         return self._play_mp3_interruptible(tmp)
+
+    # ------------------------------------------------ v7.9 male-first
+    def _bn_male_configured(self):
+        """True when the configured Bengali edge voice is
+        the MALE one (bn-BD-PradeepNeural — the v4.9
+        Settings Male choice; config.py's default agrees,
+        so an absent key also means male)."""
+        try:
+            return (self.cfg.get("bn_voice")
+                    or MALE_BN_VOICE) == MALE_BN_VOICE
+        except Exception:
+            return False
+
+    def _note_male_fallback(self):
+        """The male-first edge attempt failed and a fallback
+        engine is about to speak this reply — ONE log line
+        per reply (v7.9 item H): the next log sync must be
+        able to prove how often the male voice was actually
+        unavailable in the field."""
+        if not self._male_fb_pending or self._male_fb_noted:
+            return
+        self._male_fb_noted = True
+        self._male_fb_pending = False
+        line = ("[voice] male voice unavailable — female "
+                "fallback for this reply")
+        log.info(line)
+        _lb("VOICE", line)
+
+    def start_male_cache_warming(self, lines):
+        """v7.9 (item H): warm the fixed-line TTS cache with
+        the MALE edge voice, in the BACKGROUND (never blocks
+        boot/readiness): one edge synthesis pass over the
+        fixed lines nalox.py passes in (the Bengali greeting
+        variants, the could-not-hear line, the mic warning),
+        so cache/tts holds edge-tts (male) entries and the
+        fixed-line lookup — which prefers the edge entry
+        when Bengali-male is configured — serves them. A
+        no-op unless Bengali-male is configured. Fully
+        guarded: a warming failure changes nothing about
+        today's cache behaviour."""
+        try:
+            if not self._bn_male_configured():
+                return
+            todo = [ln for ln in (lines or [])
+                    if ln and len(ln) <= _FIXED_CACHE_MAX_CHARS]
+            if not todo:
+                return
+            threading.Thread(
+                target=self._run_male_cache_warming,
+                args=(todo,), daemon=True,
+                name="nalox-male-warm").start()
+        except Exception:
+            pass
+
+    def _run_male_cache_warming(self, lines):
+        voice_name = self.cfg.get("bn_voice") or MALE_BN_VOICE
+        have = 0
+        failed = 0
+        for line_text in lines:
+            try:
+                path = self._fixed_cache_path(
+                    "edge-tts", voice_name, line_text)
+                if os.path.isfile(path) \
+                        and os.path.getsize(path) > 0:
+                    have += 1
+                    continue
+                os.makedirs(TTS_CACHE_DIR, exist_ok=True)
+                import edge_tts
+                tmp = path + ".warm"
+
+                async def _make():
+                    speed = self.speed()
+                    kwargs = {}
+                    if speed != 1.0:
+                        kwargs["rate"] = (
+                            f"{int(round((speed - 1.0) * 100)):+d}%")
+                    communicate = edge_tts.Communicate(
+                        line_text, voice_name, **kwargs)
+                    await communicate.save(tmp)
+
+                async def _make_bounded():
+                    await asyncio.wait_for(_make(), timeout=20)
+
+                asyncio.run(_make_bounded())
+                if os.path.isfile(tmp) \
+                        and os.path.getsize(tmp) > 0:
+                    os.replace(tmp, path)
+                    have += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+                try:
+                    if os.path.exists(path + ".warm"):
+                        os.unlink(path + ".warm")
+                except Exception:
+                    pass
+        if have:
+            line = "[voice] male voice cache warmed"
+        else:
+            line = ("[voice] male voice cache warming failed "
+                    "— will retry next boot")
+        log.info(line)
+        _lb("VOICE", line)
 
     def _log_edge_retry_ok(self):
         """The v6.11 edge-tts retry landed — one log line
@@ -1645,6 +1798,12 @@ class Speaker:
         if len(text) > _FIXED_CACHE_MAX_CHARS:
             return None
         order = []
+        # v7.9 (item H): with Bengali-male configured, the
+        # edge-tts (male) rendering wins over the remembered
+        # engine — a cached female google rendering must not
+        # shadow the male one the boot warming wrote.
+        if is_bengali and self._bn_male_configured():
+            order.append("edge-tts")
         pref = (self._vstate.get("last_good") or {}).get(
             lclass)
         if pref in _FIXED_CACHE_ENGINES:
@@ -1770,6 +1929,10 @@ class Speaker:
         # its remaining chunks.
         self._reply_skip = set()
         self._edge_retry_noted = False
+        # v7.9 (item H): the male-fallback line logs at most
+        # once per reply.
+        self._male_fb_pending = False
+        self._male_fb_noted = False
         # v7.1: the fixed-line cache arms for THIS call
         # only (cleared in the finally below).
         self._fixed_active = bool(fixed)
@@ -1986,6 +2149,13 @@ class Speaker:
           step 2 — the canonical chain, skipping anything
           already tried above.
 
+        v7.9 (item H): for a Bengali reply with the MALE
+        voice configured, a step 0 runs before step 1 —
+        ElevenLabs (canonical first place), then edge-tts
+        under a hard budget — because the remembered engine
+        (google-tts, female) had starved the male voice of
+        attempts for ~18 h of field time.
+
         v7.3: there is NO step 0 anymore. The ElevenLabs boot
         re-probe left the speech path (see start_boot_probe):
         while the 401/402 block stands — tripped this session
@@ -2020,6 +2190,38 @@ class Speaker:
                             _hit[0], _hit[1], text)
                     except Exception:
                         pass
+            # v7.9 (item H) MALE-FIRST: a Bengali reply with
+            # the male voice configured attempts edge-tts
+            # BEFORE the remembered engine — stickiness must
+            # not starve the male voice again (see the
+            # MALE_BN_VOICE note). ElevenLabs keeps canonical
+            # first place (his own voice; while its 402 block
+            # stands the attempt costs nothing). The edge
+            # attempt runs under MALE_EDGE_BUDGET_S; on
+            # failure the reply falls through to the existing
+            # order and the fallback is logged once.
+            _male_bn = is_bengali and not robot \
+                and self._bn_male_configured()
+            if _male_bn:
+                result = self._try_engine(
+                    "elevenlabs", text, lang, robot,
+                    is_bengali)
+                tried.add("elevenlabs")
+                if result is not None:
+                    self._record_good("elevenlabs", lclass)
+                    return result
+                self._edge_budget_s = MALE_EDGE_BUDGET_S
+                try:
+                    result = self._try_engine(
+                        "edge-tts", text, lang, robot,
+                        is_bengali)
+                finally:
+                    self._edge_budget_s = None
+                tried.add("edge-tts")
+                if result is not None:
+                    self._record_good("edge-tts", lclass)
+                    return result
+                self._male_fb_pending = True
             pref = (self._vstate.get("last_good")
                     or {}).get(lclass)
             if pref and pref not in tried:
@@ -2027,6 +2229,7 @@ class Speaker:
                                            robot, is_bengali)
                 tried.add(pref)
                 if result is not None:
+                    self._note_male_fallback()
                     self._record_good(pref, lclass)
                     return result
             for engine in _VOICE_ENGINES:
@@ -2035,6 +2238,7 @@ class Speaker:
                 result = self._try_engine(engine, text, lang,
                                            robot, is_bengali)
                 if result is not None:
+                    self._note_male_fallback()
                     self._record_good(engine, lclass)
                     return result
             return "done"

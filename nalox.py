@@ -1246,6 +1246,32 @@ def main():
         speaker.start_boot_probe()
     except Exception:
         pass
+    # v7.9 (item H): warm the fixed-line TTS cache with the
+    # MALE Bengali edge voice in the background — the
+    # Bengali greeting variants, the could-not-hear line
+    # and the mic warning, spelled exactly as the greeting
+    # builder and _missed_command_line compose them (the
+    # cache key is the text itself). A no-op inside voice.py
+    # unless Bengali-male is configured; never blocks boot.
+    try:
+        _bn_addr = _bn_name(cfg)
+        _bn_fixed = [
+            f"{_part}, {_bn_addr}! আমি "
+            f"{cfg['assistant_name']}। কেমন আছেন? "
+            "আজ কী করতে পারি?"
+            for _part in ("শুভ সকাল", "শুভ বিকেল",
+                          "শুভ সন্ধ্যা")]
+        _bn_fixed.append(
+            f"দুঃখিত {_bn_addr}, কথাটা শুনতে পাইনি — "
+            "আবার একবার বলুন।")
+        _bn_fixed.append("স্যার, মাইকে সমস্যা হচ্ছে।")
+        # v7.9 (item I.3): the no-silent-work progress
+        # line is a fixed line too — warmed (male) and
+        # cache-served like the others.
+        _bn_fixed.append("কাজটা চলছে, sir — একটু অপেক্ষা করুন।")
+        speaker.start_male_cache_warming(_bn_fixed)
+    except Exception:
+        pass
     ears = Ears(cfg)
     brain = Brain(cfg, speaker)
 
@@ -1625,9 +1651,10 @@ def main():
         log.warning("Telegram bridge failed to start: %s", exc)
 
     # v6.2 SELF-UPDATE checker (updater.py): first check
-    # ~60 s after boot, then every 30 min (v7.2; 6-hourly
-    # through v7.1) — background thread, silent unless
-    # Settings → Updates holds a repo + token.
+    # ~60 s after boot, then every 5 min (v7.9 item G;
+    # 30 min v7.2–v7.8) + a debounced poke whenever the
+    # Command Center opens — background thread, silent
+    # unless Settings → Updates holds a repo + token.
     try:
         import updater as _updater_mod
         _updater_mod.start_background(cfg, _restart_process)
@@ -1684,6 +1711,28 @@ def main():
             _watch.note(name)
         except Exception:
             pass
+
+    # v7.9 (item G): the updater's busy probe — a staged
+    # update defers its restart while a voice turn is in
+    # progress (any non-listening stage, or speech active).
+    try:
+        import updater as _updater_probe_mod
+
+        def _update_turn_busy():
+            try:
+                if _watch.stage != "listening":
+                    return True
+            except Exception:
+                pass
+            try:
+                import voice as _voice_probe_mod
+                return bool(_voice_probe_mod.is_speaking())
+            except Exception:
+                return False
+
+        _updater_probe_mod.set_busy_probe(_update_turn_busy)
+    except Exception:
+        pass
 
     def say(text, lang=None, fixed=False):
         """Speak a reply, mirrored to the HUD with a SPEAKING status.

@@ -878,6 +878,85 @@ OLLAMA_TIMEOUT_S = 30.0
 # as a provider failure; only a full walk-out is).
 _MODEL_MISS = object()
 
+# ------------------------------------------------------------- v7.9
+# 429 ADVANCES THE WALK (field proof, the owner's synced log
+# 2026-11-16 13:19–13:33 IST): he ordered the chain "নোটপ্যাড
+# ওপেন করে আমার নামে ভালো জিনিস লেখো"; step 1 ran, then the
+# agent loop's NEXT call met Groq's HTTP 429 on the walk head
+# (qwen/qwen3.8-27b) — and the turn DIED: a 429 was not a
+# _MODEL_MISS, so the impl logged FAILED and returned None,
+# and the walk treats None as a terminal provider failure.
+# The walk never tried gpt-oss-120b / allam-2-7b /
+# gpt-oss-20b; two retries died identically, and by 13:24
+# nearly every turn ended in the "check your Groq key" line
+# (29 spoken failure lines vs 3 explicit 429 lines — inside
+# the chat race the failures are silent by design, and the
+# fallback line blamed the KEY for a RATE LIMIT). The rule
+# now: a 429 on a walk candidate parks THAT model for
+# MODEL_RATELIMIT_COOLDOWN_S and returns _MODEL_RATELIMITED —
+# the walk advances to the next candidate exactly as it does
+# for a dead name, on the chat walk, in the race's Groq
+# racer, and on every agent-loop call including post-tool
+# continuations. A parked model is skipped by every walk
+# until the cooldown lapses (it is NOT dead — _dead_models
+# is untouched). Inside a walk the v6.13 same-model backoff
+# no longer runs: the advance IS the retry now, and stacking
+# sleeps inside a turn's budget only delays it. (Non-walk
+# calls keep the backoff exactly as v6.13 shipped it.)
+_MODEL_RATELIMITED = object()
+MODEL_RATELIMIT_COOLDOWN_S = 60.0
+
+# v7.9 (item B): the chat path's Ollama safety net is ONE
+# bounded attempt — this per-call HTTP budget, the first
+# live candidate only — never the full 30 s local walk.
+CHAT_OLLAMA_NET_TIMEOUT_S = 8.0
+
+# v7.9 (item I): AGENT-PATH LATENCY — a work turn must
+# FEEL instant. Field baseline: chat answers in
+# ~1.0–1.3 s, but agent turns logged brain 7.2–7.5 s
+# (one slow/hanging candidate could hold the whole
+# turn hostage inside the 10 s provider timeout). On
+# the AGENT path only, the impl's FIRST model call of
+# a turn is capped at ~3 s and later calls at ~5 s; a
+# call that times out returns _MODEL_SLOW and the
+# walk advances (item A's machinery) instead of the
+# turn dying. Chat/race budgets are untouched.
+_MODEL_SLOW = object()
+AGENT_FIRST_CALL_BUDGET_S = 3.0
+AGENT_CALL_BUDGET_S = 5.0
+# The no-silent-work line: an agent turn still running
+# after this long speaks ONE cached progress line
+# (fixed=True — it is in nalox.py's fixed-line set and
+# male-warmed under item H), at most once per turn.
+AGENT_PROGRESS_S = 4.0
+AGENT_PROGRESS_LINE = "কাজটা চলছে, sir — একটু অপেক্ষা করুন।"
+# Item I.2: tool-batch independence. No AGENT_TOOLS
+# metadata exists, so the rule is explicit: a batch of
+# SAME-NAME repeats runs concurrently unless the tool
+# is sequence-critical (keyboard/focus/telephone);
+# a MIXED batch runs concurrently only when every
+# tool is read-only information gathering. Everything
+# else keeps the serial order it has always had.
+_PARALLEL_SAFE_TOOLS = frozenset((
+    "google_search", "search_youtube", "phone_battery",
+    "battery", "tell_time", "tell_date", "read_my_screen",
+    "take_screenshot", "screenshot", "fetch_url_text",
+    "find_leads", "find_duplicate_files"))
+_PARALLEL_NEVER_TOOLS = frozenset((
+    "type_text", "press_key", "snap_app", "snap_active",
+    "phone_call", "email_lead", "lock_pc"))
+
+
+def _tools_parallel_ok(names):
+    """True when one model step's tool calls may run
+    concurrently (v7.9 item I.2). Conservative by
+    construction — see the sets above."""
+    if len(names) < 2:
+        return False
+    if len(set(names)) == 1:
+        return names[0] not in _PARALLEL_NEVER_TOOLS
+    return all(n in _PARALLEL_SAFE_TOOLS for n in names)
+
 _MODEL_WALK_PROVIDERS = {
     "gemini": ("gemini_model", "gemini_models"),
     "groq": ("groq_model", "groq_models"),
@@ -2445,6 +2524,36 @@ class Brain:
         # scope only — a restart re-probes, exactly like
         # the Groq walk's remembered working model.
         self._dead_models = set()
+        # v7.9: RATE-LIMIT COOLDOWNS — (provider, model)
+        # pairs parked by a 429, mapped to their monotonic
+        # expiry (see _park_model_ratelimit). A parked model
+        # is skipped by every walk until the cooldown
+        # lapses; unlike _dead_models it is expected back,
+        # so nothing here is remembered across restarts and
+        # the walk never reports it "gone".
+        self._model_cooldowns = {}
+        # v7.9 (item D): THIS TURN's failure causes, a set
+        # drawn from {"ratelimit", "auth", "other"}, fed by
+        # _brain_fail (by HTTP status) and by the 429 park.
+        # Reset at the top of every _agent_reply; read by
+        # _chat_fallback so the spoken failure line names
+        # the REAL cause — a rate-limit death must never
+        # send the owner to check a healthy key.
+        self._turn_fail_causes = set()
+        # v7.9 (items B/C/E): why the most recent Ollama
+        # fallback attempt failed ("not reachable at …",
+        # "HTTP 500 — …"), set by _agent_ollama's exits so
+        # the fallback outcome lines can name it — the
+        # field's Ollama attempts used to be invisible
+        # (a failed /api/tags probe returned None in
+        # silence). The two knobs below bound the CHAT
+        # safety net's attempt (item B): a per-call timeout
+        # override and a candidate cap, set only around
+        # that one call and restored after; None = the
+        # full-strength defaults everywhere else.
+        self._ollama_last_error = None
+        self._ollama_timeout_override = None
+        self._ollama_max_candidates = None
         # v7.8: MUSE WONDER session state. _muse_parked is
         # None while the provider is live; once the Meta
         # API answers 401/403 (key rejected) or 402
@@ -6950,6 +7059,21 @@ class Brain:
         with self._status_lock:
             self._last_agent_fail = (label, reason,
                                      time.monotonic())
+            # v7.9 (item D): the failure's CAUSE joins this
+            # turn's set — _chat_fallback reads it to speak
+            # the truthful line (a 429 death is a limit, not
+            # a key problem). Guarded: the set is reset per
+            # _agent_reply, and a stray call outside a turn
+            # (boot validation) must never raise here.
+            try:
+                if http_status == 429:
+                    self._turn_fail_causes.add("ratelimit")
+                elif http_status in (401, 403):
+                    self._turn_fail_causes.add("auth")
+                else:
+                    self._turn_fail_causes.add("other")
+            except Exception:
+                pass
             if provider and http_status in (401, 403):
                 self._key_checks[provider] = {
                     "state": "rejected",
@@ -7001,6 +7125,66 @@ class Brain:
         """True once Muse Wonder is parked this session
         (v7.8) — the chat race fields it no longer."""
         return getattr(self, "_muse_parked", None) is not None
+
+    # ------------------------------------------------ v7.9 429
+    def _park_model_ratelimit(self, provider, model, label):
+        """Park ONE model for the rate-limit cooldown
+        (v7.9, item A): a 429 is a per-model, per-minute
+        condition — the model sits out
+        MODEL_RATELIMIT_COOLDOWN_S while the walk advances
+        to the next candidate. ONE logbook line per park
+        (a model already parked does not re-log), and the
+        turn's cause set records "ratelimit" for the
+        truthful fallback line (item D). Never raises; the
+        model is NOT added to _dead_models — it is expected
+        back, and the walk must never call it gone."""
+        try:
+            key = (provider, _model_key(model))
+            now = time.monotonic()
+            if self._model_cooldowns.get(key, 0.0) > now:
+                return
+            self._model_cooldowns[key] = (
+                now + MODEL_RATELIMIT_COOLDOWN_S)
+            try:
+                self._turn_fail_causes.add("ratelimit")
+            except Exception:
+                pass
+            line = (f"[brain] {label} model {model} "
+                    f"rate-limited — parked 60s, "
+                    f"trying next")
+            _lb("BRAIN", line)
+            log.info(line)
+        except Exception:
+            pass
+
+    def _model_in_cooldown(self, provider, model):
+        """True while (provider, model) sits in its 429
+        cooldown (v7.9). An expired entry is dropped on
+        sight — the model rejoins every walk at once."""
+        try:
+            key = (provider, _model_key(model))
+            exp = self._model_cooldowns.get(key)
+            if exp is None:
+                return False
+            if exp <= time.monotonic():
+                self._model_cooldowns.pop(key, None)
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _last_fail_reason(self, label):
+        """The recorded reason of the most recent agent
+        failure for `label`, or a plain "no answer" —
+        the why in the v7.9 fallback outcome lines."""
+        try:
+            with self._status_lock:
+                fail = self._last_agent_fail
+            if fail and fail[0] == label:
+                return str(fail[1])
+        except Exception:
+            pass
+        return "no answer"
 
     def _brain_unreachable(self):
         """True when a cloud key exists but the brain is failing:
@@ -7319,6 +7503,34 @@ class Brain:
         # short line in his language naming the real problem and
         # the field to check (the active provider's own name, so
         # the sentence stays truthful for Claude/OpenAI too).
+        # v7.9 (item D): TRUTHFUL FAILURE LINES — the
+        # spoken line names THIS turn's real cause (see
+        # _turn_fail_causes). A rate-limit death (every
+        # Groq candidate 429/parked, the fallbacks spent)
+        # is a LIMIT: the old line sent the owner to check
+        # a healthy key (field 2026-11-16 13:19–13:33 IST:
+        # 29 key-check lines spoken for one rate limit).
+        # The limit line never mentions the key; an auth
+        # cause keeps the key-check line below, and every
+        # other cause keeps the connection line below —
+        # both byte-identical to before.
+        _causes = getattr(self, "_turn_fail_causes",
+                          None) or ()
+        if "ratelimit" in _causes \
+                and "auth" not in _causes \
+                and self._cloud_configured():
+            qlang = eff_lang or _text_lang(text, self.lang)
+            if qlang == "bn":
+                return (f"দুঃখিত {self._addr_bn()}, "
+                        "brain-এর limit শেষ হয়ে গেছে — "
+                        "একটু পরে আবার চেষ্টা করুন।")
+            if qlang == "hi":
+                return ("मेरे brain की limit ख़त्म हो गई है, "
+                        f"{user} — थोड़ी देर बाद फिर कोशिश "
+                        "कीजिए।")
+            return ("My brain has hit its usage limit, "
+                    f"{user} — please try again in a "
+                    "little while.")
         if self._cloud_configured() and self._brain_unreachable():
             label = self._PROVIDER_LABELS.get(
                 self.brain_status.get("mode", ""), "Groq")
@@ -8137,6 +8349,136 @@ class Brain:
                 pass
         return True, None
 
+    # ------------------------------------------------ v7.9 fallbacks
+    def _agent_muse_fallback(self, text):
+        """Muse Wonder WITH TOOLS as the agent path's
+        first fallback (v7.9, item C): reached only when
+        the Groq walk has failed ENTIRELY on an action
+        turn. The same OpenAI-compatible tool machinery
+        as every agent call (the Meta endpoint speaks it
+        — see the v7.8 note at MUSE_BASE), the same
+        guards, and v7.8's parking discipline (a 401/402/
+        403 parks it for the session inside _brain_fail).
+        No key / parked / rejected → returns None at once
+        with zero network, and the order collapses to
+        Groq → Ollama exactly as before. One logbook line
+        per attempt + outcome."""
+        try:
+            key = (self.cfg.get("muse_api_key")
+                   or "").strip()
+        except Exception:
+            key = ""
+        if not key or self._muse_parked_now() \
+                or self._provider_rejected("muse"):
+            return None
+        reply = self._agent_openai_compatible(
+            text, MUSE_BASE, key,
+            self.cfg.get("muse_model", MUSE_DEFAULT_MODEL),
+            label="Muse Wonder", provider="muse",
+            call_budgets=(AGENT_FIRST_CALL_BUDGET_S,
+                          AGENT_CALL_BUDGET_S))
+        if reply:
+            _lb("BRAIN",
+                "[brain] agent fallback: Muse Wonder "
+                "answered")
+            log.info("[brain] agent fallback: Muse Wonder "
+                     "answered")
+            return reply
+        _why = self._last_fail_reason("Muse Wonder")
+        _lb("BRAIN",
+            f"[brain] agent fallback: Muse Wonder "
+            f"failed: {_why}")
+        log.info("[brain] agent fallback: Muse Wonder "
+                 "failed: %s", _why)
+        return None
+
+    def _ollama_chat_net(self, text):
+        """The chat path's Ollama safety net (v7.9,
+        item B): the race (or the serial chat path) ended
+        with no passing reply — before any failure line,
+        ONE bounded Ollama attempt: the existing machinery
+        (_agent_ollama → the impl, production system
+        prompt, every guard), capped at the first live
+        candidate with an ~8 s per-call budget
+        (CHAT_OLLAMA_NET_TIMEOUT_S) instead of the full
+        local walk. The bounding knobs ride on the
+        instance so a monkeypatched _agent_ollama in the
+        suites still sees the plain one-argument call.
+        Attempt + outcome get ONE logbook line each way —
+        "[brain] chat fallback: Ollama answered" /
+        "…failed: <why>" — so the next sync finally shows
+        whether his Ollama works in production (item E)."""
+        _prev_timeout = getattr(
+            self, "_ollama_timeout_override", None)
+        _prev_max = getattr(
+            self, "_ollama_max_candidates", None)
+        self._ollama_timeout_override = \
+            CHAT_OLLAMA_NET_TIMEOUT_S
+        self._ollama_max_candidates = 1
+        try:
+            reply = self._agent_ollama(text)
+        finally:
+            self._ollama_timeout_override = _prev_timeout
+            self._ollama_max_candidates = _prev_max
+        if reply:
+            _lb("BRAIN",
+                "[brain] chat fallback: Ollama answered")
+            log.info("[brain] chat fallback: Ollama "
+                     "answered")
+            return reply
+        _why = getattr(self, "_ollama_last_error",
+                       None) or "no answer"
+        _lb("BRAIN",
+            f"[brain] chat fallback: Ollama failed: "
+            f"{_why}")
+        log.info("[brain] chat fallback: Ollama failed: "
+                 "%s", _why)
+        return None
+
+    def _arm_progress_line(self):
+        """v7.9 (item I.3): arm the no-silent-work line
+        for an AGENT turn. A daemon Timer fires once at
+        AGENT_PROGRESS_S; if the turn is still running it
+        speaks the cached progress line (fixed=True —
+        male-warmed under item H) through the speaker.
+        Returns the turn state the disarm flips. No
+        speaker (tests, headless) = a state with no
+        timer. Never raises."""
+        state = {"done": False, "timer": None}
+        try:
+            speaker = getattr(self, "speaker", None)
+            if speaker is None:
+                return state
+
+            def _fire():
+                if state["done"]:
+                    return
+                state["done"] = True
+                try:
+                    speaker.say(AGENT_PROGRESS_LINE,
+                                lang="bn", fixed=True)
+                except Exception:
+                    pass
+
+            _t = threading.Timer(AGENT_PROGRESS_S, _fire)
+            _t.daemon = True
+            _t.start()
+            state["timer"] = _t
+        except Exception:
+            pass
+        return state
+
+    def _disarm_progress_line(self, state):
+        """The turn ended — the progress line must never
+        speak for a finished turn (item I.3)."""
+        try:
+            state["done"] = True
+            _t = state.get("timer")
+            if _t is not None:
+                _t.cancel()
+        except Exception:
+            pass
+
     def _agent_reply(self, text):
         """The brain (v6.8): GROQ, then the offline Ollama —
         nothing else is ever tried. (v7.6: true of the
@@ -8178,6 +8520,30 @@ class Brain:
         v7.8: Muse Wonder (the owner's paid Meta brain)
         is one more chat racer when its key is pasted —
         the agent/action path STILL never calls it.
+
+        v7.9: the fallbacks grow up (field log 2026-11-16
+        13:19–13:33 IST — a Groq 429 killed a half-done
+        Notepad chain and the fallback blamed the key).
+        A 429 now advances the Groq walk instead of
+        killing the turn (item A); the agent path, when
+        the Groq walk fails entirely, falls back to Muse
+        Wonder WITH TOOLS (item C — reversing v7.8's
+        never-on-the-agent-path rule for the fallback
+        position only; Groq still leads every turn) and
+        then Ollama; a chat turn that ends answerless
+        gets ONE bounded Ollama attempt before any
+        failure line (item B); every fallback logs its
+        attempt + outcome (item E); and the spoken
+        failure line names the turn's real cause
+        (item D, in _chat_fallback).
+
+        v7.9 (item I): an ACTION turn additionally arms
+        the agent per-call budgets (first call ~3 s,
+        later calls ~5 s — a timeout advances the walk
+        via _MODEL_SLOW) and the no-silent-work progress
+        line (one cached Bengali line if the turn passes
+        ~4 s), and one step's independent tool calls run
+        concurrently. Chat turns get none of this.
         """
         self._doc_context = ""
         try:
@@ -8190,6 +8556,14 @@ class Brain:
                         for p, s in hits)[:900]
         except Exception:
             self._doc_context = ""
+        # v7.9 (item D): this turn's failure-cause set
+        # starts empty — _brain_fail and the 429 park fill
+        # it as the turn fails, and _chat_fallback reads
+        # it to speak the truthful failure line.
+        try:
+            self._turn_fail_causes = set()
+        except Exception:
+            pass
         # v4.4: no provider available -> NO network at all.
         # The local fallback must cost ~0.0 s of brain time.
         if not self._agent_available():
@@ -8220,35 +8594,76 @@ class Brain:
         # power walk exactly. When the race doesn't run
         # (fewer than two providers configured), the serial
         # Groq call below is v7.5 behaviour, untouched.
+        _is_action = _looks_like_action_request(text)
         _race_ran = False
-        if not _looks_like_action_request(text):
+        if not _is_action:
             _race_ran, reply = self._chat_race(
                 text, _tier, groq_key)
             if reply:
                 return reply
-        if not _race_ran and groq_key \
-                and not self._provider_rejected("groq"):
-            reply = self._agent_openai_compatible(
-                text, "https://api.groq.com/openai/v1", groq_key,
-                self.cfg.get("groq_model",
-                             "llama-3.1-8b-instant"),
-                label="Groq", provider="groq", tier=_tier)
-            if reply:
-                _lb("BRAIN", "Groq answered")
-                return reply
-        reply = self._agent_ollama(text)
-        if reply:
-            _lb("BRAIN", "Ollama answered")
-            return reply
-        # v7.6 (item A): the cascade ended answerless —
-        # before the honest fallback, rescue the turn's
-        # language-guard candidate by translating it to
-        # Bengali (see _rescue_wrong_language_reply).
-        rescued = self._rescue_wrong_language_reply(text)
-        if rescued:
-            self._remember_chat(text, rescued)
-            return rescued
-        return None
+        # v7.9 (item I): an ACTION turn arms the
+        # no-silent-work progress line and the agent
+        # per-call budgets; a CHAT turn gets neither
+        # (chat/race budgets are unchanged).
+        _budgets = (AGENT_FIRST_CALL_BUDGET_S,
+                    AGENT_CALL_BUDGET_S) \
+            if _is_action else None
+        _progress = self._arm_progress_line() \
+            if _is_action else None
+        try:
+            if not _race_ran and groq_key \
+                    and not self._provider_rejected("groq"):
+                reply = self._agent_openai_compatible(
+                    text, "https://api.groq.com/openai/v1", groq_key,
+                    self.cfg.get("groq_model",
+                                 "llama-3.1-8b-instant"),
+                    label="Groq", provider="groq", tier=_tier,
+                    call_budgets=_budgets)
+                if reply:
+                    _lb("BRAIN", "Groq answered")
+                    return reply
+            if _is_action:
+                # v7.9 (item C): the AGENT path's fallback
+                # order — Groq (above) → Muse Wonder WITH
+                # TOOLS when its key is pasted → Ollama → the
+                # honest fallback. Every fallback logs its
+                # attempt + outcome (items C/E), so the next
+                # sync shows which brain actually carried the
+                # turn — or that none could.
+                reply = self._agent_muse_fallback(text)
+                if reply:
+                    return reply
+                reply = self._agent_ollama(text)
+                if reply:
+                    _lb("BRAIN", "Ollama answered")
+                    return reply
+                _why = getattr(self, "_ollama_last_error",
+                               None) or "no answer"
+                _lb("BRAIN",
+                    f"[brain] agent fallback: Ollama failed: "
+                    f"{_why}")
+                log.info("[brain] agent fallback: Ollama "
+                         "failed: %s", _why)
+            else:
+                # v7.9 (item B): the CHAT path's safety net —
+                # ONE bounded Ollama attempt stands between a
+                # dead race / serial path and the failure
+                # line (see _ollama_chat_net).
+                reply = self._ollama_chat_net(text)
+                if reply:
+                    return reply
+            # v7.6 (item A): the cascade ended answerless —
+            # before the honest fallback, rescue the turn's
+            # language-guard candidate by translating it to
+            # Bengali (see _rescue_wrong_language_reply).
+            rescued = self._rescue_wrong_language_reply(text)
+            if rescued:
+                self._remember_chat(text, rescued)
+                return rescued
+            return None
+        finally:
+            if _progress is not None:
+                self._disarm_progress_line(_progress)
 
     def _anthropic_tools(self):
         """AGENT_TOOLS converted to the Anthropic tool format."""
@@ -8576,12 +8991,30 @@ class Brain:
             import requests
         except Exception:
             return None
+        # v7.9 (item E): every attempt leaves its outcome
+        # readable — _ollama_last_error names why this
+        # attempt failed, so the fallback outcome lines in
+        # _agent_reply can say it. The probe's silence is
+        # unchanged (a server that isn't there is still not
+        # a provider failure); the WHY is simply no longer
+        # thrown away.
+        try:
+            self._ollama_last_error = None
+        except Exception:
+            pass
         url = self.cfg.get("ollama_url", "http://localhost:11434").rstrip("/")
         try:
             if requests.get(url + "/api/tags",
                             timeout=1.5).status_code != 200:
+                self._ollama_last_error = (
+                    f"not reachable at {url}")
                 return None
         except Exception:
+            try:
+                self._ollama_last_error = (
+                    f"not reachable at {url}")
+            except Exception:
+                pass
             return None
         candidates = self._model_candidates("ollama") or [
             self.cfg.get("ollama_model", "llama3.1")]
@@ -8599,6 +9032,18 @@ class Brain:
             if candidates and not _live:
                 return None
             candidates = _live or candidates
+        # v7.9 (item B): the chat safety net caps the
+        # attempt at the first live candidate — ONE bounded
+        # attempt, never the whole local walk. The knob is
+        # set only around that call (see _ollama_chat_net);
+        # everywhere else it is None and the walk is whole.
+        try:
+            _maxc = getattr(self, "_ollama_max_candidates",
+                            None)
+        except Exception:
+            _maxc = None
+        if _maxc:
+            candidates = candidates[:max(1, int(_maxc))]
         last_miss = None
         for idx, cand in enumerate(candidates):
             reply = self._agent_ollama_impl(text, url, cand)
@@ -8625,15 +9070,28 @@ class Brain:
                 self._remember_working_model(
                     "ollama", cand, "Ollama")
                 return reply
-            return None  # a real failure — the impl logged it
+            # A real failure — the impl logged it; v7.9
+            # keeps its reason for the fallback outcome
+            # line (item E: the attempt's HTTP status must
+            # be visible, once, in the log).
+            try:
+                self._ollama_last_error = \
+                    self._last_fail_reason("Ollama")
+            except Exception:
+                pass
+            return None
         # Every candidate was a name Ollama has not pulled:
         # ONE failure line for the whole walk.
-        self._brain_fail(
-            "Ollama",
+        _reason = (
             f"no working model — tried {', '.join(candidates)} "
             f"(last not pulled: {last_miss}) — pull one with "
-            f"SETUP-OLLAMA.txt",
-            provider="ollama")
+            f"SETUP-OLLAMA.txt")
+        self._brain_fail(
+            "Ollama", _reason, provider="ollama")
+        try:
+            self._ollama_last_error = _reason
+        except Exception:
+            pass
         return None
 
     def _agent_ollama_impl(self, text, url, model):
@@ -8651,6 +9109,13 @@ class Brain:
             messages = ([{"role": "system", "content": self._system_prompt()}]
                         + self.chat_history[-8:]
                         + [{"role": "user", "content": text}])
+            # v7.9 (item B): the chat safety net's bounded
+            # per-call budget when the caller set the
+            # override — otherwise the generous local
+            # timeout, exactly as before.
+            _timeout = getattr(
+                self, "_ollama_timeout_override", None) \
+                or OLLAMA_TIMEOUT_S
             _tools_ran_here = 0
             _continued = False
             for _round in range(3):
@@ -8658,7 +9123,7 @@ class Brain:
                     url + "/api/chat",
                     json={"model": model, "messages": messages,
                           "tools": AGENT_TOOLS, "stream": False},
-                    timeout=OLLAMA_TIMEOUT_S)
+                    timeout=_timeout)
                 if resp.status_code != 200:
                     if _model_error_snippet(resp.status_code,
                                             resp) is not None:
@@ -8722,7 +9187,7 @@ class Brain:
             resp = requests.post(
                 url + "/api/chat",
                 json={"model": model, "messages": messages, "stream": False},
-                timeout=OLLAMA_TIMEOUT_S)
+                timeout=_timeout)
             if resp.status_code != 200:
                 if _model_error_snippet(resp.status_code,
                                         resp) is not None:
@@ -8747,7 +9212,7 @@ class Brain:
     def _agent_openai_compatible(self, text, base_url, key, model,
                                  label="OpenAI-compatible",
                                  provider=None, timeout=PROVIDER_TIMEOUT_S,
-                                 tier=None):
+                                 tier=None, call_budgets=None):
         """v6.0 timing wrapper: record the attempt's latency
         + outcome in perflevel under the provider's name
         (the ⚡ Level and the adaptive provider order read
@@ -8791,7 +9256,8 @@ class Brain:
             reply = self._agent_openai_walk(
                 text, base_url, key, model, label=label,
                 provider=provider, timeout=timeout, head=_head,
-                remember_key=_remember_key, tier=tier)
+                remember_key=_remember_key, tier=tier,
+                call_budgets=call_budgets)
         except Exception:
             reply = None
         # v6.8 ACT, DON'T NARRATE: the turn ended with ZERO
@@ -8833,7 +9299,8 @@ class Brain:
                     text + _NARRATE_STERN, base_url, key, model,
                     label=label, provider=provider,
                     timeout=timeout, head=_r_head,
-                    remember_key=_r_key, tier=_r_tier)
+                    remember_key=_r_key, tier=_r_tier,
+                    call_budgets=call_budgets)
             except Exception:
                 reply2 = None
             if reply2 and self._tool_run_count != _tools_before:
@@ -8870,7 +9337,8 @@ class Brain:
                     provider=provider, timeout=timeout,
                     head=_p_head,
                     remember_key="groq_power_model",
-                    tier="power")
+                    tier="power",
+                    call_budgets=call_budgets)
             except Exception:
                 reply2 = None
             if reply2:
@@ -8913,7 +9381,8 @@ class Brain:
     def _agent_openai_walk(self, text, base_url, key, model,
                            label="OpenAI-compatible",
                            provider=None, timeout=PROVIDER_TIMEOUT_S,
-                           head=None, remember_key=None, tier=None):
+                           head=None, remember_key=None, tier=None,
+                           call_budgets=None):
         """One provider call, with the v6.5 candidate walk for
         walk providers. Non-walk providers (FreeLLMAPI, OpenAI)
         keep the exact single-model behaviour.
@@ -8923,9 +9392,25 @@ class Brain:
         remembered (the power tier's own key); tier= rides
         along to the remember for the status line."""
         if provider not in _MODEL_WALK_PROVIDERS:
-            return self._agent_openai_compatible_impl(
+            # call_budgets is passed ONLY when armed — an
+            # unarmed call keeps the impl's exact v7.8
+            # signature (suites stub the impl with it).
+            _extra = {"call_budgets": call_budgets} \
+                if call_budgets else {}
+            _direct = self._agent_openai_compatible_impl(
                 text, base_url, key, model, label=label,
-                provider=provider, timeout=timeout)
+                provider=provider, timeout=timeout, **_extra)
+            if _direct is _MODEL_SLOW:
+                # v7.9 (item I): a non-walk provider has no
+                # next candidate — the slowness is this
+                # call's failure (the impl already logged
+                # the move-on line); the turn's fallbacks
+                # are the caller's business.
+                self._brain_fail(
+                    label, f"model {model} too slow",
+                    provider=provider)
+                return None
+            return _direct
         candidates = self._model_candidates(
             provider, head_override=head) or [model]
         # v7.7 (item I): filter out this session's PROVEN
@@ -8949,7 +9434,29 @@ class Brain:
                     provider=provider)
                 return None
             candidates = _live or candidates
+        # v7.9 (item A): the same filter drops models in
+        # their 429 cooldown — a parked model is never
+        # re-asked inside its 60 s, on any walk. When the
+        # cooldown alone empties the walk, the provider
+        # reports the RATE LIMIT (status 429, so the
+        # turn's cause is truthful), never a dead key.
+        _cooling = [c for c in candidates
+                    if self._model_in_cooldown(provider, c)]
+        if _cooling:
+            _live = [c for c in candidates
+                     if c not in _cooling]
+            if candidates and not _live:
+                self._brain_fail(
+                    label,
+                    f"every model is rate-limited "
+                    f"(parked) — not retrying "
+                    f"{', '.join(candidates)}",
+                    provider=provider, http_status=429)
+                return None
+            candidates = _live or candidates
         last_miss = None
+        last_ratelimit = None
+        last_slow = None
         _walk_start = time.monotonic()
         for idx, cand in enumerate(candidates):
             # v6.6: the walk has ONE total budget across its
@@ -8968,11 +9475,13 @@ class Brain:
                     f"{', '.join(candidates[:idx])}",
                     provider=provider)
                 return None
+            _extra = {"call_budgets": call_budgets} \
+                if call_budgets else {}
             reply = self._agent_openai_compatible_impl(
                 text, base_url, key, cand, label=label,
                 provider=provider,
                 timeout=min(timeout, max(1.0, _remaining)),
-                model_walk=True)
+                model_walk=True, **_extra)
             if reply is _MODEL_MISS:
                 last_miss = cand
                 # v7.7 (item I): this name is dead for the
@@ -8991,6 +9500,24 @@ class Brain:
                              "%s", label, cand,
                              candidates[idx + 1])
                 continue
+            if reply is _MODEL_RATELIMITED:
+                # v7.9 (item A): the impl parked this model
+                # for its 429 cooldown and logged the park —
+                # advance exactly like a miss, but the model
+                # is NOT dead and is never remembered as
+                # gone; it rejoins the walk when the
+                # cooldown lapses.
+                last_ratelimit = cand
+                continue
+            if reply is _MODEL_SLOW:
+                # v7.9 (item I): the candidate blew the
+                # agent path's per-call budget (the impl
+                # logged the move-on line) — advance like
+                # a miss, but park nothing: a slow model
+                # may answer fine next turn, and the
+                # budget re-applies then anyway.
+                last_slow = cand
+                continue
             if reply:
                 # v7.3: unconditional — a head answer records
                 # the working model in memory too (the persist
@@ -9003,6 +9530,25 @@ class Brain:
                 return reply
             return None  # a real provider failure — impl logged it
         # Every candidate was a dead name: ONE failure line.
+        # v7.9: a walk that ended PURELY on rate limits says
+        # so instead, with the 429 as its status — the
+        # turn's cause set (item D) and the log both name
+        # the limit, not a dead model or a bad key.
+        if last_miss is None and last_ratelimit is not None:
+            self._brain_fail(
+                label,
+                f"rate limit reached on every model — "
+                f"tried {', '.join(candidates)}",
+                provider=provider, http_status=429)
+            return None
+        if last_miss is None and last_ratelimit is None \
+                and last_slow is not None:
+            self._brain_fail(
+                label,
+                f"every model too slow — "
+                f"tried {', '.join(candidates)}",
+                provider=provider)
+            return None
         self._brain_fail(
             label,
             f"no working model — tried "
@@ -9015,7 +9561,8 @@ class Brain:
                                       model,
                                       label="OpenAI-compatible",
                                       provider=None, timeout=PROVIDER_TIMEOUT_S,
-                                      model_walk=False):
+                                      model_walk=False,
+                                      call_budgets=None):
         """Tool-using loop against an OpenAI-compatible API (Groq/OpenAI).
 
         v4.8: EVERY failure is logged via _brain_fail (one logbook
@@ -9027,6 +9574,23 @@ class Brain:
         driving), a dead-model-name failure returns _MODEL_MISS
         WITHOUT logging — the walk owns that story and logs a
         single failure only if every candidate is dead.
+
+        v7.9: a 429 inside a walk returns _MODEL_RATELIMITED
+        after parking the model for its cooldown (see
+        _park_model_ratelimit) — the walk advances, on every
+        round including post-tool continuations; a rate limit
+        is never this call's terminal failure.
+
+        v7.9 (item I): call_budgets=(first_s, later_s) —
+        the AGENT path's per-call caps — bounds every post
+        this impl makes (first call of the turn at
+        first_s, later calls at later_s; the tighter of
+        the passed timeout and the cap wins). A post that
+        times out under armed budgets returns _MODEL_SLOW
+        so the walk advances instead of the turn dying;
+        unarmed (chat) calls keep the v7.8 behaviour
+        exactly. One step's independent tool calls run
+        concurrently (see _tools_parallel_ok).
         """
         try:
             import requests
@@ -9037,30 +9601,87 @@ class Brain:
                         + [{"role": "user", "content": text}])
             _tools_ran_here = 0
             _continued = False
+
+            def _post(body, round_idx=0):
+                """One POST for this call. v7.9: inside a
+                model walk the candidate gets ONE post — a
+                429 must advance the walk at once (the walk
+                itself is the retry now), and the v6.13
+                same-model backoff would only stack sleeps
+                inside the turn's budget. Outside a walk
+                the backoff runs exactly as v6.13 shipped
+                it (its suites pin that path).
+
+                v7.9 (item I): under call_budgets the post
+                is capped (first call of the turn tighter)
+                and a timeout returns _MODEL_SLOW — the
+                walk advances; a slow candidate never
+                holds a work turn hostage."""
+                _eff = timeout
+                if call_budgets:
+                    _cap = call_budgets[0] if round_idx == 0 \
+                        else call_budgets[1]
+                    _eff = min(timeout, _cap)
+                try:
+                    if model_walk:
+                        return requests.post(
+                            base_url + "/chat/completions",
+                            headers=headers, json=body,
+                            timeout=_eff)
+                    return _post_with_rl_retry(
+                        requests.post,
+                        base_url + "/chat/completions",
+                        headers=headers, json_body=body,
+                        timeout_s=_eff,
+                        deadline=time.monotonic() + _eff)
+                except requests.Timeout:
+                    if not call_budgets:
+                        raise
+                    _lb("BRAIN",
+                        f"[brain] {label} model {model} too "
+                        f"slow (>{_eff:.0f}s) — moving on")
+                    log.info("[brain] %s model %s too slow "
+                             "(>%ss) — moving on",
+                             label, model, _eff)
+                    return _MODEL_SLOW
+
+            def _error_out(resp):
+                """The non-200 handling both post sites
+                share. Returns the walk sentinel the caller
+                must return (_MODEL_MISS /
+                _MODEL_RATELIMITED), or None after recording
+                a terminal provider failure — the caller
+                then returns None itself. v7.9: a 429 inside
+                a walk parks this model for its cooldown
+                and advances; it is never a terminal
+                failure while candidates remain."""
+                if model_walk and resp.status_code == 429:
+                    self._park_model_ratelimit(
+                        provider, model, label)
+                    return _MODEL_RATELIMITED
+                if model_walk and _model_error_snippet(
+                        resp.status_code, resp) is not None:
+                    return _MODEL_MISS
+                self._brain_fail(
+                    label,
+                    f"HTTP {resp.status_code} — "
+                    f"{_err_snippet(resp)}",
+                    provider=provider,
+                    http_status=resp.status_code)
+                return None
+
             for _round in range(3):
-                # v6.13: a 429 retries with jittered backoff
-                # inside this call's own timeout budget.
-                resp = _post_with_rl_retry(
-                    requests.post,
-                    base_url + "/chat/completions",
-                    headers=headers,
-                    json_body={"model": model,
-                               "messages": messages,
-                               "tools": AGENT_TOOLS,
-                               "tool_choice": "auto",
-                               "max_tokens": 300},
-                    timeout_s=timeout,
-                    deadline=time.monotonic() + timeout)
+                resp = _post({"model": model,
+                              "messages": messages,
+                              "tools": AGENT_TOOLS,
+                              "tool_choice": "auto",
+                              "max_tokens": 300}, _round)
+                if resp is _MODEL_SLOW:
+                    return _MODEL_SLOW
                 if resp.status_code != 200:
-                    if model_walk and _model_error_snippet(
-                            resp.status_code, resp) is not None:
-                        return _MODEL_MISS
-                    self._brain_fail(
-                        label,
-                        f"HTTP {resp.status_code} — "
-                        f"{_err_snippet(resp)}",
-                        provider=provider,
-                        http_status=resp.status_code)
+                    _out = _error_out(resp)
+                    if _out is not None:
+                        return _out
                     return None
                 msg = resp.json()["choices"][0]["message"]
                 calls = msg.get("tool_calls") or []
@@ -9103,13 +9724,45 @@ class Brain:
                         self._remember_chat(text, reply)
                     return reply or None
                 messages.append(msg)
+                _parsed = []
                 for call in calls:
                     fn = call.get("function") or {}
                     try:
-                        args = json.loads(fn.get("arguments") or "{}")
+                        args = json.loads(fn.get("arguments")
+                                          or "{}")
                     except Exception:
                         args = {}
-                    result = self._run_tool(fn.get("name", ""), args)
+                    _parsed.append(
+                        (call, fn.get("name", ""), args))
+                _results = None
+                if _tools_parallel_ok(
+                        [n for _c, n, _a in _parsed]):
+                    # v7.9 (item I.2): independent calls in
+                    # one step run CONCURRENTLY; results
+                    # are collected in call order, so the
+                    # conversation the model sees is
+                    # identical to the serial run's.
+                    _lb("BRAIN",
+                        f"[brain] running {len(_parsed)} "
+                        "tools in parallel")
+                    log.info("[brain] running %d tools in "
+                             "parallel", len(_parsed))
+                    try:
+                        from concurrent.futures import \
+                            ThreadPoolExecutor
+                        with ThreadPoolExecutor(
+                                max_workers=min(
+                                    4, len(_parsed))) as _ex:
+                            _results = list(_ex.map(
+                                lambda p: self._run_tool(
+                                    p[1], p[2]), _parsed))
+                    except Exception:
+                        _results = None
+                if _results is None:
+                    _results = [self._run_tool(n, a)
+                                for _c, n, a in _parsed]
+                for (call, _n, _a), result in zip(_parsed,
+                                                  _results):
                     _tools_ran_here += 1
                     if _continued:
                         # Progress after the continuation:
@@ -9123,22 +9776,14 @@ class Brain:
                                      "tool_call_id": call.get("id", ""),
                                      "content": result})
             # Tool rounds used up — ask once more, without tools.
-            resp = _post_with_rl_retry(
-                requests.post,
-                base_url + "/chat/completions",
-                headers=headers,
-                json_body={"model": model, "messages": messages,
-                           "max_tokens": 300},
-                timeout_s=timeout,
-                deadline=time.monotonic() + timeout)
+            resp = _post({"model": model, "messages": messages,
+                          "max_tokens": 300}, 3)
+            if resp is _MODEL_SLOW:
+                return _MODEL_SLOW
             if resp.status_code != 200:
-                if model_walk and _model_error_snippet(
-                        resp.status_code, resp) is not None:
-                    return _MODEL_MISS
-                self._brain_fail(
-                    label,
-                    f"HTTP {resp.status_code} — {_err_snippet(resp)}",
-                    provider=provider, http_status=resp.status_code)
+                _out = _error_out(resp)
+                if _out is not None:
+                    return _out
                 return None
             reply = (resp.json()["choices"][0]["message"].get("content")
                      or "").strip()

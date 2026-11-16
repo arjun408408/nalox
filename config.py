@@ -107,6 +107,13 @@ DEFAULTS = {
     # EXTENDED cooldown instead — no respawn. OFF
     # restores the exact v6.13/v7.0 behaviour. ---
     "ears_antichain_require_stall": True,
+    # --- v7.9 (item F): SLOW-DECODE STALL CAP — a wake
+    # decode that COMPLETES slower than this is a stall
+    # event; two inside ten minutes respawn the wake lane
+    # (the anti-chain only sees timeouts and zero-
+    # completion stalls; a one-decode-per-66 s lane trips
+    # neither). See ears.py WAKE_DECODE_STALLS_MAX. ---
+    "ears_wake_decode_stall_s": 20.0,
     # --- v7.1: STALE WAKE SEGMENTS — the wake consumer
     # drops a queued wake-listening segment older than
     # this many seconds instead of grinding stale audio

@@ -522,8 +522,9 @@ _NOTICE_HEADLINES = {
     "7.6": "উত্তর এবার বাংলাতেই আসবে",
     "7.7": "শোনার লাইন এবার ডুববে না",
     "7.8": "Muse Wonder যোগ হলো",
+    "7.9": "brain-এর limit লাগলেও অন্য brain উত্তর দেবে",
 }
-_NOTICE_HEADLINE_NOW = "Muse Wonder যোগ হলো"
+_NOTICE_HEADLINE_NOW = "brain-এর limit লাগলেও অন্য brain উত্তর দেবে"
 
 
 def update_notice_text(version):
@@ -935,6 +936,16 @@ class Dashboard:
                 return False
             if self._visible:
                 return True
+            # v7.9 (item G): opening the Command Center
+            # pokes the self-updater (debounced inside
+            # updater.poke_check — at most one check per
+            # 2 min from this trigger; the check runs on
+            # its own thread, the UI never waits).
+            try:
+                import updater as _updater_mod
+                _updater_mod.poke_check()
+            except Exception:
+                pass
             self.start()
             if self._force_headless:
                 self._visible = True

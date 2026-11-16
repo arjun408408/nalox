@@ -1117,3 +1117,245 @@ so the field exists. All Muse traffic in tests is
 STUBBED — no real Meta API key exists on the build
 VM; the first live call happens on the owner's
 machine after he pastes his key.
+
+## v7.9 — "brain-এর limit লাগলেও অন্য brain উত্তর দেবে" (2026-11-16)
+
+FIELD EVIDENCE (the owner's own synced log, 2026-11-16
+13:19–13:33 IST, v7.7/v7.8 sessions): the chain "open
+Notepad and write something good in my name" ran step 1
+(open_app notepad 13:19:53), then the agent loop's NEXT
+model call died on HTTP 429 (qwen/qwen3.8-27b org rate
+limit) and the turn ended with the spoken line claiming
+a connection problem and asking him to check his Groq
+key — a false diagnosis. Two retries died identically;
+by 13:24–13:33 nearly every turn ended in that line
+(29 occurrences vs only 3 explicit 429 lines — race
+failures are silent and the walk never advanced past a
+429, and no Ollama attempt appeared anywhere). Second
+evidence (sync 13:36:36 IST): heartbeat dec dmax=66.8 s —
+ONE wake-lane 'small' escalation decode took 66.8 s;
+worker-slow lines repeated while heartbeats sat in
+state=listening: mid-work Nalox stalls into Listening
+and wake-ups don't land. Third: the male Bengali voice
+had not been ATTEMPTED since 2026-11-15 19:52 IST —
+google-tts stickiness spoke every reply (female voice)
+for ~18 h (see item H).
+
+ROOT CAUSES (proven in code):
+- `_post_with_rl_retry` retried the SAME model twice,
+  then `_agent_openai_compatible_impl` treated the
+  exhausted 429 as a terminal `_brain_fail` (a 429 is
+  not a "dead name" per `_model_error_snippet`, which
+  matches only 400/404), and `_agent_openai_walk`
+  treats impl-None as terminal — THE WALK NEVER
+  ADVANCED past a rate limit, on any call, including
+  post-tool continuations.
+- `_agent_reply` did call `_agent_ollama` after Groq,
+  but the v4.8 probe rule returns None SILENTLY when
+  Ollama doesn't answer its /api/tags probe, so no
+  attempt was ever visible (and on the chat path there
+  was no Ollama attempt at all behind the race).
+- `_brain_fail` recorded `_last_agent_fail` for every
+  failure and `_chat_fallback` spoke the key-check line
+  whenever the cloud looked unreachable — cause-blind:
+  a rate limit was reported as a key problem.
+- The v7.1 F2 anti-chain gate respawns the wake lane
+  only on ZERO completions in 60 s (or worker
+  timeouts); a worker completing one decode per ~66 s
+  trips neither, so a slow-decode jam persists.
+- Voice: `_say_impl` step 1 is the persisted last_good
+  engine (google-tts for bn) — edge-tts, the only male
+  Bengali voice, only ran when google failed, and
+  google essentially never fails.
+
+ITEM A — 429 ADVANCES THE WALK (brain.py). A model
+that answers 429 on a WALK call (model_walk=True —
+the chat walk, the race's Groq racer, and EVERY
+agent-loop call including post-tool continuations)
+is parked for MODEL_RATELIMIT_COOLDOWN_S = 60 s
+(`_park_model_ratelimit`, one log line: "[brain]
+<label> model <m> rate-limited — parked 60s, trying
+next") and the walk continues with the next
+candidate; the impl returns the `_MODEL_RATELIMITED`
+sentinel, never a terminal failure. Parked models
+are filtered from every walk (`_model_in_cooldown`);
+if the cooldown alone empties the walk, the turn
+fails as a rate-limit death (http_status=429). The
+impl's walk-mode post is a SINGLE bounded request —
+the v6.13 jittered rl-retry survives ONLY on the
+non-walk path (model_walk=False: _plain_chat and
+direct callers; test_v613 E7 pins it). A 429 can
+never, by itself, end a turn while untried
+candidates remain.
+
+ITEM B — CHAT OLLAMA SAFETY NET. When a chat turn's
+race/serial path ends answerless, `_agent_reply`
+makes ONE bounded Ollama attempt (`_ollama_chat_net`:
+the production `_agent_ollama` machinery with an 8 s
+timeout override and a single candidate) before any
+failure line. One log line per outcome: "[brain]
+chat fallback: Ollama answered" / "…failed: <why>".
+
+ITEM C — AGENT FALLBACK ORDER. Groq walk → Muse
+Wonder WITH TOOLS (`_agent_muse_fallback`: only when
+a muse key is configured and not parked/rejected —
+v7.8's rules; reverses v7.8's "never on the agent
+path" for the FALLBACK position only; the primary
+agent walk is unchanged) → Ollama → the honest
+fallback. One log line per attempt + outcome. With
+no Muse key this collapses to the pre-v7.9 order.
+
+ITEM D — TRUTHFUL FAILURE LINES. `_brain_fail` now
+also records the turn's failure CAUSE
+(`_turn_fail_causes`: 429 → "ratelimit", 401/403 →
+"auth", else "other"; reset per agent turn). In
+`_chat_fallback`, a ratelimit-only death speaks the
+LIMIT line ("দুঃখিত স্যার, brain-এর limit শেষ হয়ে
+গেছে — একটু পরে আবার চেষ্টা করুন।" + hi/en variants)
+— it never mentions the key or Settings. Auth keeps
+the existing key-check line; other causes keep the
+existing connection line; a turn with NO recorded
+provider failure (e.g. every reply guard-rejected)
+also keeps the connection line, byte-identical to
+v7.8. Guard rejections never record a cause.
+
+ITEM E — OLLAMA VISIBILITY. `_agent_ollama` records
+`_ollama_last_error` (probe unreachable / impl
+failure incl. its HTTP status — "[BRAIN] Ollama
+FAILED: HTTP 500" already existed in the impl) and
+both fallback call sites log it once per attempt.
+Ollama itself is NOT repaired (it lives on the
+owner's PC; the bench showed HTTP 500 at 10:20 IST —
+the next sync will show whether production attempts
+work).
+
+ITEM F — WAKE SLOW-DECODE STALLS (ears.py). A wake
+decode (any pass, incl. escalations) completing
+slower than `ears_wake_decode_stall_s` (default
+20.0) is a stall event ("[ears] wake decode took
+Xs — stall", via the `_note_decode_stat`
+funnel/`_note_wake_decode_stall`). Two stalls
+within WAKE_DECODE_STALL_WINDOW_S = 600 s respawn
+the wake lane through the same client kill/spawn
+the anti-chain uses (logbook ERROR "[ears] wake
+lane restarted (repeated slow decodes)"), riding
+the worker restart budget; the segment queue lives
+in Ears, so the queued newest segment survives.
+Zero-stall behaviour is byte-identical to v7.8.
+
+ITEM G — UPDATES LAND BY THEMSELVES (updater.py).
+The owner's words: "তুমি দিলেই অটোমেটিক আপডেট করে
+নেবে". CHECK_INTERVAL_S / FAILED_RETRY_S 30 min →
+5 min. `poke_check()` — wired into the Command
+Center's show path (dashboard.show) — runs a check
+on its own thread, debounced to one per
+POKE_DEBOUNCE_S = 120 s; start_background registers
+the (cfg, restart_fn) it needs. Apply policy is
+unchanged (deny-list, adb kill-server, marker,
+spoken announcement + banner after restart) EXCEPT
+the restart defers while a voice turn is busy:
+check_and_update asks the busy probe (nalox.py
+registers one: stage != listening or voice speaking)
+and, when busy, a daemon `_deferred_restart` polls
+every DEFER_POLL_S = 5 s until the turn ends, capped
+at DEFER_MAX_S = 600 s, then restarts anyway. The
+immediate path is factored into `_restart_now` and
+is byte-identical to v7.8 (exiting line, v7.7
+stop_for_exit, restart callback).
+
+ITEM H — THE MALE VOICE SPEAKS (voice.py). Rule
+(gender-first): a Bengali reply with bn_voice =
+bn-BD-PradeepNeural (the male choice) attempts
+edge-tts FIRST — ElevenLabs keeps canonical first
+place (his own voice outranks fallbacks while alive;
+its 402 block makes the attempt free) — ahead of the
+persisted last_good engine, under
+MALE_EDGE_BUDGET_S = 7.0 (the whole attempt, retry
+included; `_speak_edge` reads the armed
+`self._edge_budget_s`). On edge failure the reply
+falls through to the existing order and ONE line
+logs: "[voice] male voice unavailable — female
+fallback for this reply" (once per reply). At boot,
+nalox.py passes the Bengali fixed lines to
+`start_male_cache_warming`: a background edge pass
+writes cache/tts entries under the edge engine key,
+and `_fixed_cache_lookup` prefers the edge entry
+when Bengali-male is configured; one boot line
+("[voice] male voice cache warmed" / "…warming
+failed — will retry next boot"). The session
+breaker is unchanged (2 consecutive failures park
+edge for 300 s — successes reset it, and under
+male-first most replies now succeed). QUEUED NEXT
+STEP if edge-first still fails in the field: Piper's
+bn_BD voice (openSLR-based, gender/quality
+unverified) — deliberately not integrated here. The
+Google Cloud key path stays closed (billing-card
+wall; do not revive).
+
+ITEM I — WORK TURNS FEEL INSTANT (brain.py). The
+owner's words: replies within 1–2 s and the work
+itself fast. Field baseline: chat ~1.0–1.3 s when
+healthy; agent turns logged brain 7.2–7.5 s (walk
+stalls, dead candidates, serial everything) and the
+failed ones died at ~7 s. Three parts:
+(1) Tight first-call budget on the AGENT path:
+call_budgets=(AGENT_FIRST_CALL_BUDGET_S=3.0,
+AGENT_CALL_BUDGET_S=5.0) threads _agent_reply →
+_agent_openai_compatible → _agent_openai_walk →
+_agent_openai_compatible_impl (the Muse fallback
+passes it too); every post is capped at
+min(passed timeout, cap) — round 0 at 3 s, later
+rounds at 5 s — and a post that times out returns
+_MODEL_SLOW: the walk advances (no parking; the
+budget re-applies next turn), a non-walk call maps
+it to a "model too slow" failure and the turn's
+fallbacks proceed. Chat/race calls pass
+call_budgets=None and are byte-identical to v7.8.
+(2) Concurrent independent tools: one step's calls
+run through a ThreadPoolExecutor (≤4 workers,
+results collected in call order) when
+_tools_parallel_ok says they are independent —
+same-name repeats unless the tool is
+sequence-critical (_PARALLEL_NEVER_TOOLS:
+type_text, press_key, snap_app, snap_active,
+phone_call, email_lead, lock_pc), or a mixed batch
+of read-only gatherers (_PARALLEL_SAFE_TOOLS).
+One log line: "[brain] running N tools in
+parallel". Everything else keeps the serial loop;
+the Ollama impl keeps its serial loop too (the
+offline last resort is not the latency problem).
+(3) No silent work: an action turn arms
+_arm_progress_line — a daemon Timer at
+AGENT_PROGRESS_S=4.0 s speaks AGENT_PROGRESS_LINE
+("কাজটা চলছে, sir — একটু অপেক্ষা করুন।") via
+speaker.say(lang="bn", fixed=True), at most once
+per turn, disarmed in a finally when the turn ends;
+the line joined nalox.py's fixed-line set, so it
+is male-warmed and cache-served. HONEST BUDGETS:
+chat ~1 s; work starts instantly (wake ack + first
+tool); a typical 2-step job targets ~3–5 s
+end-to-end. A guaranteed 1–2 s TOTAL for
+multi-step cloud work is not physically possible
+and was not promised.
+
+DELIBERATELY UNTOUCHED: `_plain_chat` (writing
+tasks), the race's guard/rescue semantics, v7.7
+A–J, v7.8's Muse race participation, Settings UI,
+phone/Telegram, ears beyond item F, Ollama itself.
+
+TESTS: test_v79 pins A–H (429 advance on chat +
+agent + the field's post-tool chain; park skip +
+expiry; Ollama net save + log; Wonder-with-tools
+save; per-cause spoken lines; Ollama 500 logged as
+500; stall counting/respawn/under-cap; updater 5
+min + poke debounce + busy deferral + cap; male-first
+order, double-failure fallback line, female/English
+unchanged, warming writes + lookup preference,
+warming failure inert). Disclosed amendments:
+test_v72 S3 (cadence 30 min → 5 min, item G) and
+test_v67 D1 session 2 (edge is now attempted once
+before google under male-first — the v6.6 "tax" pin
+becomes the v7.9 rule). All provider traffic in
+tests is stubbed; the owner's real Groq rate limit
+and Ollama's real 500 cannot be reproduced on the
+build VM.

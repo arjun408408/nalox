@@ -154,6 +154,9 @@ PATCH_IF_ABSENT = {
     "wake_escalation_model": "small",
     "ears_antichain_require_stall": True,
     "ears_wake_segment_max_age_s": 10.0,
+    # v7.9 (item F): the slow-decode stall cap (see
+    # config.py) — added when absent; his value preserved.
+    "ears_wake_decode_stall_s": 20.0,
 }
 
 # Wake-model migrations. The v4.3 patch WROTE wake_model="small"

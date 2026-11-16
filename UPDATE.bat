@@ -15,7 +15,7 @@ title Nalox Update v6.6
 
 echo.
 echo  ==========================================
-echo    Nalox update v7.8
+echo    Nalox update v7.9
 echo  ==========================================
 echo.
 

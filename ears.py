@@ -1901,6 +1901,28 @@ WAKE_COOLDOWN_EPISODE_WINDOW_S = 600.0
 # ears_antichain_require_stall (default ON).
 WAKE_STALL_WINDOW_S = 60.0
 WAKE_EXTENDED_COOLDOWN_S = 60.0
+# v7.9 (item F): SLOW-DECODE STALLS. The anti-chain above
+# only ever sees TIMEOUTS, and its F2 gate respawns only
+# on ZERO completions — a lane that completes one decode
+# per ~66 s trips neither and jams for minutes (field
+# 2026-11-16 13:29 IST, v7.8 session: heartbeat dec=3
+# (t0 b0 s3 r0) with dmax=66.8s on a 'small' escalation;
+# worker-slow lines at 13:29:49, 13:31:17, 13:32:27,
+# 13:35:12 while heartbeats sat in state=listening — the
+# owner: "মাঝখানে থেমে যায়, অনেকক্ষণ Listening-এ আটকে
+# থাকে"). So a COMPLETED wake decode slower than the cap
+# (config ears_wake_decode_stall_s, default 20 s) is a
+# STALL EVENT, and WAKE_DECODE_STALLS_MAX of them inside
+# the window respawn the wake lane (tiny/base reload is
+# cheap) behind ONE logbook ERROR — the anti-chain's
+# discipline, and the worker restart budget in _spawn
+# (WORKER_MAX_RESTARTS per WORKER_RESTART_WINDOW) bounds
+# it exactly as it bounds the anti-chain. The segment
+# queue is the Ears consumer's, not the worker's, so a
+# respawn never drops a queued segment — the newest-first
+# pickup discipline stands untouched.
+WAKE_DECODE_STALLS_MAX = 2
+WAKE_DECODE_STALL_WINDOW_S = 600.0
 LOG_THROTTLE_WINDOW = 60.0
 # v6.14 steady-ears timings (lane coordination below):
 # module-level so the suites can shrink them; the values
@@ -4690,6 +4712,10 @@ class Ears:
                               "dec_base": 0, "dec_small": 0,
                               "dec_rej": 0, "dec_max_ms": 0}
         self._listen_stats_lock = threading.Lock()
+        # v7.9 (item F): monotonic stamps of this session's
+        # recent slow-decode stall events (see
+        # _note_wake_decode_stall).
+        self._wake_stall_events = []
         # Ears 2.0: a one-breath command remainder waiting for
         # nalox.py ("Nalox কেমন আছো" -> ("কেমন আছো", "bn")).
         self._pending_command = None
@@ -5404,6 +5430,61 @@ class Ears:
         except Exception:
             pass
 
+    def _note_wake_decode_stall(self, seconds):
+        """One wake decode that COMPLETED slowly (v7.9,
+        item F): past the cap (config
+        ears_wake_decode_stall_s, default 20 s) the decode
+        is a stall event — one log line, counted in the
+        sliding window; WAKE_DECODE_STALLS_MAX inside the
+        window respawn the wake lane (kill + spawn on the
+        lane client, the anti-chain's own move, bounded by
+        the same _spawn restart budget) behind ONE logbook
+        ERROR. Returns True only when this event triggered
+        the respawn. Under the cap nothing happens at all —
+        zero-stall behaviour is v7.8's, byte for byte. The
+        segment queue lives here in Ears, not in the
+        worker, so the respawn drops no queued segment.
+        Guarded throughout: stall bookkeeping must never
+        break listening."""
+        try:
+            try:
+                cap = float(self.cfg.get(
+                    "ears_wake_decode_stall_s", 20.0) or 20.0)
+            except Exception:
+                cap = 20.0
+            if seconds <= cap:
+                return False
+            log.info("[ears] wake decode took %.1fs — "
+                     "stall", seconds)
+            now = time.monotonic()
+            events = getattr(self, "_wake_stall_events",
+                             None)
+            if events is None:
+                events = self._wake_stall_events = []
+            events[:] = [
+                t for t in events
+                if now - t < WAKE_DECODE_STALL_WINDOW_S]
+            events.append(now)
+            if len(events) < WAKE_DECODE_STALLS_MAX:
+                return False
+            events[:] = []
+            client = self._wake_lane_client()
+            if client is None \
+                    or getattr(client, "_closed", False):
+                return False
+            _logbook_error("[ears] wake lane restarted "
+                           "(repeated slow decodes)")
+            log.error("[ears] wake lane restarted "
+                      "(repeated slow decodes)")
+            try:
+                client._kill()
+                client._spawn()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
     def _note_decode_stat(self, path, seconds):
         """One wake-decode outcome (v7.4, Defect 2): the
         path the segment took — "tiny" (first pass only),
@@ -5426,6 +5507,11 @@ class Ears:
                     self._listen_stats.get(key, 0) + 1
                 if ms > self._listen_stats.get("dec_max_ms", 0):
                     self._listen_stats["dec_max_ms"] = ms
+            # v7.9 (item F): every wake decode's duration
+            # funnels through here — a decode past the
+            # stall cap is a stall event (the anti-chain
+            # never sees it: the decode COMPLETED).
+            self._note_wake_decode_stall(seconds)
         except Exception:
             pass
 
