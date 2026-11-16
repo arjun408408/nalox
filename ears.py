@@ -1222,6 +1222,194 @@ _big_resolved = ""
 # tiny-only slot never touches it.
 _big_slot_name = BIG_COMMAND_MODEL
 
+# ------------------------------------------------------------- v8.2
+# DEGRADE, NEVER DIE. Field failure (v8.1's first boots,
+# 2026-11-16 18:50 + 19:00 IST, sync bb500b80 + the
+# owner's local log page): at boot the owner's PC is a
+# memory wall — Ollama resident with two models, Chrome,
+# the FreeLLMAPI app, BOTH lane workers spawning and the
+# forced big-model load all allocate in the same seconds.
+# CTranslate2/MKL answered with "RuntimeError: mkl_malloc:
+# failed to allocate memory" — caught for the BIG slot
+# (the latch served small), but a SMALL-model construction
+# that failed the same way was simply re-attempted by
+# every later job, each attempt re-entering the wall, and
+# the worker processes DIED around those attempts
+# ("[ears] worker restarted (crashed)" ×10 across the two
+# boots, the ears ending PAUSED, the boot gate reporting
+# "wake ears worker could not start"). The rules now:
+#   * An allocation-class load failure LATCHES for the
+#     worker's life (this dict): the construction is never
+#     re-attempted, so a job can never re-enter the wall.
+#   * The failed name is served by a RESIDENT smaller
+#     model when one exists (the degrade chain below;
+#     the command lane's "small" additionally earns ONE
+#     emergency attempt at "tiny"). The worker stays
+#     alive, keeps answering, and reports the degraded
+#     state to the parent (a "model-degraded" notice).
+#   * The big slot's ladder reports the failure kind
+#     "alloc" for the same wall, and the parent does NOT
+#     arm the 240 s background retry against it — a
+#     retry into the same wall is the loop this fixes.
+# Non-allocation failures keep their exact pre-v8.2
+# behaviour (they propagate as they always did).
+_load_failed = {}
+# Degraded reports waiting for the worker loop to post
+# them to the parent: (name, reason, served_by).
+_degraded_pending = []
+# Which resident model may serve a failed name (first
+# resident hit wins). "tiny" is the floor everywhere.
+_DEGRADE_CHAIN = {"tiny": ("base",),
+                  "base": ("tiny",),
+                  "small": ("tiny",),
+                  "medium": ("small", "tiny")}
+
+
+class _ModelUnavailable(Exception):
+    """A model whose construction latched as failed in
+    this worker (v8.2, allocation-class only). Raised by
+    _get_model in place of re-attempting the construction;
+    every existing caller already treats a _get_model
+    raise as "nothing heard" (preload skips it, the job
+    dispatch answers None)."""
+
+
+def _is_alloc_error(exc):
+    """True when an exception smells like a host-memory
+    allocation failure (v8.2): a MemoryError, or the
+    CTranslate2/MKL/CUDA wordings — "mkl_malloc: failed to
+    allocate memory" is the field shape. Deliberately
+    narrow: name rejections, downloads and disk errors
+    are NOT allocation failures and keep their semantics."""
+    if isinstance(exc, MemoryError):
+        return True
+    try:
+        text = ("%s: %s" % (type(exc).__name__, exc)).lower()
+    except Exception:
+        return False
+    return ("mkl_malloc" in text
+            or "failed to allocate" in text
+            or "cannot allocate" in text
+            or "out of memory" in text
+            or "memory allocation" in text)
+
+
+def _note_model_degraded(name, reason, served_by):
+    """Queue one degraded report for the parent (v8.2).
+    Worker-side; the worker loop drains the queue into
+    "model-degraded" notices after preload and after any
+    job that latched a failure. Deduped by (name,
+    served_by) — the parent hears the latch once, and
+    hears it once more if a resident fallback is found
+    serving the name later."""
+    try:
+        if any(p[0] == name and p[2] == served_by
+               for p in _degraded_pending):
+            return
+        _degraded_pending.append((name, reason, served_by))
+    except Exception:
+        pass
+
+
+def _drain_degraded_notices(res_q):
+    """Post every queued degraded report (v8.2)."""
+    global _degraded_pending
+    if res_q is None or not _degraded_pending:
+        return
+    pending, _degraded_pending = _degraded_pending, []
+    for _name, _reason, _served in pending:
+        try:
+            res_q.put((0, "notice",
+                       ("model-degraded", _PROCESS_LANE,
+                        _name, _reason, _served)))
+        except Exception:
+            pass
+
+
+def _degraded_alias_locked(name):
+    """(model, serving_name) for a latched name from the
+    models already resident in this worker, or
+    (None, ""). Caller holds _models_lock."""
+    for cand in _DEGRADE_CHAIN.get(name, ()):
+        if cand in _models:
+            return _models[cand], cand
+    return None, ""
+
+
+# ------------------------------------------------------------- v8.2
+# WORKER DEATH MUST LEAVE A REASON. The v8.1 field deaths
+# were undiagnosable: the parent's log said only
+# "crashed", the worker's own logging is disabled, its
+# stderr goes nowhere under the no-console launch, and
+# the fault log held no dump. So a REAL spawned worker
+# (capture_errors=True, set by _spawn_tx_process only —
+# the suites' in-thread runs are not captured) now:
+#   * truncates a per-lane error file at startup and
+#     writes a one-line header,
+#   * points faulthandler at it, so a native crash
+#     (segfault / abort — the deaths Python cannot catch)
+#     dumps its traceback THERE,
+#   * appends a "fatal: ..." line if its main ever
+#     raises out.
+# The parent reads the file's last real line when it
+# detects the death and logs it beside the exit code
+# ("[ears] <lane> worker exited (code N): <reason>").
+_WORKER_CAPTURE_FH = None
+
+
+def _worker_error_path(lane):
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "ears_worker_error_%s.txt" % (lane or "combined"))
+
+
+def _worker_capture_begin(lane):
+    global _WORKER_CAPTURE_FH
+    try:
+        path = _worker_error_path(lane)
+        fh = open(path, "w", encoding="utf-8")
+        fh.write("worker started lane=%s pid=%s\n"
+                 % (lane or "combined", os.getpid()))
+        fh.flush()
+        _WORKER_CAPTURE_FH = fh
+        try:
+            import faulthandler
+            faulthandler.enable(file=fh, all_threads=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _worker_capture_note(text):
+    try:
+        fh = _WORKER_CAPTURE_FH
+        if fh is not None:
+            fh.write(str(text)[:300] + "\n")
+            fh.flush()
+    except Exception:
+        pass
+
+
+def _read_worker_error(lane):
+    """The last real line of a lane's worker error file
+    (v8.2) — the parent's half of the death record. ""
+    when there is nothing to read."""
+    try:
+        with open(_worker_error_path(lane), "r",
+                  encoding="utf-8",
+                  errors="replace") as fh:
+            lines = [ln.strip()
+                     for ln in fh.read().splitlines()
+                     if ln.strip()]
+        for ln in reversed(lines):
+            if ln.startswith("worker started"):
+                continue
+            return ln[:200]
+    except Exception:
+        pass
+    return ""
+
 EARS_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "ears_state.json")
@@ -1344,6 +1532,11 @@ def _try_load_big(model_cls):
                             (download/disk/network); the
                             walk stops there, exactly the
                             v6.7/v6.8 latch-and-retry case.
+      kind "alloc"        — a rung hit the host-memory
+                            wall (v8.2); the walk stops,
+                            and the parent latches WITHOUT
+                            arming the timed retry (see
+                            the v8.2 note at _load_failed).
     Never raises."""
     # v6.14: a load START yields briefly to an in-flight
     # wake decode (command lane only; bounded — see
@@ -1362,6 +1555,8 @@ def _try_load_big(model_cls):
             if _is_invalid_size_error(exc):
                 last_exc = exc
                 continue
+            if _is_alloc_error(exc):
+                return None, None, "alloc", exc
             return None, None, "error", exc
     return None, None, "invalid-size", last_exc
 
@@ -1693,6 +1888,31 @@ def _construct_big(model_cls, name):
     return model
 
 
+def _emergency_tiny_locked(model_cls):
+    """ONE attempt at "tiny" as the command lane's
+    emergency resident (v8.2) — called when "small"
+    itself hit the allocation wall and nothing is
+    resident yet. Caller holds _models_lock. Returns
+    (model, "tiny") or (None, ""); an allocation failure
+    here latches "tiny" too (and queues its own degraded
+    report), so the emergency is never re-attempted."""
+    if "tiny" in _models:
+        return _models["tiny"], "tiny"
+    if "tiny" in _load_failed:
+        return None, ""
+    try:
+        model = _construct_model(model_cls, "tiny")
+    except Exception as exc:
+        if _is_alloc_error(exc):
+            _reason = (f"{type(exc).__name__}: "
+                       f"{exc}")[:140]
+            _load_failed["tiny"] = _reason
+            _note_model_degraded("tiny", _reason, "")
+        return None, ""
+    _models["tiny"] = model
+    return model, "tiny"
+
+
 def _get_model(name):
     global _big_model_down, _big_model_error
     global _big_model_fail_kind, _big_resolved
@@ -1716,8 +1936,53 @@ def _get_model(name):
             log.info("Loading whisper model %s (first run downloads it)...", name)
             if name != _big_slot_name \
                     or name not in _BIG_FAMILY:
-                _models[name] = _construct_model(
-                    WhisperModel, name)
+                # v8.2: a name that already hit the
+                # allocation wall in this worker is never
+                # constructed again — a resident smaller
+                # model serves it, or the job hears the
+                # latch (see the v8.2 note at _load_failed).
+                if name in _load_failed:
+                    _alias, _served = \
+                        _degraded_alias_locked(name)
+                    if _alias is not None:
+                        _models[name] = _alias
+                        _note_model_degraded(
+                            name, _load_failed[name],
+                            _served)
+                        return _alias
+                    raise _ModelUnavailable(
+                        name, _load_failed[name])
+                try:
+                    _models[name] = _construct_model(
+                        WhisperModel, name)
+                except Exception as exc:
+                    if not _is_alloc_error(exc):
+                        raise
+                    # The wall. Latch it, degrade to a
+                    # resident smaller model when one
+                    # exists (the command lane's "small"
+                    # earns one emergency "tiny" attempt),
+                    # report the degraded state, and stay
+                    # ALIVE — the pre-v8.2 code let the
+                    # raise escape per job and the worker
+                    # died around the retries.
+                    _reason = (f"{type(exc).__name__}: "
+                               f"{exc}")[:140]
+                    _load_failed[name] = _reason
+                    _alias, _served = \
+                        _degraded_alias_locked(name)
+                    if _alias is None \
+                            and name == COMMAND_FALLBACK_MODEL:
+                        _alias, _served = \
+                            _emergency_tiny_locked(
+                                WhisperModel)
+                    if _alias is not None:
+                        _models[name] = _alias
+                    _note_model_degraded(name, _reason,
+                                         _served)
+                    if _alias is None:
+                        raise _ModelUnavailable(name,
+                                                _reason)
             else:
                 # The big slot loads through the v6.10
                 # ladder: the first rung the installed
@@ -2004,7 +2269,36 @@ def _hb_echo_loop(hb_req_q, hb_res_q):
 
 def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                      cfg_snapshot, lane="combined",
-                     sync=None):
+                     sync=None, capture_errors=False):
+    """The worker entry point (spawn target).
+
+    v8.2: a thin capture wrapper around the real main —
+    with capture_errors (set ONLY by _spawn_tx_process,
+    i.e. a real spawned worker, never the suites'
+    in-thread runs) the worker first arms its per-lane
+    error file + faulthandler (see _worker_capture_begin)
+    and any exception that escapes the main is appended
+    there as a "fatal:" line before the process dies, so
+    the parent can log WHY it died. The signature's
+    positional shape is unchanged for existing callers."""
+    if capture_errors:
+        _worker_capture_begin(lane)
+        try:
+            return _tx_process_main_inner(
+                req_q, res_q, hb_req_q, hb_res_q,
+                cfg_snapshot, lane, sync)
+        except BaseException as exc:
+            _worker_capture_note(
+                "fatal: %s: %s" % (type(exc).__name__, exc))
+            raise
+    return _tx_process_main_inner(
+        req_q, res_q, hb_req_q, hb_res_q, cfg_snapshot,
+        lane, sync)
+
+
+def _tx_process_main_inner(req_q, res_q, hb_req_q,
+                           hb_res_q, cfg_snapshot,
+                           lane="combined", sync=None):
     """The transcription worker process's whole life.
 
     Runs in the CHILD (spawn: this module is re-imported
@@ -2078,6 +2372,12 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
     # v7.1 (F5): a clean load-start slate for this process.
     global _big_load_started
     _big_load_started = False
+    # v8.2: a clean degrade slate for this process (the
+    # allocation latches and pending reports are per
+    # worker — a respawned worker re-earns its own).
+    global _load_failed, _degraded_pending
+    _load_failed = {}
+    _degraded_pending = []
     _PROCESS_LANE = lane or "combined"
     _MODEL_CPU_THREADS = _lane_threads(_PROCESS_LANE, cfg)
     _BIG_DEVICE_CFG = str(cfg.get("ears_big_device")
@@ -2165,6 +2465,12 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
             _get_model(_name)
         except Exception:
             pass
+    # v8.2: any model that hit the allocation wall during
+    # preload has queued a degraded report — the parent
+    # hears it BEFORE the ready sentinel, so its log names
+    # the degraded state in the same breath as the lane
+    # coming up.
+    _drain_degraded_notices(res_q)
     # v6.8: WHICH phase the big-model latch set in — a
     # preload failure (usually the one-time download over a
     # just-started hotspot) earns ONE background retry; a
@@ -2411,6 +2717,10 @@ def _tx_process_main(req_q, res_q, hb_req_q, hb_res_q,
                             _big_slot_name)))
             except Exception:
                 pass
+        # v8.2: a job that latched an allocation failure
+        # queued its degraded report — it rides the same
+        # message train, after the result.
+        _drain_degraded_notices(res_q)
 
 
 # ------------------------------------------------------------- v6.14
@@ -2495,6 +2805,7 @@ def _spawn_tx_process(cfg, lane="combined"):
     proc = ctx.Process(target=_tx_process_main,
                        args=(req_q, res_q, hb_req_q, hb_res_q,
                              dict(cfg or {}), lane, sync),
+                       kwargs={"capture_errors": True},
                        daemon=True,
                        name="nalox-ears-%s" % (lane or "worker"))
     proc.start()
@@ -2781,6 +3092,13 @@ class _TxWorkerClient:
                         # The 240 s retry would hit the
                         # same wall; stay latched.
                         self._big_state = "latched"
+                    elif _kind == "alloc":
+                        # v8.2: the rung hit the host-
+                        # memory wall. A timed retry would
+                        # re-enter the same wall (the
+                        # v8.1 crash-loop's fuel); stay
+                        # latched on small for the session.
+                        self._big_state = "latched"
                     elif not self._big_retry_sent \
                             and self._big_state in ("none",
                                                     "armed"):
@@ -2862,6 +3180,36 @@ class _TxWorkerClient:
                         "[ears] big local model loading…")
                 except Exception:
                     pass
+            elif isinstance(result, tuple) and result \
+                    and result[0] == "model-degraded":
+                # v8.2: a worker's model hit the
+                # allocation wall and LATCHED — the worker
+                # is alive and degraded (a resident smaller
+                # model serves the name, or none could).
+                # One honest line per lane+model.
+                _dlane = result[1] if len(result) > 1 \
+                    else self.lane
+                _dname = result[2] if len(result) > 2 \
+                    else "?"
+                _dreason = result[3] if len(result) > 3 \
+                    else ""
+                _dserved = result[4] if len(result) > 4 \
+                    else ""
+                try:
+                    self._throttle.emit(
+                        "model-degraded-%s-%s"
+                        % (_dlane, _dname),
+                        "[ears] %s worker degraded: model "
+                        "%s could not load (%s) — %s"
+                        % (_dlane, _dname,
+                           _dreason or "allocation failure",
+                           ("serving %s instead" % _dserved)
+                           if _dserved else
+                           "no resident fallback — that "
+                           "model stays silent this "
+                           "session"))
+                except Exception:
+                    pass
             elif result == "big-model-ready":
                 self._big_state = "done"
                 try:
@@ -2929,8 +3277,32 @@ class _TxWorkerClient:
             # 'ready' / 'stale' / unwanted 'ack' — keep waiting.
 
     # ------------------------------------------------ outcomes
+    def _log_worker_exit(self):
+        """v8.2: a worker DIED — record its exit code and
+        the reason it left behind (its per-lane error
+        file; see _worker_capture_begin) BEFORE the
+        respawn replaces it. The v8.1 field deaths carried
+        no reason anywhere; this line is the difference.
+        Fully guarded — a fake proc in the suites has no
+        exitcode and no file, and reads as such."""
+        try:
+            proc = self._proc
+            code = getattr(proc, "exitcode", None) \
+                if proc is not None else None
+            why = _read_worker_error(self.lane)
+            log.error("[ears] %s worker exited (code %s): "
+                      "%s", self.lane,
+                      code if code is not None else "unknown",
+                      why or "no error record")
+        except Exception:
+            pass
+
     def _restart(self, reason):
         """Kill + respawn, with the log line throttled."""
+        if reason == "crashed":
+            # v8.2: the death gets its own line (exit code
+            # + captured reason) ahead of the restart line.
+            self._log_worker_exit()
         msg = {"timeout": "[ears] worker restarted (timeout)",
                "crashed": "[ears] worker restarted (crashed)",
                "unresponsive":
@@ -4419,6 +4791,12 @@ class _ChunkSource:
 # hidden, no pump is started at all.
 PREVIEW_INTERVAL_S = 0.7    # min seconds between preview decodes
 PREVIEW_DEADLINE_S = 2.5    # a preview decode never waits longer
+# v8.2: how long BOTH lane workers must be up (ready +
+# alive) before the headless live pump may start in a
+# boot that never completed its gate (the degraded path
+# of _live_pump_allowed — the gate-completed path needs
+# no settle at all).
+LIVE_PUMP_SETTLE_S = 5.0
 
 # ------------------------------------------------------------- v7.5
 # LIVE EARS (the owner's spec, 2026-11-16 09:21 IST): he
@@ -4507,7 +4885,7 @@ class _PreviewPump:
     transcriptions to the sink. All failures are silent —
     a preview that cannot run simply never appears."""
 
-    def __init__(self, sink, recorder=None):
+    def __init__(self, sink, recorder=None, on_finish=None):
         self._sink = sink
         # v8.1: an optional recorder hook — called with
         # every partial this pump DELIVERS, whether or not
@@ -4520,6 +4898,10 @@ class _PreviewPump:
         # not decoration); without one the v6.7 rule stands
         # (a hidden sink drops snapshots — no wasted work).
         self._recorder = recorder
+        # v8.2: an optional finish hook — called once from
+        # sink_finish (the pump's single exit) so the ears
+        # core's one-pump registry can release the slot.
+        self._on_finish = on_finish
         # v6.12: the preview worker is its own lane too
         # (tiny-only, cpu_threads from ears_preview_threads).
         self._client = _make_tx_client(
@@ -4641,6 +5023,14 @@ class _PreviewPump:
             return
         self._finished = True
         self._stop_evt.set()
+        # v8.2: release the core's one-pump slot first —
+        # a successor pump (the UI handover) may claim it
+        # while this one's client is still closing.
+        if self._on_finish is not None:
+            try:
+                self._on_finish(self)
+            except Exception:
+                pass
         try:
             self._client.close()
         except Exception:
@@ -4888,6 +5278,24 @@ class Ears:
         # "batch ears" / "" (nothing yet). nalox.py pushes
         # it to the Command Center's SYSTEM panel.
         self.last_input_source = ""
+        # v8.2: ONE preview-class process at most, ever —
+        # the registry every pump start goes through (see
+        # _new_pump). v8.1 could run the wake pump, a UI
+        # command preview and the headless pump as up to
+        # THREE tiny-model processes; at boot, beside both
+        # lane workers and the forced big-model load, that
+        # crowd is what hit the memory wall.
+        self._pump_lock = threading.Lock()
+        self._pump_live = None
+        self._pump_kind = ""
+        # v8.2: the headless live pump's boot gate (see
+        # _live_pump_allowed): nalox.py marks the boot
+        # gate's completion here; until then (or until
+        # both lanes are up + settled, the degraded-boot
+        # path) the headless pump stays down and the batch
+        # path covers the window, exactly as v8.0 did.
+        self._boot_gate_done = False
+        self._lanes_ready_since = 0.0
         # v7.0: the mic stream watchdog — ONE per Ears (=
         # per process), so its restart budget and its
         # once-per-session spoken alert span every
@@ -4971,6 +5379,128 @@ class Ears:
         with self._live_lock:
             return self._live_text
 
+    # ---------- v8.2: one pump, boot-gated ----------
+    def note_boot_gate_done(self):
+        """Mark the boot gate complete (v8.2): nalox.py
+        calls this when wait_gate returns (ready or
+        capped). From here the headless live pump may
+        start whenever a recording needs it. A boot whose
+        gate aborted (the pre-v7.11 fallback) never marks
+        this — its headless pump waits for the lanes
+        instead (see _live_pump_allowed)."""
+        self._boot_gate_done = True
+
+    def _lane_state(self, client):
+        """One lane client's readiness for the pump gate
+        (v8.2): "ready" (its worker posted the ready
+        sentinel and the process is alive), "down"
+        (anything else), or "stub" — a stand-in client
+        with no _ready attribute lives outside the boot
+        model entirely (the suites' fakes) and never
+        blocks the pump."""
+        if client is None:
+            return "down"
+        ready = getattr(client, "_ready", None)
+        if ready is None:
+            return "stub"
+        if not ready:
+            return "down"
+        proc = getattr(client, "_proc", None)
+        if proc is None:
+            return "down"
+        try:
+            return "ready" if proc.is_alive() else "down"
+        except Exception:
+            return "down"
+
+    def _live_pump_allowed(self):
+        """May the HEADLESS live pump start now? (v8.2)
+
+        The v8.1 field failure was a boot storm: lane
+        workers spawning, the big model loading, Ollama
+        and Chrome resident — and pump processes joining
+        the same seconds. So the headless pump starts
+        only when the boot is SETTLED:
+          * the boot gate completed (note_boot_gate_done),
+            or
+          * both ears lanes report ready AND have stayed
+            ready for LIVE_PUMP_SETTLE_S (the degraded /
+            gate-less boot's path — the gate normally
+            completes long before any recording).
+        Before either, there is simply no live source and
+        the batch path covers the window, exactly as
+        v8.0 did. Stub clients (no boot model) never
+        block. Never raises."""
+        try:
+            if self._boot_gate_done:
+                return True
+            wake = self._lane_state(self._wake_lane_client())
+            cmd = self._lane_state(
+                self._command_lane_client())
+            if "down" in (wake, cmd):
+                self._lanes_ready_since = 0.0
+                return False
+            if wake == "stub" and cmd == "stub":
+                return True
+            now = time.monotonic()
+            if self._lanes_ready_since <= 0.0:
+                self._lanes_ready_since = now
+                return False
+            return (now - self._lanes_ready_since
+                    >= LIVE_PUMP_SETTLE_S)
+        except Exception:
+            return True
+
+    def _pump_finished(self, pump):
+        """A pump's finish hook (v8.2): release the
+        one-pump slot when the REGISTERED pump finishes.
+        A stale pump (already handed over) must not clear
+        its successor's slot."""
+        with self._pump_lock:
+            if self._pump_live is pump:
+                self._pump_live = None
+                self._pump_kind = ""
+
+    def _new_pump(self, kind, sink, recorder=None):
+        """The ONLY way a preview pump is born (v8.2):
+        ONE preview-class process at most, ever.
+
+        kind is "wake" (the wake loop's partial stream),
+        "ui" (a visible command preview) or "headless"
+        (the tray-mode live pump). When a pump is already
+        live the new start STANDS DOWN (returns None) —
+        the live pump's recorder feeds the same core
+        accumulator, so the live text of record is not
+        lost — with ONE exception: a "ui" start over a
+        live "headless" pump takes the slot over (the
+        headless pump is finished first, outside the
+        lock): the visible surface the owner is looking
+        at wins, and the two never coexist. Returns the
+        started pump or None."""
+        old = None
+        with self._pump_lock:
+            live = self._pump_live
+            if live is not None \
+                    and not getattr(live, "_finished", True):
+                if kind == "ui" \
+                        and self._pump_kind == "headless":
+                    old = live
+                    self._pump_live = None
+                    self._pump_kind = ""
+                else:
+                    return None
+            pump = _PreviewPump(sink, recorder=recorder,
+                                on_finish=self._pump_finished)
+            self._pump_live = pump
+            self._pump_kind = kind
+        if old is not None:
+            try:
+                old.sink_finish("")
+            except Exception:
+                pass
+        pump.start()
+        return pump
+
     def _start_preview(self):
         """Open a preview session for one command recording
         (v6.7 F): only when a sink is wired AND the dashboard
@@ -4983,19 +5513,30 @@ class Ears:
         now, accumulated in the core alongside the
         display. (A hidden dashboard still starts no
         session here — the headless pump is
-        _start_live_pump's separate job.)"""
+        _start_live_pump's separate job.)
+
+        v8.2: the pump is claimed through the one-pump
+        registry (_new_pump) — if another pump already
+        owns the slot (and this is not the UI-over-headless
+        handover), no session starts; the live pump's
+        recorder still feeds the accumulator."""
         sink = getattr(self, "_preview_sink", None)
         if sink is None:
             return None
         try:
             if not sink.visible():
                 return None
-            sink.begin()
         except Exception:
             return None
+        pump = self._new_pump("ui", sink,
+                              recorder=self._live_note)
+        if pump is None:
+            return None
+        try:
+            sink.begin()
+        except Exception:
+            pass
         self._live_begin()
-        pump = _PreviewPump(sink, recorder=self._live_note)
-        pump.start()
         return pump
 
     def _start_live_pump(self):
@@ -5008,14 +5549,24 @@ class Ears:
         into a swallow-everything sink; only the recorder
         hook (the core accumulator) hears it. With NO
         sink wired at all there is no live stream to tap
-        and this returns None, exactly as before."""
+        and this returns None, exactly as before.
+
+        v8.2: two disciplines on top — the pump starts
+        only once the boot is settled (_live_pump_allowed:
+        gate complete, or both lanes up + a settle delay),
+        and only through the one-pump registry. During
+        the boot storm it simply does not exist; the
+        batch path covers that window as v8.0 did."""
         sink = getattr(self, "_preview_sink", None)
         if sink is None:
             return None
+        if not self._live_pump_allowed():
+            return None
+        pump = self._new_pump("headless", _LiveTextSink(),
+                              recorder=self._live_note)
+        if pump is None:
+            return None
         self._live_begin()
-        pump = _PreviewPump(_LiveTextSink(),
-                            recorder=self._live_note)
-        pump.start()
         return pump
 
     @staticmethod
@@ -6604,32 +7155,41 @@ class Ears:
                     # wake mid-speech (see the loop top).
                     if segmenter.active:
                         if not live_open:
-                            live_open = True
                             live_chunks = []
                             if wake_pump is None:
                                 wake_sink = _WakePartialSink(
                                     self)
-                                wake_pump = _PreviewPump(
-                                    wake_sink,
+                                # v8.2: claimed through
+                                # the one-pump registry —
+                                # if another pump owns the
+                                # slot this segment simply
+                                # gets no live stream (the
+                                # batch path owns it, as it
+                                # did pre-v7.5).
+                                wake_pump = self._new_pump(
+                                    "wake", wake_sink,
                                     recorder=self._live_note)
-                                wake_pump.start()
-                            # v8.1: a fresh segment opens a
-                            # fresh utterance in the live
-                            # accumulator.
-                            self._live_begin()
-                            wake_sink.begin_segment()
-                            live_seg_base_seq = \
-                                wake_pump.submit_seq()
-                            live_last_submit = 0.0
-                        live_chunks.append(chunk)
-                        if now - live_last_submit \
-                                >= PREVIEW_INTERVAL_S:
-                            live_last_submit = now
-                            try:
-                                wake_pump.submit(
-                                    np.concatenate(live_chunks))
-                            except Exception:
-                                pass
+                            if wake_pump is not None:
+                                live_open = True
+                                # v8.1: a fresh segment
+                                # opens a fresh utterance
+                                # in the live accumulator.
+                                self._live_begin()
+                                wake_sink.begin_segment()
+                                live_seg_base_seq = \
+                                    wake_pump.submit_seq()
+                                live_last_submit = 0.0
+                        if live_open:
+                            live_chunks.append(chunk)
+                            if now - live_last_submit \
+                                    >= PREVIEW_INTERVAL_S:
+                                live_last_submit = now
+                                try:
+                                    wake_pump.submit(
+                                        np.concatenate(
+                                            live_chunks))
+                                except Exception:
+                                    pass
                     continue
                 audio = np.concatenate(segment)
                 # v7.5: the segment closed — harvest its

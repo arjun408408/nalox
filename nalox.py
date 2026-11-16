@@ -578,6 +578,42 @@ def _boot_probe_telegram(holder):
 # Brain.probe_brain_answer_boot.
 BOOT_BIG_MODEL_WAIT_S = 150.0
 BOOT_EARS_TEST_WAIT_S = 170.0
+# v8.2: the forced big-model load waits for BOTH ears
+# lanes to be up before it starts (bounded by this
+# budget, inside the stage's own wait) — see
+# _boot_probe_big_model.
+BOOT_BIG_LANES_WAIT_S = 60.0
+
+
+def _boot_lanes_up(ears):
+    """Both transcription lanes up (v8.2): each lane's
+    worker has posted its ready sentinel and its process
+    is alive. A lane mid-respawn (not ready, or a dead /
+    absent process) reads as NOT up — the big-model load
+    waits for it. A stand-in client with no _ready
+    attribute (the suites' fakes) counts as up. Never
+    raises."""
+    try:
+        for client in (ears._wake_lane_client(),
+                       ears._command_lane_client()):
+            if client is None:
+                return False
+            ready = getattr(client, "_ready", None)
+            if ready is None:
+                continue
+            if not ready:
+                return False
+            proc = getattr(client, "_proc", None)
+            if proc is None:
+                return False
+            try:
+                if not proc.is_alive():
+                    return False
+            except Exception:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _boot_test_audio():
@@ -602,7 +638,7 @@ def _boot_test_audio():
         return None
 
 
-def _boot_probe_big_model(ears, cfg):
+def _boot_probe_big_model(ears, cfg, holder=None):
     """The Full-transcription-model stage (v8.0): tell
     the command lane to START the big-model load now —
     through the very decode job the lazy path submits on
@@ -614,9 +650,21 @@ def _boot_probe_big_model(ears, cfg):
     (latched, or armed = preload failed with a background
     retry pending) resolves ✗ with its reason — the
     small model still serves, and a failed stage never
-    blocks the gate."""
+    blocks the gate.
+
+    v8.2 STAGGER: the trigger job is submitted only once
+    BOTH ears lanes are up (ready + alive), polling
+    inside BOOT_BIG_LANES_WAIT_S of this stage's budget —
+    a lane mid-respawn keeps the load waiting. In v8.1
+    the load could start in the same seconds as the lane
+    workers' own spawns/preloads, and the combined
+    allocation burst hit the PC's memory wall
+    (mkl_malloc). The gate's semantics are unchanged:
+    the stage still resolves on the lane state exactly
+    as before, and the wait is bounded well inside it."""
     try:
         import ears as _ears_mod
+        _stage_t0 = time.monotonic()
         client = ears._command_lane_client()
         if client is None:
             return ("fail", "no command ears")
@@ -628,6 +676,12 @@ def _boot_probe_big_model(ears, cfg):
         if model in ("tiny", "base", "small"):
             return ("ok", f"command model {model} — no "
                           f"big model to load")
+        _lanes_deadline = (time.monotonic()
+                           + BOOT_BIG_LANES_WAIT_S)
+        while time.monotonic() < _lanes_deadline:
+            if _boot_lanes_up(ears):
+                break
+            time.sleep(0.5)
         audio = _boot_test_audio()
         if audio is None:
             return ("warn", "could not build the test "
@@ -637,7 +691,11 @@ def _boot_probe_big_model(ears, cfg):
                            _ears_mod.COMMAND_TX_DEADLINE)
         except Exception:
             pass
-        deadline = time.monotonic() + BOOT_BIG_MODEL_WAIT_S
+        # v8.2: the poll budget runs from the STAGE's
+        # start, so the lanes wait above spends the same
+        # budget — the stage still resolves well inside
+        # its 175 s deadline.
+        deadline = _stage_t0 + BOOT_BIG_MODEL_WAIT_S
         while time.monotonic() < deadline:
             state = getattr(client, "_big_state", None)
             if state == "done":
@@ -1764,7 +1822,8 @@ def main():
         # exactly like every v7.11 stage.
         _boot_probe.start_stage(
             "bigmodel",
-            lambda: _boot_probe_big_model(ears, cfg),
+            lambda: _boot_probe_big_model(ears, cfg,
+                                          _boot_ctx),
             timeout_s=175.0)
         _boot_probe.start_stage(
             "earstest",
@@ -2301,6 +2360,17 @@ def main():
             # gate capped with stages still warming, a
             # daemon re-logs the block as they resolve.
             _log_boot_probe_detail(_boot_probe)
+            # v8.2: the gate completed (ready or capped) —
+            # the boot storm is over, so the headless live
+            # pump may start from here. An ABORTED gate
+            # (the pre-v7.11 fallback boot) does NOT mark
+            # this: there the pump waits for both lanes to
+            # be up + settled (ears._live_pump_allowed).
+            try:
+                if _gate in ("ready", "capped"):
+                    ears.note_boot_gate_done()
+            except Exception:
+                pass
             try:
                 if any(s.get("capped")
                        and not s.get("resolved")

@@ -2124,3 +2124,146 @@ new. No production-behaviour pin was weakened.
 Battery: 36 suites, 3,611 checks, 0 failures. The
 real-audio standalone Bengali proof passes (WOKE:
 True, COMMAND: 'open chrome').
+
+## v8.2 — "কানের crash বন্ধ, live caption ঠিক আছে" (2026-11-16)
+
+A HOTFIX for a v8.1 field regression. The live-text
+architecture (v8.1, the owner's design order) is
+UNCHANGED — this release is resource discipline around
+it, plus diagnosability. Nothing about the brain, the
+providers/order, the live-text decision logic, the
+bootprobe stages/cap, or the voice chain changed.
+
+FIELD EVIDENCE (his PC, v8.1, sync bb500b80 + his local
+log page for the 19:00 boot):
+- Boot 1 (18:50:42): "[ears] big local model
+  unavailable (RuntimeError: mkl_malloc: failed to
+  allocate memory) — using small for now" and the GPU
+  fail-over line with the same reason. From 18:51:10:
+  "[ears] worker restarted (crashed)" ×10 across both
+  v8.1 boots, "restarting too often — pausing", the
+  ears ending PAUSED (heartbeat state=idle). ZERO such
+  crashes in the v7.6–v8.0 sessions in the same log.
+- Boot 2 (19:00:19): the gate DID complete at 19:02:50
+  (10/14 ok; FAILED: Wake-word ears "wake ears worker
+  could not start", Command ears likewise, Ears running
+  test; warn: Full transcription model still loading).
+  The crash loop CONTINUED after the gate (19:03:04+).
+  The first crashes are timestamped the same second as
+  process start — before any big-model load could be
+  the trigger at that boot.
+- His PC: Ryzen 7 1700, 16 GB RAM, 8 GB VRAM; Ollama
+  resident (qwen3-vl:8b + qwen3:8b), Chrome and the
+  FreeLLMAPI app also run. Memory is contended at boot.
+
+DIAGNOSIS (what the code shows): v8.1 added a THIRD
+preview-class process (the headless live-text pump)
+plus recorder-driven decoding, in the same boot window
+where the wake worker, the command worker, a UI
+preview pump and the FORCED big-model load all
+allocate at once. Two failure shapes converge on the
+same loop: (1) Python-level — a SMALL model's
+construction hitting the allocation wall was NOT
+latched (only the big slot had a latch), so every
+later job re-attempted the construction into the same
+wall; (2) process-level — workers died around those
+attempts with NO reason recorded anywhere (worker
+logging disabled, stderr nowhere, no fault dump). The
+v8.2 fixes, all in ears.py unless noted:
+
+1. ONE preview-class process at most, ever
+   (Ears._new_pump registry). Every pump birth — the
+   wake loop's, _start_preview's, _start_live_pump's —
+   goes through it. A start while a pump is live stands
+   down (the live pump's recorder feeds the same core
+   accumulator, so the live text of record is kept);
+   a UI start over a live HEADLESS pump takes the slot
+   (the headless pump finishes first). _PreviewPump
+   gained an on_finish hook; sink_finish (its single
+   exit) releases the slot.
+2. The headless pump is boot-gated
+   (Ears._live_pump_allowed): it starts only after the
+   boot gate completes (nalox.py calls
+   ears.note_boot_gate_done() when wait_gate returns
+   ready/capped — an aborted gate does NOT mark it) or,
+   in a gate-less/degraded boot, after both lane
+   clients report ready AND LIVE_PUMP_SETTLE_S (5 s)
+   of settle. Before that there is no live source and
+   the batch path covers the window, as v8.0 did.
+   Stub clients (no _ready attribute — the suites'
+   fakes) never block.
+3. The forced big-model load is staggered
+   (nalox._boot_probe_big_model): its trigger job is
+   submitted only once BOTH lanes are up (ready +
+   alive, _boot_lanes_up), polling inside
+   BOOT_BIG_LANES_WAIT_S (60 s) of the stage's budget;
+   a lane mid-respawn keeps the load waiting. The
+   stage's poll budget now runs from the stage's start,
+   so the stage still resolves inside its deadline.
+   Gate semantics (stages, cap) untouched.
+4. Allocation failure degrades, never dies
+   (_is_alloc_error / _load_failed / _ModelUnavailable):
+   a model construction that fails with an
+   allocation-class error (MemoryError, mkl_malloc,
+   "failed to allocate", "out of memory", …) LATCHES
+   for the worker's life — never re-attempted. The
+   failed name is served by a resident smaller model
+   via _DEGRADE_CHAIN (tiny↔base, small→tiny, medium→
+   small/tiny); the command lane's "small" additionally
+   earns ONE emergency "tiny" construction
+   (_emergency_tiny_locked). The worker posts a
+   "model-degraded" notice (after preload, and after
+   any job that latches); the parent logs ONE line per
+   lane+model: "[ears] <lane> worker degraded: model
+   <name> could not load (<reason>) — serving <x>
+   instead / no resident fallback …". Non-allocation
+   failures propagate exactly as before. The big
+   slot's ladder now returns kind "alloc" for the same
+   wall, and the parent latches WITHOUT arming the
+   240 s retry (a retry into the same wall was the
+   loop's fuel); other kinds keep v6.8/v6.10 semantics.
+5. A worker death leaves a reason
+   (_worker_capture_begin / _read_worker_error /
+   _TxWorkerClient._log_worker_exit): a REAL spawned
+   worker (capture_errors=True, set only by
+   _spawn_tx_process; _tx_process_main wraps the
+   renamed _tx_process_main_inner) truncates a per-lane
+   file ears_worker_error_<lane>.txt at startup, points
+   faulthandler at it (a native crash dumps there), and
+   appends "fatal: …" if its main raises out. When the
+   parent detects a death (the "crashed" restart path)
+   it first logs "[ears] <lane> worker exited (code
+   N): <last error line>" — exit code from the process
+   object, reason from the file. These error files are
+   runtime state on the owner's PC; they are never in
+   the packs (verified by extraction).
+
+HONEST LIMITS: the crash was reproduced ONLY in the
+field. On this VM the memory wall is SIMULATED (a fake
+WhisperModel raising the exact field RuntimeError) —
+the degrade/latch/notice behaviour and every ordering
+invariant are pinned against that simulation in
+test_v82, and the real-audio proof still passes, but
+no VM run can prove the owner's PC will not hit a
+native abort path that Python cannot catch; if it
+does, item 5 means the next sync finally carries the
+reason. edge-tts and the worker-slow pauses are
+untouched (out of scope, as in v8.1).
+
+INTENTIONAL TEST CHANGES (v8.2): (1) the needle sweep
+8.1 → 8.2 in the suites (version pin + UPDATE.bat
+echo + banner equality — the historical v8.1 banner
+equality in test_v81 stays, reading dashboard's table
+by key). (2) test_v82 is new (the regression pins:
+allocation degrade at unit + in-thread-worker level,
+headless-pump boot gating, the one-pump invariant
+across orderings, big-model trigger ordering, the
+worker-exit log line, the post-gate live path end to
+end). No production-behaviour pin was weakened.
+(3) Five UPDATE-README scan windows grew because the
+prepended v8.2 block pushed a historical block past
+its window: test_v69 [:25000]→[:27000]
+("logs/latest-log.txt"), test_v710 [:4500]→[:6000]
+("নিজে নিজে চলবে"), test_v79 [:6500]→[:8000]
+("নিজে নিজেই এসে যাবে"), test_v78 [:4000]→[:5500]
+("Muse Wonder") and [:7000]→[:9500] ("PAID API").
