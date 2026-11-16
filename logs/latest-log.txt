@@ -1,73 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-16 21:10:54 (laptop local time)
+Synced: 2026-11-16 21:14:00 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-13:20:36 [SYSTEM] [logsync] log sent
-13:20:39 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:20:39 [SYSTEM] [timing] wake→record 8.5s, transcribe 3.8s, brain 7.2s, speak 9.5s
-13:20:39 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:20:50 [SYSTEM] [ears] heard via cloud:groq
-13:20:50 [MIC] [heard] the
-13:20:50 [YOU] [mic] heard: the
-13:20:51 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
-13:20:57 [BRAIN] [brain] reply translated to Bengali (rescue)
-13:20:57 [NALOX] NALOX: আমি এখানে
-13:20:59 [VOICE] via google-tts: আমি এখানে
-13:20:59 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.5s, brain 6.4s, speak 2.7s
-13:20:59 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:21:10 [SYSTEM] [ears] heard via cloud:groq
-13:21:10 [MIC] [heard] fertilisering
-13:21:10 [YOU] [mic] heard: fertilisering
-13:21:11 [BRAIN] [brain] chat race: Groq answered first (1094 ms)
-13:21:11 [NALOX] NALOX: আপনি কি সত্যিই "ফার্টিলাইজেশন" (নিষেচক ব্যবহার) সম্পর্কে জানতে চাইছেন, নাকি অন্য কিছু? সবিস্তারে জানতে চাইলে বলুন।
-13:21:21 [VOICE] via google-tts: আপনি কি সত্যিই "ফার্টিলাইজেশন" (নিষেচক ব্যবহার) সম্পর্কে জানতে চাইছেন, নাকি অন্য কিছু?
-13:21:24 [VOICE] via google-tts: সবিস্তারে জানতে চাইলে বলুন।
-13:21:25 [SYSTEM] [timing] wake→record 8.6s, transcribe 2.5s, brain 1.1s, speak 13.8s
-13:21:25 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:21:31 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-13:21:36 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:21:36 [SYSTEM] [ears] heard via cloud:groq
-13:21:36 [MIC] [heard] আমিক জান্ত চায়ে নি তুমি নোটপেট ওপেন করে আমার নামে ভালা জনিশ লাখো
-13:21:36 [YOU] [mic] heard: আমিক জান্ত চায়ে নি তুমি নোটপেট ওপেন করে আমার নামে ভালা জনিশ লাখো
-13:21:44 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:21:53 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:21:53 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.6s, brain 7.4s, speak 9.5s
-13:21:53 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:22:05 [SYSTEM] [ears] heard via cloud:groq
-13:22:05 [MIC] [heard] গিয়ে গ্রোখ কিটা সেক করো
-13:22:05 [YOU] [mic] heard: গিয়ে গ্রোখ কিটা সেক করো
-13:22:06 [BRAIN] [brain] chat race: Groq answered first (1172 ms)
-13:22:06 [NALOX] NALOX: আপনি কি "গার্ডেনিং" বা "গরম খাবারের" বিষয়ে জানতে চাইছেন? দয়া করে স্পষ্ট করুন, আমি পারি যা উত্তর দেব।
-13:22:13 [VOICE] via google-tts: আপনি কি "গার্ডেনিং" বা "গরম খাবারের" বিষয়ে জানতে চাইছেন?
-13:22:18 [VOICE] via google-tts: দয়া করে স্পষ্ট করুন, আমি পারি যা উত্তর দেব।
-13:22:18 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.3s, brain 1.2s, speak 12.6s
-13:22:18 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:22:30 [SYSTEM] [ears] heard via cloud:groq
-13:22:30 [MIC] [heard] the
-13:22:30 [YOU] [mic] heard: the
-13:22:31 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-13:22:31 [BRAIN] [brain] chat race: Groq answered first (1266 ms)
-13:22:31 [NALOX] NALOX: আমি
-13:22:33 [VOICE] via google-tts: আমি
-13:22:33 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.7s, brain 1.3s, speak 1.8s
-13:22:33 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:22:44 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:22:44 [SYSTEM] [ears] heard via cloud:groq
-13:22:44 [MIC] [heard] এক কাছ কো তুমে আমাদ জুনে এটা ভালো সংগ পেলে করো
-13:22:44 [YOU] [mic] heard: এক কাছ কো তুমে আমাদ জুনে এটা ভালো সংগ পেলে করো
-13:22:52 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:23:01 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:23:01 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.8s, brain 7.5s, speak 9.3s
-13:23:01 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:23:12 [SYSTEM] [ears] heard via cloud:groq
-13:23:12 [MIC] [heard] femalemann
-13:23:12 [YOU] [mic] heard: femalemann
-13:23:13 [BRAIN] [brain] chat race: Groq answered first (1016 ms)
-13:23:13 [NALOX] NALOX: আপ
-13:23:15 [VOICE] via google-tts: আপ
 13:23:16 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.5s, brain 1.0s, speak 2.2s
 13:23:16 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
 13:23:27 [SYSTEM] [ears] heard via cloud:groq
@@ -1485,6 +1422,30 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 21:10:03 [SYSTEM] [ready] Type, tap 🎙, or press ctrl+alt+space and speak — Telegram works too
 21:10:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=followup
 21:10:50 [SYSTEM] [dashboard] Command Center closed.
+21:10:57 [SYSTEM] [logsync] log sent
+21:11:13 [SYSTEM] [input] dictation (cloud:groq): কে করো, আমন জামে বলবা তাই হবে, মানে এই তকোতে সেতাই দোকে আজগে শোডাত দাম কোতো আছে, আমন এই নেফ্টাকে তাই করো আরে ফ্রির মাল, ফ্রির মাল তো, ফ্রির বেন তাই যাও এটামি বেন আখন এই বেন যোসকো যেটা ফৃরি তো হয়, এজনে পুর বেডি ভতাই তে সমা করিটে চলর, কি চলারপটই করিটি? কাসাবে যোহেলেন সৡেন পদ্যারে, চলান ভ্রবে, কানা করি তকন্ত নঁহান বাজাও আপনা করো নাকা লাইট আফ করে তাব পুলো আপাই যা করে আমা আমা এণা দে আমা আমা এণা দে এনা দে আমে এশল কি বালে বলো তা? কেমন আছো, কেমন আছো, কেমন আছো
+21:11:13 [SYSTEM] [sys] boot warm-up gate opened (first input)
+21:11:13 [VOICE] [voice] male voice cache warmed
+21:11:14 [YOU] [mic] heard: কে করো, আমন জামে বলবা তাই হবে, মানে এই তকোতে সেতাই দোকে আজগে শোডাত দাম কোতো আছে, আমন এই নেফ্টাকে তাই করো আরে ফ্রির মাল, ফ্রির মাল তো, ফ্রির বেন তাই যাও এটামি বেন আখন এই বেন যোসকো যেটা ফৃরি তো হয়, এজনে পুর বেডি ভতাই তে সমা করিটে চলর, কি চলারপটই করিটি? কাসাবে যোহেলেন সৡেন পদ্যারে, চলান ভ্রবে, কানা করি তকন্ত নঁহান বাজাও আপনা করো নাকা লাইট আফ করে তাব পুলো আপাই যা করে আমা আমা এণা দে আমা আমা এণা দে এনা দে আমে এশল কি বালে বলো তা? কেমন আছো, কেমন আছো, কেমন আছো
+21:11:14 [NALOX] NALOX: ভালো আছি, sir। তুমি কেমন আছো?
+21:11:21 [ERROR] Voice path edge-tts failed:
+21:11:21 [ERROR] [voice] edge-tts unavailable — skipping it for a while
+21:11:24 [VOICE] via google-tts: ভালো আছি, sir।
+21:11:24 [VOICE] [voice] male voice unavailable — female fallback for this reply
+21:11:26 [VOICE] via google-tts: তুমি কেমন আছো?
+21:11:26 [SYSTEM] [timing] record 60.1s, transcribe 10.0s, brain 0.0s, speak 12.6s
+21:11:26 [MIC] [mic] connected (system default microphone)
+21:11:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=followup
+21:12:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=transcribing
+21:12:36 [SYSTEM] [input] dictation (cloud:groq): কান্নে কারে কি হলো দুযান, এক স্বালে কি সেলে কেছে করান জায়নি কোনো দিন হয় গালে কোনো মা করে করে কান্নে কারে কি সে কোন কিছু কিনতা এতলে, কিছু কিনতা লো কানতা জাই তাটে মনে কিযা লিকুইট পবিদায়, লিকুইট মনে হবে না তাই তাই সবুভিদায় না, এমি এমি ওটে ডেবিটিকা এই ক্যুট্টা কেমন আছে না আজো আজো ট্রেনটা সান্নে জাবে কি বলাত হোই দেশ তেক আস্ছে না, হোই টাকাটা আসা আছে না, বলছে যা না পাবে না তুমি, এজন নে হোই টাকাটা নিযাছে না, কেনা পাবে না
+21:12:36 [YOU] [mic] heard: কান্নে কারে কি হলো দুযান, এক স্বালে কি সেলে কেছে করান জায়নি কোনো দিন হয় গালে কোনো মা করে করে কান্নে কারে কি সে কোন কিছু কিনতা এতলে, কিছু কিনতা লো কানতা জাই তাটে মনে কিযা লিকুইট পবিদায়, লিকুইট মনে হবে না তাই তাই সবুভিদায় না, এমি এমি ওটে ডেবিটিকা এই ক্যুট্টা কেমন আছে না আজো আজো ট্রেনটা সান্নে জাবে কি বলাত হোই দেশ তেক আস্ছে না, হোই টাকাটা আসা আছে না, বলছে যা না পাবে না তুমি, এজন নে হোই টাকাটা নিযাছে না, কেনা পাবে না
+21:12:36 [NALOX] NALOX: ঠিক আছে, sir। বিদায়!
+21:12:39 [VOICE] via google-tts: ঠিক আছে, sir।
+21:12:39 [VOICE] [voice] male voice unavailable — female fallback for this reply
+21:12:40 [VOICE] via google-tts: বিদায়!
+21:12:40 [SYSTEM] [timing] record 60.2s, transcribe 9.6s, brain 0.0s, speak 4.5s
+21:12:40 [SYSTEM] [dashboard] close: Command Center was not open.
+21:13:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
