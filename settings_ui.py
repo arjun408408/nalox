@@ -709,6 +709,36 @@ def _build(tk, parent, cfg):
              bg=CARD, fg=MUTED, font=("Segoe UI", 8),
              wraplength=430, justify="left").pack(
                  anchor="w", padx=10)
+    # v7.8: Muse Wonder (Meta Model API) — the owner's
+    # paid Meta brain (his order, 2026-11-16). The key
+    # field lives here with the Brain controls and is
+    # wired exactly like the Connections key fields:
+    # saved into config.json on Save, never logged. With
+    # a key, Muse Wonder joins the chat race and the
+    # Brain Test below; without one it is never called.
+    tk.Label(fr, text="Muse Wonder (Meta Model API) — "
+                      "paid brain, chat race-এ যোগ দেয়",
+             bg=CARD, fg=FG,
+             font=("Segoe UI", 9, "bold")).pack(
+                 anchor="w", padx=10, pady=(8, 0))
+    muse_key = field(fr, "API key", cfg.get("muse_api_key"),
+                     show="*")
+    tk.Label(fr, text="Key পাবে: dev.meta.ai → API keys "
+                      "(আগে payment method যোগ করতে হয় — "
+                      "এটা PAID API)। Key শুধু এই laptop-এই "
+                      "থাকবে, chat-এ কখনো পাঠিও না।",
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8),
+             wraplength=430, justify="left").pack(
+                 anchor="w", padx=10)
+    muse_model = field(fr, "Model",
+                       cfg.get("muse_model",
+                               "muse-wonder-1.0"))
+
+    def collect_brain():
+        return {"muse_api_key": muse_key.get().strip(),
+                "muse_model": muse_model.get().strip()
+                or "muse-wonder-1.0"}
+
     bench_status = tk.StringVar(value="")
     bench_lines = tk.StringVar(value="")
     row = tk.Frame(fr, bg=CARD)
@@ -1245,6 +1275,7 @@ def _build(tk, parent, cfg):
     def collect_all():
         updates = collect_voice()
         updates.update(collect_connections())
+        updates.update(collect_brain())
         updates.update(collect_phone())
         updates.update(collect_updates())
         updates.update({

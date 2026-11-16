@@ -28,6 +28,11 @@ Candidates:
     never silent.
   * Ollama — the offline brain's models, when the local
     server answers; otherwise visible skipped rows.
+  * Muse Wonder (v7.8) — the owner's paid Meta brain,
+    measured through the Meta Model API ONLY when its
+    key is configured (it also races live chat — see
+    brain.py); with no key the row reports
+    "skipped — no Muse API key", never a call.
 
 Bounds: each candidate gets CANDIDATE_BUDGET_S (15 s)
 across all its prompts, each single call is capped by
@@ -108,6 +113,11 @@ def _production_system(cfg):
 
 GROQ_BASE = "https://api.groq.com/openai/v1"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+# v7.8: the Meta Model API (OpenAI-compatible) — Muse
+# Wonder's bench transport rides the same streamed call
+# as Groq/OpenRouter.
+MUSE_BASE = "https://api.meta.ai/v1"
+MUSE_DEFAULT_MODEL = "muse-wonder-1.0"
 GLM_MODELS = ("z-ai/glm-5.2", "z-ai/glm-5.2:free")
 
 CANDIDATE_BUDGET_S = 15.0    # per candidate, all prompts
@@ -239,10 +249,10 @@ def _discovered_groq_rows(cfg, configured):
 
 def collect_candidates(cfg):
     """[(provider_label, kind, model, note)] — kind is
-    "groq" / "openrouter" / "ollama"; note is a skip
-    reason for rows that must be REPORTED without a call
-    (no OpenRouter key / Ollama not answering), else "".
-    Never raises."""
+    "groq" / "openrouter" / "ollama" / "muse"; note is a
+    skip reason for rows that must be REPORTED without a
+    call (no OpenRouter key / Ollama not answering / no
+    Muse API key), else "". Never raises."""
     rows = []
     try:
         _groq_configured = _cfg_candidates(cfg, "groq_model",
@@ -280,6 +290,22 @@ def collect_candidates(cfg):
             for glm in GLM_MODELS:
                 rows.append(("OpenRouter", "openrouter", glm,
                              "no OpenRouter key"))
+    except Exception:
+        pass
+    try:
+        # v7.8: Muse Wonder — one candidate (the
+        # configured model), called ONLY with its key
+        # configured; without one the row reports the gap
+        # and api.meta.ai is never touched.
+        muse_model = str(cfg.get("muse_model")
+                         or MUSE_DEFAULT_MODEL).strip() \
+            or MUSE_DEFAULT_MODEL
+        if str(cfg.get("muse_api_key") or "").strip():
+            rows.append(("Muse Wonder", "muse", muse_model,
+                         ""))
+        else:
+            rows.append(("Muse Wonder", "muse", muse_model,
+                         "no Muse API key"))
     except Exception:
         pass
     try:
@@ -483,13 +509,15 @@ def _run_candidate(cfg, kind, model, test_deadline):
     # collect_candidates' own skip notes (the field's 401
     # noise came from rows that reached the transport with
     # an empty key).
-    if kind in ("groq", "openrouter"):
-        _field = ("groq_api_key" if kind == "groq"
-                  else "openrouter_api_key")
-        _label = "Groq" if kind == "groq" else "OpenRouter"
+    if kind in ("groq", "openrouter", "muse"):
+        _field = {"groq": "groq_api_key",
+                  "openrouter": "openrouter_api_key",
+                  "muse": "muse_api_key"}[kind]
+        _reason = {"groq": "no Groq key",
+                   "openrouter": "no OpenRouter key",
+                   "muse": "no Muse API key"}[kind]
         if not str(cfg.get(_field) or "").strip():
-            return _skipped_row(kind, model,
-                                f"no {_label} key")
+            return _skipped_row(kind, model, _reason)
     if kind == "groq":
         key = str(cfg.get("groq_api_key") or "").strip()
 
@@ -502,6 +530,12 @@ def _run_candidate(cfg, kind, model, test_deadline):
         def call(prompt, budget):
             return _call_openai_compatible(
                 OPENROUTER_BASE, key, model, prompt, budget)
+    elif kind == "muse":
+        key = str(cfg.get("muse_api_key") or "").strip()
+
+        def call(prompt, budget):
+            return _call_openai_compatible(
+                MUSE_BASE, key, model, prompt, budget)
     else:
         url = str(cfg.get("ollama_url",
                           "http://localhost:11434")).rstrip("/")
@@ -580,8 +614,10 @@ def _run_candidate(cfg, kind, model, test_deadline):
 def format_row(row):
     """One compact [brainbench] line for a result row."""
     label = {"groq": "Groq", "openrouter": "OpenRouter",
-             "ollama": "Ollama"}.get(row.get("provider"),
-                                     row.get("provider", "?"))
+             "ollama": "Ollama",
+             "muse": "Muse Wonder"}.get(row.get("provider"),
+                                        row.get("provider",
+                                                "?"))
     head = f"[brainbench] {label} · {row.get('model', '?')} — "
     status = row.get("status", "?")
     if status.startswith("skipped"):

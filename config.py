@@ -238,6 +238,18 @@ DEFAULTS = {
     # v6.5: OpenRouter candidates — empty by default (his one
     # configured model is the whole list until he adds more).
     "openrouter_models": [],
+    # --- v7.8: MUSE WONDER brain (Meta Model API) — the
+    # owner's explicit choice (2026-11-16 13:08 IST) to add
+    # Meta's frontier model as a PAID provider. OpenAI-
+    # compatible API at https://api.meta.ai/v1; the key is
+    # created at dev.meta.ai (a payment method is required
+    # there — his side). Empty key = the provider does not
+    # exist for Nalox: it joins NOTHING and api.meta.ai is
+    # never called. With a key it joins the CHAT RACE only
+    # (v7.6 item E's field) — the agent/action path stays
+    # Groq + Ollama (see brain.py). ---
+    "muse_api_key": "",
+    "muse_model": "muse-wonder-1.0",
     # --- v5.0: FREELLMAPI brain — Arjun's LOCAL unified router
     # app (FreeLLMAPI, http://127.0.0.1:31415/v1): ONE local
     # "unified key" in front of a ~78-model chain that AUTO-

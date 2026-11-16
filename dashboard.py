@@ -521,8 +521,9 @@ _NOTICE_HEADLINES = {
             "greeting সঙ্গে সঙ্গে বলবে"),
     "7.6": "উত্তর এবার বাংলাতেই আসবে",
     "7.7": "শোনার লাইন এবার ডুববে না",
+    "7.8": "Muse Wonder যোগ হলো",
 }
-_NOTICE_HEADLINE_NOW = "শোনার লাইন এবার ডুববে না"
+_NOTICE_HEADLINE_NOW = "Muse Wonder যোগ হলো"
 
 
 def update_notice_text(version):

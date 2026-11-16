@@ -1040,3 +1040,80 @@ NOT in v7.7: brain providers/race composition (v7.6's
 field proof still owed — undisturbed), TTS engine
 order, phone/Telegram behaviour, wake matcher
 thresholds.
+
+## v7.8 — "Muse Wonder যোগ হলো" (2026-11-16)
+
+The owner's explicit order (2026-11-16 13:08 IST): add
+Muse Wonder — Meta's frontier model, a PAID API — to
+Nalox as a brain provider. (He was told on 2026-11-16
+08:02 IST that Muse Spark itself has no API; Muse
+Wonder is the Meta Model API's offered model, and he
+chose it with the price known.)
+
+FACTS (verified 2026-11-16 from ~/docs/muse.md,
+dev.meta.ai docs and two independent write-ups): the
+Meta Model API is OpenAI-compatible — base URL
+https://api.meta.ai/v1, Chat Completions at
+/chat/completions, Authorization: Bearer
+<MODEL_API_KEY>, tool calling supported on that
+surface. Model id "muse-wonder-1.0" (preview, 1M-token
+context). Price $4.00/M input, $20.00/M output,
+$0.20/M cached input. Keys are created at dev.meta.ai;
+a payment method is required there FIRST — that is the
+owner's side, never the program's.
+
+WHAT SHIPPED:
+- Config: muse_api_key ("" default) + muse_model
+  ("muse-wonder-1.0") in config.py DEFAULTS and
+  patch_config PATCH_IF_ABSENT (existing values never
+  disturbed). Both ride brain's config hot-reload.
+- Settings → 🧠 Brain: a "Muse Wonder (Meta Model
+  API)" key field + Model field, wired like every
+  other provider key field (collect_brain →
+  collect_all → config.json; saved locally, never
+  logged).
+- Chat race (brain.py): with a key pasted and the
+  provider not parked, Muse Wonder is one more racer
+  ("muse-wonder" in the winner line) through
+  _agent_openai_walk — production system prompt, the
+  full guard pipeline and the translate-rescue apply
+  unchanged. "muse" sits in _MODEL_WALK_PROVIDERS
+  with the single configured model as its whole walk,
+  so its answers record through
+  _remember_working_model like any walk provider's.
+  No key = ZERO calls to api.meta.ai anywhere
+  (pinned in test_v78).
+- Auth/billing discipline: an HTTP 401/403 (key
+  rejected) or 402 (billing) from the Meta endpoint
+  parks the provider for the session via
+  Brain._park_muse — ONE clear logbook line, then the
+  race fields it no longer; other failures never park.
+  Session scope: a restart re-probes (the _dead_models
+  discipline).
+- Brain line: Brain._last_answer_provider (recorded
+  on real answers + by the race coordinator) — after
+  a Muse Wonder win the Command Center shows
+  "Brain: Muse Wonder ⚡"; before its first answer
+  the line is byte-identical to v7.7.
+- Brain Test (brainbench.py): muse-wonder-1.0 via
+  MUSE_BASE as a "muse" candidate, key-gated with the
+  OpenRouter-style clean skip ("skipped — no Muse API
+  key", zero network). Measurement only.
+
+NOT in v7.8 (deliberate): the AGENT/action path —
+it stays the Groq power walk + Ollama exactly.
+Wonder's tool-calling inside Nalox's harness is
+unproven; promoting it is a later, measurement-led
+decision (the Brain Test numbers come first). Also
+untouched: boot key validation (still Groq-only —
+Muse is not in _KEY_CHECKS, so no api.meta.ai call
+happens at boot either), TTS, ears, phone/Telegram,
+exit paths. KNOWN EDGE: a config with ONLY a Muse
+key (no Groq/Gemini/FreeLLMAPI) fields a one-racer
+"race", which by the v7.6 rule does not run — Muse
+is a race participant, not a standalone serial
+provider; on the owner's machine Groq is configured,
+so the field exists. All Muse traffic in tests is
+STUBBED — no real Meta API key exists on the build
+VM; the first live call happens on the owner's
+machine after he pastes his key.

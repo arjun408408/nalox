@@ -750,6 +750,24 @@ GEMINI_BASE = ("https://generativelanguage.googleapis.com"
 CHAT_RACE_BUDGET_S = 4.5
 CHAT_RACE_GRACE_S = 1.5
 
+# ------------------------------------------------------------- v7.8
+# MUSE WONDER (Meta Model API) — the owner's explicit
+# choice (2026-11-16 13:08 IST): Meta's frontier model
+# joins Nalox as a PAID brain provider. The Meta Model
+# API is OpenAI-compatible: Chat Completions at
+# {MUSE_BASE}/chat/completions with a Bearer key created
+# at dev.meta.ai ($4.00/M input, $20.00/M output tokens —
+# his money, his call). Scope, deliberately narrow: with
+# a key in Settings → Brain, Muse Wonder is ONE MORE
+# RACER in the chat race below (same guards, same rescue)
+# and a Brain Test candidate — the AGENT/action path
+# keeps the v7.4 Groq power walk + Ollama exactly, since
+# Wonder's tool-calling inside Nalox's harness is
+# unproven; promotion is a later, measurement-led call.
+# No key = api.meta.ai is never called, anywhere.
+MUSE_BASE = "https://api.meta.ai/v1"
+MUSE_DEFAULT_MODEL = "muse-wonder-1.0"
+
 # ------------------------------------------------------------- v6.13
 # RATE-LIMIT RETRY (OpenJarvis import #3 — jittered backoff,
 # agents/hybrid/_openai_retry.py, shrunk to Nalox's
@@ -866,6 +884,11 @@ _MODEL_WALK_PROVIDERS = {
     "openrouter": ("openrouter_model", "openrouter_models"),
     # v6.7: the offline brain walks too (see OLLAMA_TIMEOUT_S).
     "ollama": ("ollama_model", "ollama_models"),
+    # v7.8: Muse Wonder walks its single configured model
+    # (no candidate list exists — cfg muse_model is the
+    # whole walk), which enrols it in _remember_working_
+    # model's answer recording like every walk provider.
+    "muse": ("muse_model", "muse_models"),
 }
 
 # ------------------------------------------------------------- v7.3
@@ -2422,6 +2445,22 @@ class Brain:
         # scope only — a restart re-probes, exactly like
         # the Groq walk's remembered working model.
         self._dead_models = set()
+        # v7.8: MUSE WONDER session state. _muse_parked is
+        # None while the provider is live; once the Meta
+        # API answers 401/403 (key rejected) or 402
+        # (billing) it holds that HTTP status and the chat
+        # race never fields Muse again this session — the
+        # ElevenLabs breaker shape (one clear line, then
+        # silence), so a dead paid key can never tax every
+        # turn. Session scope only: a restart re-probes,
+        # exactly like _dead_models above. _last_answer_
+        # provider is the provider of the last REAL answer
+        # (recorded by _remember_working_model on its
+        # answered=True calls and by the chat-race
+        # coordinator for its winner); brain_status_line
+        # names Muse Wonder when IT spoke last.
+        self._muse_parked = None
+        self._last_answer_provider = None
         # v7.7 (item E): the last turn's closing — whether
         # the previous spoken reply already ended with a
         # follow-up offer, and which generic offer text it
@@ -5976,6 +6015,7 @@ class Brain:
                         "openrouter": "OpenRouter",
                         "gemini": "Gemini",
                         "groq": "Groq", "openai": "OpenAI",
+                        "muse": "Muse Wonder",
                         "ollama": "Ollama", "local": "Local"}
     # (provider, cfg key field, models URL, label) — GET {base}/
     # models with the key is the cheapest honest "is this key
@@ -5998,6 +6038,12 @@ class Brain:
                         "anthropic_api_key", "openrouter_api_key",
                         "gemini_api_key",
                         "groq_api_key", "openai_api_key",
+                        # v7.8: the Muse Wonder key + model
+                        # ride the same hot-reload, so a key
+                        # pasted into Settings → Brain reaches
+                        # the running brain like every other
+                        # provider's.
+                        "muse_api_key", "muse_model",
                         "openrouter_model", "gemini_model",
                         "groq_model",
                         # v6.5: the model candidate lists ride
@@ -6384,6 +6430,11 @@ class Brain:
         self._working_models[provider] = model
         if answered:
             self._last_answered[provider] = model
+            # v7.8: WHO answered last, across providers —
+            # the brain line names Muse Wonder when the
+            # last real answer was its (see
+            # brain_status_line).
+            self._last_answer_provider = provider
             if tier is not None:
                 self._last_answer_tier = tier
         else:
@@ -6435,6 +6486,20 @@ class Brain:
         if mode == "ollama":
             return "Brain: Ollama (local)"
         if state == "ok":
+            # v7.8: when the last REAL answer came from
+            # Muse Wonder (a chat-race win), the line says
+            # so — the owner can see the Meta brain is the
+            # one talking. Before its first answer, and
+            # after any other provider's answer, the line
+            # below is byte-identical to v7.7.
+            if getattr(self, "_last_answer_provider",
+                       None) == "muse" \
+                    and (getattr(self, "_last_answered",
+                                 None) or {}).get("muse"):
+                _mark = ("💪" if getattr(
+                    self, "_last_answer_tier", None)
+                    == "power" else "⚡")
+                return f"Brain: Muse Wonder {_mark}"
             # v7.3: once a model has actually ANSWERED this
             # session, the line names it — the owner can see
             # the instant brain is the one talking ("Brain:
@@ -6891,6 +6956,51 @@ class Brain:
                     "detail": f"HTTP {http_status} — {reason}"}
         if provider and http_status in (401, 403):
             self._refresh_brain_status()
+        # v7.8: Muse Wonder's auth/billing discipline —
+        # a 401/403 (key rejected) or a 402 (billing)
+        # parks the provider for the session with ONE
+        # clear line (see _park_muse). Any other failure
+        # (a timeout, a 5xx, a dead model name) never
+        # parks: networks recover, and names are the
+        # walk's business.
+        if provider == "muse" \
+                and http_status in (401, 402, 403):
+            self._park_muse(http_status)
+
+    def _park_muse(self, http_status):
+        """Park Muse Wonder for the rest of the session
+        (v7.8): the Meta API has rejected the key itself
+        (401/403) or demands billing (402), so retrying it
+        on every chat turn would only tax the race. ONE
+        clear logbook line is the whole announcement —
+        after that the provider is silent and absent,
+        mirroring the ElevenLabs breaker. A restart (or a
+        fresh key + restart) re-probes it, exactly like
+        the session dead-model memory. Never raises; the
+        key itself is never logged."""
+        try:
+            if getattr(self, "_muse_parked", None) is not None:
+                return
+            self._muse_parked = http_status
+            if http_status == 402:
+                line = ("[brain] Muse Wonder: billing "
+                        "required (HTTP 402) — parked for "
+                        "this session; the other brains "
+                        "keep answering")
+            else:
+                line = (f"[brain] Muse Wonder: key "
+                        f"rejected (HTTP {http_status}) — "
+                        f"parked for this session; check "
+                        f"the key in Settings → Brain")
+            _lb("BRAIN", line)
+            log.info(line)
+        except Exception:
+            pass
+
+    def _muse_parked_now(self):
+        """True once Muse Wonder is parked this session
+        (v7.8) — the chat race fields it no longer."""
+        return getattr(self, "_muse_parked", None) is not None
 
     def _brain_unreachable(self):
         """True when a cloud key exists but the brain is failing:
@@ -7857,7 +7967,14 @@ class Brain:
         its cached reachability probe). Each callable runs
         that provider's candidate walk with the race's
         per-call cap; the walk's guards apply unchanged.
-        Returns [(name, provider, callable)]."""
+        Returns [(name, provider, callable)].
+
+        v7.8: Muse Wonder (Meta Model API) joins the
+        field under the same discipline — only when its
+        Settings → Brain key exists and the provider is
+        not parked for the session (see _park_muse). No
+        key = no racer and ZERO calls to api.meta.ai,
+        anywhere in the program."""
         racers = []
         if groq_key and not self._provider_rejected("groq"):
             racers.append((
@@ -7894,6 +8011,24 @@ class Brain:
                     self.cfg.get("freellm_model", "auto"),
                     label="FreeLLMAPI", provider="freellm",
                     timeout=CHAT_RACE_BUDGET_S)))
+        # v7.8: Muse Wonder — the paid Meta brain races
+        # only when its key is pasted and it is not parked
+        # (a 401/402/403 earlier this session). Its walk
+        # is the single configured model; the production
+        # system prompt, every guard and the language
+        # rescue apply to it exactly as to every racer.
+        muse_key = (self.cfg.get("muse_api_key")
+                    or "").strip()
+        if muse_key and not self._muse_parked_now() \
+                and not self._provider_rejected("muse"):
+            racers.append((
+                "muse-wonder", "muse",
+                lambda: self._agent_openai_walk(
+                    text, MUSE_BASE, muse_key,
+                    self.cfg.get("muse_model",
+                                 MUSE_DEFAULT_MODEL),
+                    label="Muse Wonder", provider="muse",
+                    timeout=CHAT_RACE_BUDGET_S, tier=tier)))
         return racers
 
     def _chat_race(self, text, tier, groq_key):
@@ -7972,6 +8107,15 @@ class Brain:
                         provider, time.monotonic() - _t0, True)
                 except Exception:
                     pass
+                # v7.8: the winner's provider is the last
+                # REAL answer's — the brain line reads it
+                # (a non-walk winner like FreeLLMAPI never
+                # records its own via _remember_working_
+                # model, so the coordinator's word stands).
+                try:
+                    self._last_answer_provider = provider
+                except Exception:
+                    pass
                 self._remember_chat(text, reply)
                 return True, reply
             if cand and lang_cand is None:
@@ -8030,6 +8174,10 @@ class Brain:
         answerless gets the reply-language rescue (item A)
         before _chat_fallback's honest line. The
         AGENT/action path below is unchanged.
+
+        v7.8: Muse Wonder (the owner's paid Meta brain)
+        is one more chat racer when its key is pasted —
+        the agent/action path STILL never calls it.
         """
         self._doc_context = ""
         try:

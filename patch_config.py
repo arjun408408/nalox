@@ -108,6 +108,12 @@ PATCH_IF_ABSENT = {
     "groq_power_model": "llama-3.3-70b-versatile",
     "brain_smart_routing": True,
     "openrouter_models": [],
+    # v7.8: Muse Wonder (Meta Model API) keys — added when
+    # absent; the key stays "" until HE pastes one into
+    # Settings → Brain, and a key/model he sets is never
+    # touched once present.
+    "muse_api_key": "",
+    "muse_model": "muse-wonder-1.0",
     # v6.7: an install missing the command-model key gets the
     # new big default (an existing "small" is migrated below;
     # anything else is his and is preserved).
