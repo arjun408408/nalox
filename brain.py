@@ -52,17 +52,17 @@ Hindi only; ears.py now locks transcription to those three):
   lang "hi" never falls through to English small talk for these.
 
 handle_command(text) returns (reply, action) where action is one of:
-  None      — normal reply, keep listening for the wake word
+  None      — normal reply, back to waiting for the next input
   "confirm" — handled internally (shutdown/restart yes-no flow)
   "exit"    — ONLY a confirmed PC shutdown/restart (the machine
               itself is going down) — never a plain "stop"
   "standby" — (v5.4) user said stop/goodbye: stop SPEAKING and
-              go back to wake listening; the process NEVER exits
-              on a voice/Telegram stop (owner's hard rule — his
-              own stop commands were killing Nalox: the old
-              "exit" here exited code 42 and the supervisor
-              stopped for good). Deliberate app exit is tray /
-              HUD clicks only.
+              stay alive awaiting input; the process NEVER exits
+              on a typed/dictated/Telegram stop (owner's hard
+              rule — his own stop commands were killing Nalox:
+              the old "exit" here exited code 42 and the
+              supervisor stopped for good). Deliberate app exit
+              is tray / HUD clicks only.
   "dashboard_open" / "dashboard_close" — (v5.5) show/hide the
               fullscreen Command Center; nalox.py owns the window
               and falls back to the normal window if it can't open.
@@ -3088,6 +3088,13 @@ class Brain:
         # the REAL cause — a rate-limit death must never
         # send the owner to check a healthy key.
         self._turn_fail_causes = set()
+        # v9.0 (fold-in A): the display labels of providers
+        # whose key was REJECTED (401/403) this turn. The
+        # key-check line may only name one of these — the
+        # v8.2 field turn (a FreeLLMAPI ReadTimeout) blamed
+        # the Groq key because the line took its label from
+        # the status mode instead of the failing provider.
+        self._turn_auth_labels = set()
         # v7.9 (items B/C/E): why the most recent Ollama
         # fallback attempt failed ("not reachable at …",
         # "HTTP 500 — …"), set by _agent_ollama's exits so
@@ -3769,7 +3776,7 @@ class Brain:
         if "who are you" in text or "your name" in text:
             return self._loc(
                 f"I'm {self.cfg['assistant_name']}, your personal assistant, "
-                f"{user}. Always on, always listening.",
+                f"{user}. Always here — type, dictate, or Telegram.",
                 f"আমি ন্যালক্স, তোমার ব্যক্তিগত সহকারী, {user_bn}।"), None
         if "joke" in text:
             if self._mode() == "focus":
@@ -7936,6 +7943,10 @@ class Brain:
                     self._turn_fail_causes.add("ratelimit")
                 elif http_status in (401, 403):
                     self._turn_fail_causes.add("auth")
+                    # v9.0 (fold-in A): remember WHOSE key
+                    # was rejected — the key-check line may
+                    # only ever name this provider.
+                    self._turn_auth_labels.add(str(label))
                 else:
                     self._turn_fail_causes.add("other")
             except Exception:
@@ -8459,6 +8470,29 @@ class Brain:
             return names
         except Exception:
             return None
+
+    def _ollama_pulled_filter(self, candidates, names):
+        """v9.0 (fold-in B): keep only the candidates Ollama
+        has actually PULLED. The v8.2 field walk tried
+        "llama3.1" — the stale config default — although
+        only qwen3:8b was pulled; every such attempt is a
+        doomed call on the last-resort path. names=None
+        (the tags answer could not be parsed) leaves the
+        list untouched — the walk's own not-pulled
+        handling covers that case. A bare candidate
+        ("llama3.1") matches a pulled "llama3.1:latest"
+        (Ollama's implicit tag); every other match is
+        exact."""
+        if names is None:
+            return list(candidates)
+        pulled = set(names)
+        out = []
+        for cand in candidates or ():
+            if cand in pulled or (
+                    ":" not in str(cand)
+                    and (str(cand) + ":latest") in pulled):
+                out.append(cand)
+        return out
 
     def probe_ollama_boot(self):
         """The Ollama stage: /api/tags; when the server
@@ -8990,8 +9024,18 @@ class Brain:
         # 29 key-check lines spoken for one rate limit).
         # The limit line never mentions the key; an auth
         # cause keeps the key-check line below, and every
-        # other cause keeps the connection line below —
-        # both byte-identical to before.
+        # other cause keeps the connection line below.
+        # v9.0 (fold-in A): the KEY-CHECK line may only
+        # appear when a provider's key was actually
+        # rejected THIS turn, and it names THAT provider
+        # (from _turn_auth_labels). The old code keyed the
+        # line off _brain_unreachable() + the status mode:
+        # a FreeLLMAPI ReadTimeout (v8.2 field sync) made
+        # the brain "unreachable" while the mode said
+        # Groq, so the owner was told to check a healthy
+        # Groq key. Every non-auth failure now takes the
+        # connection line, naming the provider that
+        # actually failed last — never a key instruction.
         _causes = getattr(self, "_turn_fail_causes",
                           None) or ()
         if "ratelimit" in _causes \
@@ -9009,9 +9053,14 @@ class Brain:
             return ("My brain has hit its usage limit, "
                     f"{user} — please try again in a "
                     "little while.")
-        if self._cloud_configured() and self._brain_unreachable():
-            label = self._PROVIDER_LABELS.get(
-                self.brain_status.get("mode", ""), "Groq")
+        if "auth" in _causes and self._cloud_configured():
+            _auth_labels = getattr(self, "_turn_auth_labels",
+                                   None) or ()
+            label = (sorted(_auth_labels)[0]
+                     if _auth_labels else
+                     self._PROVIDER_LABELS.get(
+                         self.brain_status.get("mode", ""),
+                         "Groq"))
             qlang = eff_lang or _text_lang(text, self.lang)
             if qlang == "bn":
                 return (f"আমার brain-এর connection-এ সমস্যা হচ্ছে, "
@@ -9023,6 +9072,33 @@ class Brain:
                         "check कीजिए।")
             return (f"My brain connection has a problem, {user} — "
                     f"please check the {label} key in Settings.")
+        if self._cloud_configured() and self._brain_unreachable():
+            # v9.0 (fold-in A): the connection line names
+            # the provider that actually failed (the last
+            # recorded failure this turn) — and carries NO
+            # key instruction: a timeout is not a key
+            # problem.
+            label = None
+            try:
+                with self._status_lock:
+                    _fail = self._last_agent_fail
+                if _fail:
+                    label = str(_fail[0])
+            except Exception:
+                label = None
+            if not label:
+                label = self._PROVIDER_LABELS.get(
+                    self.brain_status.get("mode", ""), "Groq")
+            qlang = eff_lang or _text_lang(text, self.lang)
+            if qlang == "bn":
+                return (f"আমার brain-এর connection-এ সমস্যা হচ্ছে, "
+                        f"{self._addr_bn()} — {label} সাড়া "
+                        "দিচ্ছে না।")
+            if qlang == "hi":
+                return (f"मेरे brain के connection में दिक्कत है, "
+                        f"{user} — {label} जवाब नहीं दे रहा।")
+            return (f"My brain connection has a problem, {user} — "
+                    f"{label} isn't responding.")
         # v4.5 ALWAYS-ANSWER: a question / small-talk attempt gets
         # a real conversational sentence in its own language —
         # honest about the limit, JARVIS-style, and it points at
@@ -9132,19 +9208,29 @@ class Brain:
         # আমি আপনার ভয়েস ইনপুট শোনার সুবিধা নেই; টেক্সটের
         # মাধ্যমে জানাতে পারবেন।" — false, and it cost
         # trust exactly like the v5.4 memory denial. The
-        # prompt now grounds what Nalox's body actually is:
-        # ears first, voice out, Telegram as a second door.
-        prompt += (" You hear Arjun by VOICE: he speaks to "
-                   "you aloud and your Whisper ears "
-                   "transcribe his speech — when a message "
-                   "reaches you, he most likely just spoke "
-                   "it. You speak your replies aloud with "
-                   "your text-to-speech voice. You also "
-                   "receive typed text from his Telegram. "
-                   "NEVER claim you cannot hear voice input "
-                   "or that you have no facility for it, and "
-                   "never ask him to type instead of "
-                   "speaking.")
+        # prompt grounds what Nalox's body actually is.
+        # v9.0 RE-GROUNDING (text-first): the always-on
+        # ears are GONE. His words now reach the brain as
+        # TEXT — typed in the app, sent from Telegram, or
+        # dictated: he presses the mic button / hotkey,
+        # speaks, and cloud transcription turns his speech
+        # into the text in front of you. The grounding
+        # below states exactly that — never claim to be
+        # always listening (he must press to talk), and
+        # never claim voice input is impossible either
+        # (the mic button IS voice input).
+        prompt += (" Arjun's messages reach you as TEXT: "
+                   "he types in your app window, sends them "
+                   "from Telegram, or DICTATES them — he "
+                   "presses your mic button (or the dictation "
+                   "hotkey), speaks, and cloud transcription "
+                   "turns his speech into the text you are "
+                   "reading. You are NOT always listening: "
+                   "he presses to talk. You speak your "
+                   "replies aloud with your text-to-speech "
+                   "voice. NEVER claim you cannot accept "
+                   "voice input, and never claim you are "
+                   "listening all the time.")
         # v5.6: ACT FIRST — the recycle-bin incident: a chain
         # model narrated 13 s of deliberation and did nothing.
         # The thinking stays inside; the tool call is the reply.
@@ -10099,6 +10185,7 @@ class Brain:
         # it to speak the truthful failure line.
         try:
             self._turn_fail_causes = set()
+            self._turn_auth_labels = set()
         except Exception:
             pass
         # v4.4: no provider available -> NO network at all.
@@ -10483,6 +10570,10 @@ class Brain:
             if self._ollama_available():
                 _candidates = self._model_candidates("ollama") or [
                     self.cfg.get("ollama_model", "llama3.1")]
+                # v9.0 (fold-in B): only pulled models are
+                # attempted (see _ollama_pulled_filter).
+                _candidates = self._ollama_pulled_filter(
+                    _candidates, self._ollama_tags())
                 for _cand in _candidates:
                     resp = requests.post(
                         url + "/api/chat",
@@ -10560,10 +10651,24 @@ class Brain:
             pass
         url = self.cfg.get("ollama_url", "http://localhost:11434").rstrip("/")
         _reachable = False
+        # v9.0 (fold-in B): the reachability probe's OWN
+        # tags answer doubles as the pulled-model list —
+        # no second round-trip on the last-resort path.
+        _pulled = None
         try:
-            _reachable = requests.get(
-                url + "/api/tags",
-                timeout=1.5).status_code == 200
+            _tags_resp = requests.get(
+                url + "/api/tags", timeout=1.5)
+            _reachable = _tags_resp.status_code == 200
+            if _reachable:
+                try:
+                    _pulled = [
+                        str(_item.get("name") or "").strip()
+                        for _item in (
+                            _tags_resp.json().get("models")
+                            or [])]
+                    _pulled = [n for n in _pulled if n]
+                except Exception:
+                    _pulled = None
         except Exception:
             _reachable = False
         if not _reachable:
@@ -10602,11 +10707,38 @@ class Brain:
             if candidates and not _live:
                 return None
             candidates = _live or candidates
+        # v9.0 (fold-in B): only models Ollama has actually
+        # pulled are attempted. The filter runs BEFORE the
+        # v7.9 chat-net cap below: capping first would let
+        # a stale configured head (llama3.1, never pulled)
+        # consume the net's single attempt and leave the
+        # one pulled model untried. When NONE of the
+        # configured names is pulled, the attempt ends
+        # with the same "no working model" failure shape
+        # the walk itself produces — without firing the
+        # doomed calls.
+        _filtered = self._ollama_pulled_filter(candidates,
+                                               _pulled)
+        if candidates and not _filtered:
+            _reason = (
+                f"no working model — tried "
+                f"{', '.join(candidates)} (none of them "
+                f"pulled) — pull one with SETUP-OLLAMA.txt")
+            self._brain_fail("Ollama", _reason,
+                             provider="ollama")
+            try:
+                self._ollama_last_error = _reason
+            except Exception:
+                pass
+            return None
+        candidates = _filtered or candidates
         # v7.9 (item B): the chat safety net caps the
         # attempt at the first live candidate — ONE bounded
         # attempt, never the whole local walk. The knob is
         # set only around that call (see _ollama_chat_net);
         # everywhere else it is None and the walk is whole.
+        # (v9.0: the cap now applies AFTER the pulled
+        # filter above — see its note.)
         try:
             _maxc = getattr(self, "_ollama_max_candidates",
                             None)

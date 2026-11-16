@@ -8,12 +8,11 @@ health checks and returns a list of (name, ok, detail) tuples:
                    the peak level (proof the mic really hears).
     speaker      — name the default output device + a soft beep
                    (winsound, guarded — skipped off Windows).
-    whisper      — are the wake + command model files in the local
-                   faster-whisper cache? (A missing model is not
-                   fatal — it downloads on first use — but the
-                   doctor says so instead of failing silently.)
-    cloud ears   — (v5.1) is cloud command hearing on, and which
-                   provider would hear (Gemini / Groq / local)?
+    dictation    — (v9.0) which cloud transcriber would serve
+                   one-shot dictation (Groq Whisper first, Gemini
+                   fallback)? There are NO local speech models
+                   anymore — the ears were removed by the owner's
+                   text-first order, so there is nothing to cache.
     phone        — (v5.4) ADB tools present? phone reachable
                    over Wi-Fi? how many contacts are saved?
     internet     — HTTPS HEAD to example.com, 4 s timeout.
@@ -36,59 +35,27 @@ log = logging.getLogger("nalox.doctor")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-# ------------------------------------------------------------ helpers
-def _hf_cache_roots():
-    """Candidate Hugging Face hub cache directories."""
-    roots = []
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        roots.append(os.path.join(hf_home, "hub"))
-    roots.append(os.path.join(os.path.expanduser("~"),
-                              ".cache", "huggingface", "hub"))
-    return roots
-
-
-def _model_cached(size):
-    """True if faster-whisper-<size> has a model.bin in the HF cache."""
-    want = ("models--systran--faster-whisper-" + str(size).lower())
-    for root in _hf_cache_roots():
-        try:
-            if not os.path.isdir(root):
-                continue
-            for entry in os.listdir(root):
-                if entry.lower() != want:
-                    continue
-                snap_root = os.path.join(root, entry, "snapshots")
-                if not os.path.isdir(snap_root):
-                    continue
-                for snap in os.listdir(snap_root):
-                    if os.path.exists(os.path.join(snap_root, snap,
-                                                   "model.bin")):
-                        return True
-        except Exception:
-            continue
-    return False
-
-
 # ------------------------------------------------------------ checks
 def _check_microphone(cfg):
     import numpy as np
     import sounddevice as sd
 
-    import ears
-    idx = ears.pick_input_device(cfg)
-    name = ears._device_name(idx)
+    import dictation
+    idx = dictation.pick_input_device(cfg)
+    name = dictation._device_name(idx)
     audio = sd.rec(int(1.0 * 16000), samplerate=16000, channels=1,
                    dtype="float32", device=idx)
     sd.wait()
     peak = float(np.max(np.abs(audio))) if audio.size else 0.0
     rms = float(np.sqrt(np.mean(np.square(audio)))) if audio.size \
         else 0.0
-    # v4.3: report the wake gate too — threshold is
-    # max(room floor x 2.5, 0.006); this recording's RMS stands in
-    # for the room floor so Arjun can see the number he must beat.
-    gate = max(rms * 2.5, 0.006)
-    gate_note = f"gate ≈ {gate:.3f} (room rms {rms:.3f} x 2.5)"
+    # Report the dictation speech gate too (v9.0: threshold
+    # is max(room floor x 3, 0.008), the floor measured from
+    # the dictation's first half-second; this recording's
+    # RMS stands in for the room floor so Arjun can see the
+    # number his voice must beat to start a dictation).
+    gate = max(rms * 3.0, 0.008)
+    gate_note = f"gate ≈ {gate:.3f} (room rms {rms:.3f} x 3)"
     if peak >= 0.01:
         return True, (f"{name} — heard sound (peak {peak:.2f}); "
                       f"{gate_note}")
@@ -117,53 +84,39 @@ def _check_speaker(cfg):
 
 
 def _check_whisper(cfg):
-    # Ears 2.0: wake segments use the wake model (config
-    # wake_model — "base" by default since v4.5, with a one-time
-    # "small" retry on loud segments); commands use the command
-    # model ("small"); the tiny model only serves the barge-in
-    # monitor now.
-    seg = str(cfg.get("wake_model")
-              or cfg.get("whisper_command_model") or "base")
-    cmd = str(cfg.get("whisper_command_model") or "small")
-    tiny = str(cfg.get("whisper_wake_model") or "tiny")
-    wanted = [("wake", seg), ("command", cmd),
-              ("barge-in", tiny)]
-    seen = set()
-    missing = []
-    for label, size in wanted:
-        if size in seen:
-            continue
-        seen.add(size)
-        if not _model_cached(size):
-            missing.append(f"{label} model '{size}'")
-    if missing:
-        return False, ("not downloaded yet: " + ", ".join(missing)
-                       + " — the first listen will fetch it")
-    return True, (f"models cached: segment '{seg}', command "
-                  f"'{cmd}', barge-in '{tiny}'")
+    # v9.0: RETIRED as a model check — the local Whisper
+    # fleet is gone (text-first order); no model files are
+    # needed or loaded. The check stays in the battery as
+    # the by-design report so the Doctor page says so.
+    return True, ("no local speech models by design (v9.0 "
+                  "text-first) — dictation is cloud-only")
 
 
 def _check_cloud_ears(cfg):
-    # v5.1: cloud ears hear COMMANDS (Gemini audio first — the
-    # field-confirmed key — then Groq Whisper); the local model
-    # is always the fallback, and the wake loop never leaves
-    # the laptop. The doctor reports which ear would be used.
+    # v9.0: dictation hearing is cloud-only — Groq Whisper
+    # first (the field-proven path), Gemini audio as the
+    # fallback; there is no local backup anymore. The
+    # doctor reports which provider would serve.
     mode = str(cfg.get("cloud_ears") or "auto").strip().lower()
     if mode == "off":
-        return True, "off in Settings — local Whisper hears commands"
+        return False, ("off in Settings — voice clips never "
+                       "leave the laptop, so dictation cannot "
+                       "run (typing + Telegram still work)")
     try:
-        import ears
-        provider = ears.cloud_ear_provider(cfg)
+        import dictation
+        provider = dictation.cloud_ear_provider(cfg)
     except Exception:
         provider = None
-    if provider == "gemini":
-        return True, ("on — Gemini hears commands (best Bengali/"
-                      "Hindi); local Whisper is the backup")
     if provider == "groq":
-        return True, ("on — Groq Whisper (whisper-large-v3) hears "
-                      "commands; local Whisper is the backup")
-    return False, ("on, but no Gemini/Groq key is set — local "
-                   "Whisper only until a key is pasted")
+        return True, ("on — Groq Whisper (whisper-large-v3) "
+                      "transcribes dictation first; Gemini "
+                      "is the fallback")
+    if provider == "gemini":
+        return True, ("on — Gemini transcribes dictation "
+                      "(no Groq key set)")
+    return False, ("on, but no Groq/Gemini key is set — "
+                   "dictation has no transcriber until a key "
+                   "is pasted (typing + Telegram still work)")
 
 
 def _check_internet(cfg):
@@ -286,8 +239,8 @@ def _check_gmail(cfg):
 _CHECKS = [
     ("Microphone", _check_microphone),
     ("Speaker", _check_speaker),
-    ("Whisper models", _check_whisper),
-    ("Cloud hearing", _check_cloud_ears),
+    ("Speech models", _check_whisper),
+    ("Dictation hearing", _check_cloud_ears),
     ("Internet", _check_internet),
     ("ElevenLabs voice", _check_elevenlabs),
     ("Claude brain", _check_claude),

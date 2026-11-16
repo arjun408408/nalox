@@ -79,12 +79,18 @@ def send_message(cfg, text):
 
 
 class TelegramBridge(threading.Thread):
-    def __init__(self, cfg, brain, speaker, ears):
+    def __init__(self, cfg, brain, speaker, on_input=None):
         super().__init__(daemon=True, name="telegram-bridge")
         self.cfg = cfg
         self.brain = brain
         self.speaker = speaker
-        self.ears = ears
+        # v9.0: the ears argument is GONE (text-first) —
+        # voice notes transcribe through
+        # dictation.transcribe_cloud_bytes, the same cloud
+        # function dictation uses. on_input (optional) is
+        # nalox.py's first-input hook (the boot warm-up
+        # gate): a handled Telegram turn counts as input.
+        self.on_input = on_input
         self.token = (cfg.get("telegram_bot_token") or "").strip()
         self.owner = str(cfg.get("telegram_owner_chat_id") or "").strip()
         self.api = f"https://api.telegram.org/bot{self.token}"
@@ -226,7 +232,8 @@ class TelegramBridge(threading.Thread):
 
         text = msg.get("text", "").strip()
 
-        # Voice message -> download + transcribe with the same Whisper.
+        # Voice message -> download + transcribe with the
+        # SAME cloud transcription dictation uses (v9.0).
         if "voice" in msg or "audio" in msg:
             text = self._transcribe_voice(msg.get("voice") or msg.get("audio"))
             if not text:
@@ -237,6 +244,11 @@ class TelegramBridge(threading.Thread):
         if not text:
             return
 
+        if self.on_input is not None:
+            try:
+                self.on_input()
+            except Exception:
+                pass
         reply, action = self.brain.handle(text)
         if reply:
             self._send(chat_id, reply)
@@ -255,20 +267,27 @@ class TelegramBridge(threading.Thread):
             os._exit(42)  # supervisor treats 42 as a clean, do-not-restart exit
 
     def _transcribe_voice(self, voice):
+        """v9.0: the downloaded bytes go straight to the
+        cloud transcription (dictation.transcribe_cloud_
+        bytes — Groq Whisper first, Gemini fallback; the
+        SAME function family as mic dictation). No local
+        decode exists anymore — the .ogg is never written
+        to disk or decoded on the laptop."""
         try:
             import requests
+            import dictation
             file_id = voice["file_id"]
             info = requests.get(f"{self.api}/getFile",
                                 params={"file_id": file_id}, timeout=15).json()
             file_path = info["result"]["file_path"]
             url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
-            local = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "logs", "telegram_voice.ogg")
-            os.makedirs(os.path.dirname(local), exist_ok=True)
-            with open(local, "wb") as f:
-                f.write(requests.get(url, timeout=30).content)
-            text, _lang = self.ears.transcribe_file(local)
-            return text
+            data = requests.get(url, timeout=30).content
+            got = dictation.transcribe_cloud_bytes(
+                data, os.path.basename(file_path or "voice.ogg"),
+                self.cfg)
+            if got:
+                return got[0]
+            return ""
         except Exception as exc:
             log.error("Voice transcription failed: %s", exc)
             return ""

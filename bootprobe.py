@@ -61,6 +61,17 @@ fast open ("loading যেন অনেকক্ষণ হয়... running test
 একদম complete"). Per-stage deadlines still resolve a
 stage as a warning under the gate cap, so a true hang
 can never lock him out.
+
+v9.0: the EARS ARE GONE (owner's text-first order) — the
+four ears stages ("wake", "command", "bigmodel",
+"earstest") are REMOVED from the stage set; there is no
+local transcription model left to load or test. The mic
+stage now means "a microphone is available for one-shot
+dictation". "braintest" (one real completion from the
+lead brain) stays — it is a brain check, not an ears
+check. With the slow model-load stages gone the cap
+drops 180 s → 90 s: the slowest remaining probes are the
+Ollama check (40 s) and the brain answer test (30 s).
 """
 
 import threading
@@ -72,23 +83,23 @@ import time
 # model load + running tests) legitimately take longer
 # than the v7.11 presence checks did, and the owner
 # ordered the wait.
-GATE_CAP_S = 180.0
+# v9.0: 180 s → 90 s — the ears stages (the slow ones)
+# are gone with the ears; the slowest remaining probes
+# are Ollama (40 s) and the brain answer test (30 s).
+GATE_CAP_S = 90.0
 
 STILL_WARMING = "still warming — will finish in background"
 
 # (key, display label, blocking) — the fixed stage set,
 # in display order. Blocking = the interface's promise
-# (ears, brain, voice); the rest resolve or fail beside
+# (mic, brain, voice); the rest resolve or fail beside
 # them and never hold the gate past the cap.
 STAGE_DEFS = (
+    # v9.0: "mic" = a microphone is available for one-shot
+    # dictation. The v7.11/v8.0 ears stages (wake / command
+    # / bigmodel / earstest) are REMOVED — the local Whisper
+    # fleet they probed no longer exists.
     ("mic", "Microphone", True),
-    ("wake", "Wake-word ears", True),
-    ("command", "Command ears", True),
-    # v8.0: the three REAL-readiness stages (see the module
-    # docstring) — the big model actually loaded, one real
-    # decode completed, one real brain answer received.
-    ("bigmodel", "Full transcription model", True),
-    ("earstest", "Ears running test", True),
     ("groq", "Groq brain", True),
     ("braintest", "Brain answer test", True),
     ("voice", "Voice", True),

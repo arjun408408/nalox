@@ -2472,3 +2472,152 @@ what it asserts):
   tree, and the post-sweep full battery is 3,790
   passed / 0 failed across 38 suites — the same
   load-flake class recorded in the v8.2 build.
+
+## v9.0 — "কান বাদ: বললেই text, text গেলেই কাজ" (2026-11-16)
+
+THE ARCHITECTURE CHANGE. The owner's explicit order
+(2026-11-16 19:40 IST): remove the ears entirely; Nalox
+becomes TEXT-FIRST. His reasoning, proven all day in the
+field: TEXT (Telegram) gets instant replies because the
+brain is fast on text; the always-listening ears pipeline
+(wake word + local Whisper worker fleet) was the sole
+bottleneck and the crash source (v8.1's worker crash-loop
+was the final straw).
+
+REMOVED:
+- ears.py — DELETED (7,601 lines): the wake/command/
+  preview worker processes, the local faster-whisper
+  model fleet, the v8.1 live-caption/preview machinery,
+  follow-up-listening windows, monitor_interrupt.
+- The wake word and the always-on "Listening" state; the
+  wake ack "Yes Sir, I'm here." (config wake_line stays,
+  inert — Settings writes it back unchanged).
+- The boot gate's four ears stages (wake / command /
+  bigmodel / earstest) — bootprobe.STAGE_DEFS is now:
+  mic, groq, braintest, voice, gemini, freellm, ollama,
+  muse, phone, telegram. GATE_CAP_S 180 → 90.
+- The dashboard/HUD live-preview bubble machinery
+  (begin/update/end/cancel_you_preview, the Tk preview
+  marks, the post() preview dedupe) and nalox.py's
+  preview sinks.
+- faster-whisper from requirements.txt (an installed
+  copy on his PC is simply never imported).
+
+NEW — dictation.py (the only hearing left):
+- pick_input_device/_device_name (ported probe-and-
+  choose), the transcription guards (is_garbage, script
+  lock {en,bn,hi}, prompt-echo), and cloud transcription
+  ported from ears.py's field-proven cloud path — order
+  FLIPPED per the brief: Groq Whisper FIRST, Gemini
+  audio fallback; NO local fallback. Honors
+  cloud_ears == "off" (dictation then cannot run).
+- transcribe_cloud_bytes(data, filename, cfg) — the
+  same route for Telegram voice notes (raw bytes pass
+  through; no local decode, no temp file).
+- class Dictation — one-shot recorder IN THE MAIN
+  PROCESS (sounddevice, no worker): trigger() toggles
+  (button/hotkey), arm_followup(seconds) for the
+  post-reply + Command-Center-open arms; VAD by RMS
+  gate (floor from the first ~0.5 s, gate = max(0.008,
+  floor×3)); ends on dictation_silence_s (1.2 s) of
+  pause, a second press, or dictation_max_s (60 s);
+  a no-speech arm closes SILENTLY; speech with an
+  empty/garbage transcription reports on_empty(True)
+  and nalox.py speaks the could-not-hear line.
+  Module-level get_level()/mic_activity() feed the
+  HUD/Command Center mic meters (they move only while
+  dictating — the truth in a push-to-talk world).
+- parse_hotkey(spec) — pure; nalox.py registers the
+  global hotkey (default ctrl+alt+space, config
+  dictation_hotkey, Settings → General field) via
+  RegisterHotKey on a dedicated ctypes thread.
+
+nalox.py: the main loop is an INPUT QUEUE consumer.
+Items (text, lang, kind, rec_s, tx_s, label) come from
+the windows' input rows ("[input] text: …"), dictation
+("[input] dictation (cloud:groq): …") and a "missed"
+sentinel; run_command handles each exactly like a
+Telegram message and returns (action, spoke). After a
+spoken reply ONE follow-up dictation arms
+(followup_seconds). The confirm flow waits on the same
+queue (45 s) with a dictation armed. Barge-in: a mic
+press during speech sets _barge_event; say() polls it,
+cuts the voice, and the press has already started the
+dictation. The v7.10 boot warm-up gate now opens on
+"first input" (queue item or a Telegram-handled turn
+via the bridge's on_input hook) or the 120 s timer.
+The heartbeat reports state/mic/queue/dictation-state.
+The liveness watchdog keeps only the speaking-stop
+recovery (the worker-respawn recovery died with the
+workers). The status pill for the idle stage now reads
+"● Ready" in both windows.
+
+Windows: BOTH got an input row (Entry + big 🎙 + ➤) and
+a dictation state line ("🎙 বলুন…" / countdown /
+"শুনছি…") — dashboard.build + hud._build; public
+callbacks on_text_submit / on_mic_press (wired by
+nalox.py through module-level delegates so lazily
+created surfaces wire themselves); set_input_text /
+set_dictation_state via new queue kinds. The HUD
+welcome line now teaches the new doors. Doctor: the
+mic check uses dictation's picker + the dictation
+gate; "Whisper models" is now a by-design report ("no
+local speech models by design"); "Cloud hearing" is
+"Dictation hearing" (Groq first). Brain self-knowledge
+re-grounded: messages arrive as TEXT (typed / Telegram
+/ dictated by button press); never claim always
+listening, never claim voice input is impossible. The
+identity small-talk line no longer says "always
+listening".
+
+FOLD-INS (from the v8.2 field sync 460d45b4):
+A. Truthful failure: _chat_fallback's key-check line
+   now requires an actual auth cause THIS turn and
+   names the provider whose key was rejected
+   (_turn_auth_labels, filled by _brain_fail on
+   401/403). Any other failure takes the connection
+   line naming the last provider that actually failed
+   (_last_agent_fail) with NO key instruction. A
+   FreeLLMAPI ReadTimeout can no longer blame Groq.
+B. Ollama walks (agent + plain chat) filter candidates
+   through _ollama_pulled_filter against /api/tags —
+   only pulled models are attempted (the field walk
+   tried unpulled llama3.1; only qwen3:8b is pulled).
+   A bare candidate matches pulled "<name>:latest".
+   When nothing configured is pulled, the agent walk
+   ends with the standard "no working model" line
+   without firing doomed calls.
+C. The self-update announcement follows the learned
+   language pref (Bengali under pref bn — the English
+   line remains as the en branch). The dashboard
+   banner was already language-correct.
+
+TESTS: test_v90.py is the new suite (no-worker/no-local-
+STT grep proofs over the whole tree, typed-input flow,
+dictation end-to-end with a fake stream + stubbed cloud
+STT, empty-result line, Telegram voice-note route,
+gate stage list, fold-in A/B/C pins, pack invariants).
+Suites/pins that tested REMOVED ears behaviour were
+retired or rewritten — every one is named in the v9.0
+section of the build report and in test_v90's header
+block. The real-audio wake proof is retired with the
+ears; a dictation-path proof (synthesized audio through
+the capture/VAD/segmentation code with a stubbed STT
+transport) replaces it in ~/workspace/nalox-tests/
+real-audio/. HONEST LIMIT: real cloud STT cannot be
+exercised from the build VM (no keys there) — the
+dictation STT leg is first proven on the owner's PC;
+watch the first v9.0 sync for "[dictation] heard via
+cloud:groq" lines.
+
+FIELD PROOF OWED from the first v9.0 syncs: zero
+"worker restarted (crashed)" lines (no workers exist);
+the gate completing on the 10-stage list; "[input]
+text:" and "[input] dictation (cloud:…)" lines; the
+update announcement in Bengali; no llama3.1 attempt in
+Ollama turns; a FreeLLMAPI-timeout turn naming
+FreeLLMAPI.
+
+### v9.0 suite disclosure (addendum)
+
+Retired to `~/workspace/nalox-tests/retired_v90/` (their whole subject is machinery v9.0 deletes): test_v610 (ears model ladder), test_v612 (wake/command lanes), test_v613 (GPU decode for ears models), test_v614 (steady ears; its section-E self-knowledge pin is succeeded by test_v90 section I), test_v64 (ears worker v3 + tiny wake; its Bengali-only section's subject stays pinned by test_v63/test_v76–v79), test_v81 (live-caption input of record), test_v82 (worker crash-loop fix). Rewritten with ears sections excised (each file carries its own v9.0 note; all verified green): test_regression54 (doctor check names), test_v54, test_v55, test_v57, test_v60, test_v62, test_v63, test_v66, test_v67 (B1 re-pinned to fold-in B semantics), test_v68, test_v70, test_v71 (mic probe repointed to dictation), test_v72, test_v73, test_v74, test_v75, test_v76, test_v77, test_v79, test_v80, test_v711. Global re-pins: version/banner sweeps in every S section, UPDATE-README scan windows widened, requirements.txt md5 re-pinned in 23 suites (faster-whisper removed by design). The full battery after the removal: 32 suites kept, all green (counts in the v9.0 build report); the real-audio wake proof is retired with the ears and replaced by the dictation-path proof (`~/workspace/nalox-tests/real-audio/RESULTS-dictation-v90.md`), which caught and fixed a real VAD floor bug before release (low-quartile floor + calibration replay + loud-tape rescue — see dictation.py).

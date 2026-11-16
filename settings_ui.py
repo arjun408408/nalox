@@ -34,6 +34,12 @@ editor ("mother=+91…, father=+91…") that round-trips the
 phone_contacts dict via _parse_contacts/_format_contacts.
 The General section gains a "Wake reply" field writing
 wake_line — the exact words spoken when the wake word lands.
+v9.0: the "Wake reply" field is retired with the wake word
+(wake_line is written back unchanged, inert); the General
+section gains a "Dictation hotkey" field instead, the mic
+test reads dictation.pick_input_device (ears.py is gone),
+and the cloud toggle now reads "Cloud dictation" (off =
+dictation disabled — there is no local fallback anymore).
 
 Arjun should never have to hand-edit config.json again. This window
 edits it for him: API keys (ElevenLabs / Anthropic / OpenRouter /
@@ -385,12 +391,13 @@ def _build(tk, parent, cfg):
                       "(optional — skip it if Google asks for a card)",
              bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(
                  anchor="w", padx=10)
-    # v5.1: cloud hearing toggle — Gemini/Groq transcribe his
-    # commands (far better Bengali/Hindi than the local model);
-    # off = local Whisper only, clips never leave the laptop.
+    # v5.1: cloud hearing toggle — Groq/Gemini transcribe
+    # dictation. v9.0: dictation is cloud-ONLY (the local
+    # ears are gone); off = dictation disabled, clips never
+    # leave the laptop (typing + Telegram still work).
     cloud_var = check(
-        fr, "Cloud hearing — better Bengali/Hindi "
-            "(sends voice clips to Google/Groq)",
+        fr, "Cloud dictation — Groq/Gemini transcribe "
+            "the mic button's clips (off = no dictation)",
         str(cfg.get("cloud_ears") or "auto").strip().lower()
         != "off")
     voice_status = tk.StringVar(value="")
@@ -834,10 +841,10 @@ def _build(tk, parent, cfg):
                 import numpy as np
                 import sounddevice as sd
 
-                import ears
+                import dictation
                 tmp_cfg = dict(_load_cfg())
                 tmp_cfg["mic_device"] = chosen_mic_value()
-                idx = ears.pick_input_device(tmp_cfg)
+                idx = dictation.pick_input_device(tmp_cfg)
                 audio = sd.rec(int(1.5 * 16000), samplerate=16000,
                                channels=1, dtype="float32", device=idx)
                 sd.wait()
@@ -1062,9 +1069,19 @@ def _build(tk, parent, cfg):
         except Exception:
             _callme_initial = ""
     callme_var = field(fr, "Call me", _callme_initial)
-    # v5.4: the wake line — the exact words spoken the moment
-    # the wake word lands. Empty brings the classic ack back.
-    wake_var = field(fr, "Wake reply", cfg.get("wake_line"))
+    # v9.0: the "Wake reply" field is RETIRED with the wake
+    # word (wake_line stays in his config, inert, and is
+    # written back unchanged by collect_all). In its place:
+    # the dictation hotkey — press it anywhere to start /
+    # finish a one-shot dictation.
+    hotkey_var = field(fr, "Dictation hotkey",
+                       cfg.get("dictation_hotkey")
+                       or "ctrl+alt+space")
+    tk.Label(fr, text="Press the hotkey (or the 🎙 button) "
+                      "to dictate; pause or press again to "
+                      "send. Example: ctrl+alt+space",
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(
+                 anchor="w", padx=10)
     greet_var = check(fr, "Greeting at startup",
                       cfg.get("greet_on_startup", True))
     news_var = check(fr, "News in morning briefing",
@@ -1280,7 +1297,11 @@ def _build(tk, parent, cfg):
         updates.update(collect_updates())
         updates.update({
             "mic_device": chosen_mic_value(),
-            "wake_line": wake_var.get().strip(),
+            # v9.0: wake_line is retired (inert) — written
+            # back unchanged so his value is never lost.
+            "wake_line": str(cfg.get("wake_line") or ""),
+            "dictation_hotkey": hotkey_var.get().strip()
+                                or "ctrl+alt+space",
             "greet_on_startup": bool(greet_var.get()),
             "briefing_news": bool(news_var.get()),
             "startup_youtube_check": bool(yt_var.get()),

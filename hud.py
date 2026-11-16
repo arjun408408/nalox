@@ -65,7 +65,9 @@ import threading
 import time
 
 try:
-    import ears as _ears  # for the live mic level
+    import dictation as _ears  # v9.0: the live mic level now
+    # comes from the one-shot dictation recorder (get_level
+    # kept its shape — the meter dances only while dictating)
 except Exception:  # pragma: no cover - meter just stays flat
     _ears = None
 
@@ -93,7 +95,7 @@ BTN_ACTIVE = "#3f4a68"
 
 # state -> (pill text, pill fg, pill bg)
 STATUS_STYLES = {
-    "listening": ("● Listening", ACCENT, "#123b34"),
+    "listening": ("● Ready", ACCENT, "#123b34"),
     "awake": ("● Awake", AMBER, "#3d2f10"),
     "thinking": ("● Thinking", BLUE, "#1e3350"),
     "speaking": ("● Speaking", VIOLET, "#3d1e42"),
@@ -104,7 +106,7 @@ MAX_LOG_LINES = 300
 
 WELCOME_LINES = [
     "Nalox is ready.",
-    'Say "Nalox" to wake me.',
+    "Type below, tap 🎙 and speak, or message on Telegram.",
 ]
 
 
@@ -166,21 +168,18 @@ class Hud:
         self._logo_canvas = None
         self._wave_canvas = None
         self._status_state = "listening"
-        # v7.6 (captions on both surfaces): whether this
-        # window is currently SHOWN (it builds withdrawn —
-        # v6.2 silent start — and show()/hide() track it
-        # from there). nalox.py's HUD preview sink reads it
-        # so live partials stream to whichever surface the
-        # owner can actually see.
+        # Whether this window is currently SHOWN (it
+        # builds withdrawn — v6.2 silent start — and
+        # show()/hide() track it from there).
         self._shown = False
-        # The live preview line's state (tk thread): a
-        # preview is open, and the final text it settled
-        # with (the matching "[mic] heard:" log line that
-        # follows is absorbed, not doubled — the same
-        # dedupe the Command Center's bubble does).
-        self._preview_on = False
-        self._preview_final = None
-        self._preview_final_at = 0.0
+        # v9.0 INPUT ROW state: the callback attributes
+        # nalox.py wires (typed text + mic button), and the
+        # Tk-thread widget refs.
+        self.on_text_submit = None
+        self.on_mic_press = None
+        self._input_entry = None
+        self._mic_btn = None
+        self._dict_label = None
 
     # ------------------------------------------------ public API
     def start(self):
@@ -215,26 +214,18 @@ class Hud:
         (built withdrawn; show()/hide() track it)."""
         return bool(self._shown) and not self._failed
 
-    # -------------------------------- v7.6 live captions
-    def preview_begin(self):
-        """Open the live YOU line for speech in progress
-        (v7.6): the plain window's half of the two-surface
-        caption routing — partials land here whenever this
-        window is the visible one."""
-        self._send(("preview_begin", ""))
+    # -------------------------------- v9.0 input row
+    def set_input_text(self, text):
+        """Show text in the input box (a finished
+        dictation lands here just before it auto-sends).
+        Thread-safe."""
+        self._send(("input_text", str(text or "")))
 
-    def preview_update(self, text):
-        """Replace the live YOU line's body with the
-        newest partial — as heard, Bengali as Bengali,
-        garble as garble (showing the hearing beats
-        showing nothing)."""
-        self._send(("preview", str(text or "")))
-
-    def preview_finish(self, text):
-        """Settle the live line with the FINAL transcript
-        (v7.6); an empty text discards the line (nothing
-        was really heard)."""
-        self._send(("preview_end", str(text or "")))
+    def set_dictation_state(self, state, seconds_left=None):
+        """The dictation state line beside the mic
+        button ("🎙 বলুন…" / countdown / "শুনছি…").
+        Thread-safe."""
+        self._send(("dict_state", (str(state), seconds_left)))
 
     def stop(self):
         self._send(("cmd", "quit"))
@@ -387,6 +378,69 @@ class Hud:
         self._text.tag_configure("body", foreground=FG)
         self._text.tag_configure("muted", foreground=MUTED)
         self._text.tag_configure("error", foreground=RED)
+
+        # ---------------- input row (v9.0) --------------------------
+        # The text-first door: type + Enter (or ➤) sends the
+        # line exactly like a Telegram message; 🎙 starts /
+        # finishes a one-shot dictation; the state line
+        # shows "🎙 বলুন…" + the follow-up countdown.
+        in_frame = tk.Frame(root, bg=BG)
+        in_frame.pack(fill="x", padx=12, pady=(0, 2))
+        _entry = tk.Entry(
+            in_frame, bg=CARD_DARK, fg=FG, insertbackground=FG,
+            font=("Segoe UI", 10), relief="flat",
+            highlightbackground=BTN_BG, highlightthickness=1)
+        _entry.pack(side="left", fill="x", expand=True, ipady=4)
+        _mic = tk.Button(
+            in_frame, text="🎙", bg=ACCENT, fg="#123b34",
+            activebackground=BTN_ACTIVE, relief="flat",
+            font=("Segoe UI", 11, "bold"), cursor="hand2",
+            padx=8, pady=2)
+        _mic.pack(side="left", padx=(6, 0))
+        _send = tk.Button(
+            in_frame, text="➤", bg=BTN_BG, fg=FG,
+            activebackground=BTN_ACTIVE, relief="flat",
+            font=("Segoe UI", 10), cursor="hand2",
+            padx=8, pady=2)
+        _send.pack(side="left", padx=(6, 0))
+        self._input_entry = _entry
+        self._mic_btn = _mic
+
+        def _submit_input(_event=None):
+            try:
+                _text = _entry.get().strip()
+            except Exception:
+                _text = ""
+            if not _text:
+                return "break"
+            try:
+                _entry.delete(0, "end")
+            except Exception:
+                pass
+            _cb = self.on_text_submit
+            if _cb is not None:
+                try:
+                    _cb(_text)
+                except Exception:
+                    pass
+            return "break"
+
+        _entry.bind("<Return>", _submit_input)
+        _send.configure(command=_submit_input)
+
+        def _mic_press():
+            _cb = self.on_mic_press
+            if _cb is not None:
+                try:
+                    _cb()
+                except Exception:
+                    pass
+
+        _mic.configure(command=_mic_press)
+        self._dict_label = tk.Label(
+            root, text="", bg=BG, fg=ACCENT,
+            font=("Segoe UI", 9, "bold"))
+        self._dict_label.pack(anchor="w", padx=14, pady=(0, 2))
 
         # ---------------- buttons row -------------------------------
         btn_frame = tk.Frame(root, bg=BG)
@@ -721,122 +775,39 @@ class Hud:
         finally:
             widget.configure(state="disabled")
 
-    # ------------------------ v7.6 live captions (tk thread)
-    def _preview_consume_final(self, payload):
-        """True when a log line is the "[mic] heard:" twin
-        of the preview line that just settled with the
-        same text — that line is already on screen as the
-        settled preview, so the twin is absorbed instead
-        of doubling the owner's words."""
-        try:
-            if self._preview_final is None:
-                return False
-            if time.monotonic() - self._preview_final_at \
-                    > 10.0:
-                self._preview_final = None
-                return False
-            if not str(payload).startswith("[mic] heard: "):
-                return False
-            heard = str(payload)[len("[mic] heard: "):].strip()
-            if heard != self._preview_final:
-                return False
-            self._preview_final = None
-            return True
-        except Exception:
-            return False
-
-    def _tk_preview_begin(self):
-        widget = self._text
-        if widget is None or self._preview_on:
-            return
-        widget.configure(state="normal")
-        try:
-            widget.insert("end", "You  ", "you_name")
-            widget.insert("end", "…", "body")
-            widget.insert("end", "\n")
-            line = int(
-                widget.index("end-1c").split(".")[0]) - 1
-            if line < 1:
-                line = 1
-            widget.mark_set("nalox_preview", f"{line}.0")
-            self._preview_on = True
-            widget.see("end")
-        except Exception:
-            pass
-        finally:
-            widget.configure(state="disabled")
-
-    def _tk_preview_set(self, text):
-        text = str(text or "").strip()
-        if not text:
-            return
-        if not self._preview_on:
-            self._tk_preview_begin()
-            if not self._preview_on:
-                return
-        widget = self._text
-        if widget is None:
-            return
-        widget.configure(state="normal")
-        try:
-            line = widget.index(
-                "nalox_preview").split(".")[0]
-            widget.delete(f"{line}.0", f"{line}.end")
-            widget.insert(f"{line}.0", "You  ", "you_name")
-            widget.insert(f"{line}.end", text, "body")
-            widget.see("end")
-        except Exception:
-            pass
-        finally:
-            widget.configure(state="disabled")
-
-    def _tk_preview_end(self, text):
-        if not self._preview_on:
-            return
-        text = str(text or "").strip()
-        widget = self._text
-        if widget is None:
-            self._preview_on = False
-            return
-        widget.configure(state="normal")
-        try:
-            line = widget.index(
-                "nalox_preview").split(".")[0]
-            if text:
-                widget.delete(f"{line}.0", f"{line}.end")
-                widget.insert(f"{line}.0", "You  ",
-                              "you_name")
-                widget.insert(f"{line}.end", text, "body")
-                self._preview_final = text
-                self._preview_final_at = time.monotonic()
-                widget.see("end")
-            else:
-                widget.delete(f"{line}.0",
-                              f"{line}.0 + 1 line")
-            try:
-                widget.mark_unset("nalox_preview")
-            except Exception:
-                pass
-        except Exception:
-            pass
-        finally:
-            widget.configure(state="disabled")
-        self._preview_on = False
-
     def _poll(self):
         """Drain the queue into the widgets; reschedule via after()."""
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
                 if kind == "log":
-                    if not self._preview_consume_final(payload):
-                        self._append(payload)
-                elif kind == "preview_begin":
-                    self._tk_preview_begin()
-                elif kind == "preview":
-                    self._tk_preview_set(payload)
-                elif kind == "preview_end":
-                    self._tk_preview_end(payload)
+                    self._append(payload)
+                elif kind == "input_text":
+                    if self._input_entry is not None:
+                        try:
+                            self._input_entry.delete(0, "end")
+                            self._input_entry.insert(
+                                0, str(payload or ""))
+                        except Exception:
+                            pass
+                elif kind == "dict_state":
+                    _st, _left = payload
+                    if self._dict_label is not None:
+                        try:
+                            import dashboard as _dash_mod
+                            self._dict_label.configure(
+                                text=_dash_mod
+                                .dictation_state_text(_st, _left))
+                        except Exception:
+                            pass
+                    if self._mic_btn is not None:
+                        try:
+                            self._mic_btn.configure(
+                                text="⏹" if _st in (
+                                    "recording", "followup")
+                                else "🎙")
+                        except Exception:
+                            pass
                 elif kind == "status":
                     self._status_state = payload
                     label, fg, bg = STATUS_STYLES.get(

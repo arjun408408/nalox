@@ -150,10 +150,23 @@ failure logs the real exception once per attempt with a
 cooldown against retry storms, and _open_dashboard adds at
 most one companion line per distinct failure — with the
 caller chain attached, so any mystery caller names itself.
+
+v9.0 — TEXT-FIRST (the owner's architecture order,
+2026-11-16 19:40 IST): the ears are REMOVED. No wake word,
+no always-on listening, no local Whisper worker fleet —
+ears.py is deleted and nothing at runtime loads a local
+speech model. Nalox reads TEXT: typed in the windows'
+input rows, sent from Telegram, or produced by ONE-SHOT
+DICTATION (dictation.py — mic button / global hotkey /
+armed windows; cloud transcription, Groq Whisper first).
+The main loop is an input-queue consumer; every item is
+handled exactly like a Telegram message. Voice REPLIES
+are unchanged (the TTS chain never depended on the ears).
 """
 import inspect
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -186,7 +199,10 @@ CLEAN_EXIT_CODE = 42
 ALREADY_RUNNING_CODE = 43
 
 from config import CONFIG                     # noqa: E402
-from ears import Ears                          # noqa: E402
+# v9.0: ears.py is DELETED (text-first order) — dictation.py
+# is the only hearing left, and it is one-shot + cloud-only.
+import dictation as _dictation_mod             # noqa: E402
+from dictation import Dictation                # noqa: E402
 from voice import Speaker                      # noqa: E402
 import voice as _voice_mod                     # noqa: E402  (barge-in stop)
 import logbook                                 # noqa: E402  (diagnostics page)
@@ -214,33 +230,12 @@ def _addr(cfg):
     return cfg.get("user_name", "Arjun")
 
 
-def _wake_ack(cfg):
-    """(text, lang) spoken the moment the wake word lands (v5.4).
-
-    Arjun's chosen wake line — config wake_line, default "Yes
-    Sir, I'm here." (v5.7; the v5.4 default was "Yes Sir, I'm
-    coming for you.") — replaces the old short ack on
-    BOTH wake paths: bare wake and "Nalox, wake up" both flow
-    through the main loop's single say(ack), so this helper is
-    the whole feature, and nothing else is spoken before
-    listening starts. The line is the acknowledgement.
-
-    The spoken language follows the line's OWN script, so an
-    English line is never read out by a Bengali voice (or the
-    reverse). An empty wake_line (Settings → General "Wake
-    reply" cleared) brings the classic pre-v5.4 ack back."""
-    line = str((cfg or {}).get("wake_line") or "").strip()
-    if line:
-        if any("\u0980" <= ch <= "\u09ff" for ch in line):
-            return line, "bn"
-        if any("\u0900" <= ch <= "\u097f" for ch in line):
-            return line, "hi"
-        return line, "en"
-    default_lang = str((cfg or {}).get("default_language")
-                       or "en").lower()
-    if default_lang.startswith("bn"):
-        return "হ্যাঁ, বলো?", "bn"
-    return f"Yes, {_addr(cfg)}?", "en"
+# v9.0: _wake_ack is GONE — the wake acknowledgement ("Yes
+# Sir, I'm here.") retired with the wake word itself (the
+# owner's text-first order). Dictation needs no spoken ack:
+# the UI shows the recording state. The wake_line config key
+# remains in config.py defaults, inert, so old config files
+# keep loading.
 
 
 def _missed_command_line(brain, cfg):
@@ -349,30 +344,29 @@ def hudlog(msg):
 
 
 # ------------------------------------------------------------- v7.10 P4
-# FIRST-WAKE BOOT DIET. Field report (owner, 2026-11-16
-# 14:41 IST): after boot his speech does not get through
-# until the first successful wake — only after Nalox has
-# woken once does everything respond. The boot minute is
-# crowded: the command-lane preload, brain validation,
-# logsync's first sync, the +60 s updater check, and
-# (v7.9) the male fixed-line cache warming, a NETWORK
-# synthesis pass — while worker-slow lines land inside
-# the first minute of sessions. The ears own the boot
-# minute now: non-essential warm-up work waits behind
-# this gate, which opens on the FIRST SUCCESSFUL WAKE
-# of the session or BOOT_GATE_DEADLINE_S after boot,
-# whichever comes first. Deferred in this release: the
-# male cache warming (the only deferred starter — see
-# main()). Audited and DELIBERATELY LEFT (FOR-AI.md
-# v7.10): logsync's first sync (already ~75 s, outside
-# the first minute, and it is the diagnostic channel)
+# FIRST-INPUT BOOT DIET (v7.10: first-wake; v9.0: first
+# input). Field report (owner, 2026-11-16 14:41 IST):
+# after boot his speech did not get through until the
+# first successful wake. The boot minute is crowded:
+# brain validation, logsync's first sync, the +60 s
+# updater check, and (v7.9) the male fixed-line cache
+# warming, a NETWORK synthesis pass. Non-essential
+# warm-up work waits behind this gate, which opens on
+# the FIRST INPUT of the session (v9.0: the first typed /
+# dictated / Telegram-handled turn) or
+# BOOT_GATE_DEADLINE_S after boot, whichever comes
+# first. Deferred in this release: the male cache
+# warming (the only deferred starter — see main()).
+# Audited and DELIBERATELY LEFT (FOR-AI.md v7.10):
+# logsync's first sync (already ~75 s, outside the
+# first minute, and it is the diagnostic channel)
 # and the updater's +60 s boot check (one tiny version
 # probe; it is the mechanism that self-delivered
 # v7.4/v7.6/v7.8 in the field — the v7.9/v7.10
 # auto-update guarantee rides on it). The gate opens
 # exactly once and says so in ONE log line naming the
 # trigger: "[sys] boot warm-up gate opened (first
-# wake)" / "(120s)".
+# input)" / "(120s)".
 BOOT_GATE_DEADLINE_S = 120.0
 _boot_gate = threading.Event()
 _boot_gate_lock = threading.Lock()
@@ -380,12 +374,12 @@ _boot_gate_opened = False
 
 
 def _open_boot_gate(reason):
-    """Open the first-wake boot gate (v7.10, item P4):
-    release every deferred warm-up starter and log the
-    opening ONCE, naming what opened it ("first wake"
-    or "120s"). Later calls are silent no-ops. Returns
-    True only for the call that opened it. Never
-    raises."""
+    """Open the first-input boot gate (v7.10, item P4;
+    v9.0 trigger): release every deferred warm-up
+    starter and log the opening ONCE, naming what
+    opened it ("first input" or "120s"). Later calls
+    are silent no-ops. Returns True only for the call
+    that opened it. Never raises."""
     global _boot_gate_opened
     try:
         with _boot_gate_lock:
@@ -430,27 +424,24 @@ def _after_boot_gate(fn):
 # runs them concurrently, loadscreen.py renders them).
 # Each returns (status, detail): "ok" / "warn" / "fail"
 # plus one short checklist line. Every stage wraps an
-# EXISTING readiness signal — the ears lane clients'
-# ping lifecycle proof (the worker preloads its models
-# BEFORE it answers a ping, so a pong IS "lane ready,
-# model loaded"), sounddevice's device pick, the
-# speaker's own active-voice read, the phone link's
+# EXISTING readiness signal — sounddevice's device pick,
+# the speaker's own active-voice read, the phone link's
 # local state — and the Brain's probe methods feed the
 # answering machinery itself (validation state,
 # persisted dead marks, reachability caches). No stage
 # keeps a shadow copy of anything.
-BOOT_PROBE_WAKE_DEADLINE_S = 30.0
-BOOT_PROBE_COMMAND_DEADLINE_S = 40.0
+# v9.0: the four ears stages are gone with the ears; the
+# mic stage now proves a microphone exists for one-shot
+# dictation (dictation.pick_input_device).
 
 
 def _boot_probe_mic(cfg):
-    """The microphone stage: the existing device pick
-    (v7.1's probe-and-choose included) + proof that at
-    least one input device exists."""
+    """The microphone stage: the dictation device pick
+    (the v7.1 probe-and-choose, ported to dictation.py)
+    + proof that at least one input device exists."""
     try:
-        import ears as _ears_mod
-        idx = _ears_mod.pick_input_device(cfg)
-        name = _ears_mod._device_name(idx)
+        idx = _dictation_mod.pick_input_device(cfg)
+        name = _dictation_mod._device_name(idx)
         try:
             import sounddevice as _sd
             have = any(
@@ -461,42 +452,6 @@ def _boot_probe_mic(cfg):
         if have:
             return ("ok", name)
         return ("fail", "no microphone found")
-    except Exception as exc:
-        return ("warn", f"could not check "
-                        f"({type(exc).__name__})")
-
-
-def _boot_probe_lane(ears, lane):
-    """One transcription lane's stage (v7.11): a ping
-    through the lane's OWN client. The worker spawns on
-    the request, preloads its models, and only then
-    answers — so a pong means the lane is warm before
-    the first word is spoken, instead of the first
-    segment paying the load mid-conversation. A ping
-    that burns its whole deadline reads as still
-    warming (the worker is loading, not dead); one
-    that fails fast reads as a worker that could not
-    start."""
-    label = "wake ears" if lane == "wake" \
-        else "command ears"
-    try:
-        client = ears._wake_lane_client() \
-            if lane == "wake" \
-            else ears._command_lane_client()
-        if client is None:
-            return ("fail", f"no {label}")
-        deadline = BOOT_PROBE_WAKE_DEADLINE_S \
-            if lane == "wake" \
-            else BOOT_PROBE_COMMAND_DEADLINE_S
-        t0 = time.monotonic()
-        val = client.request("ping", None, deadline)
-        if val is not None:
-            return ("ok", "ready")
-        if time.monotonic() - t0 >= deadline * 0.8:
-            return ("warn", "still loading models — "
-                            "finishes in background")
-        return ("fail", f"{label} worker could not "
-                        f"start")
     except Exception as exc:
         return ("warn", f"could not check "
                         f"({type(exc).__name__})")
@@ -565,203 +520,14 @@ def _boot_probe_telegram(holder):
                         f"({type(exc).__name__})")
 
 
-# ------------------------------------------------------------- v8.0
-# REAL-READINESS STAGES. The v7.11 probe proved every piece
-# ANSWERS; these stages prove the system can actually WORK
-# before the interface opens — the big transcription model
-# LOADED (not merely loadable on first need) and one real
-# decode COMPLETED through the command lane. Field cause:
-# v7.11 declared 11/11 in ~6 s while large-v3-turbo was
-# still loading, and the owner's first hello (~15:30:55)
-# died on an empty transcription. The brain-side sibling
-# (one real completion through the lead brain) is
-# Brain.probe_brain_answer_boot.
-BOOT_BIG_MODEL_WAIT_S = 150.0
-BOOT_EARS_TEST_WAIT_S = 170.0
-# v8.2: the forced big-model load waits for BOTH ears
-# lanes to be up before it starts (bounded by this
-# budget, inside the stage's own wait) — see
-# _boot_probe_big_model.
-BOOT_BIG_LANES_WAIT_S = 60.0
-
-
-def _boot_lanes_up(ears):
-    """Both transcription lanes up (v8.2): each lane's
-    worker has posted its ready sentinel and its process
-    is alive. A lane mid-respawn (not ready, or a dead /
-    absent process) reads as NOT up — the big-model load
-    waits for it. A stand-in client with no _ready
-    attribute (the suites' fakes) counts as up. Never
-    raises."""
-    try:
-        for client in (ears._wake_lane_client(),
-                       ears._command_lane_client()):
-            if client is None:
-                return False
-            ready = getattr(client, "_ready", None)
-            if ready is None:
-                continue
-            if not ready:
-                return False
-            proc = getattr(client, "_proc", None)
-            if proc is None:
-                return False
-            try:
-                if not proc.is_alive():
-                    return False
-            except Exception:
-                return False
-        return True
-    except Exception:
-        return False
-
-
-def _boot_test_audio():
-    """~1 s of deterministic speech-like audio (v8.0),
-    synthesized in code — no shipped file. A sine stack
-    under a smooth envelope is enough: the readiness
-    stages test that the decode PIPELINE completes and
-    that naming the big model triggers its load, never
-    transcription accuracy. The clip must stay >= 0.2 s:
-    ears' transcribe() returns early below that, before
-    the model load is ever reached. None on failure."""
-    try:
-        import numpy as _np
-        sr = 16000
-        t = _np.arange(sr, dtype=_np.float32) / sr
-        env = _np.sin(_np.pi * t) ** 2
-        audio = (0.22 * _np.sin(2 * _np.pi * 110.0 * t)
-                 + 0.14 * _np.sin(2 * _np.pi * 220.0 * t)
-                 + 0.05 * _np.sin(2 * _np.pi * 880.0 * t))
-        return (audio * env).astype(_np.float32)
-    except Exception:
-        return None
-
-
-def _boot_probe_big_model(ears, cfg, holder=None):
-    """The Full-transcription-model stage (v8.0): tell
-    the command lane to START the big-model load now —
-    through the very decode job the lazy path submits on
-    first need — and wait until the lane's own big-model
-    state says the model is loaded. The trigger job's
-    result is not the verdict (the resolved notice lands
-    a pump later); the lane state is, polled via pings
-    whose pumps absorb the notices. A ladder failure
-    (latched, or armed = preload failed with a background
-    retry pending) resolves ✗ with its reason — the
-    small model still serves, and a failed stage never
-    blocks the gate.
-
-    v8.2 STAGGER: the trigger job is submitted only once
-    BOTH ears lanes are up (ready + alive), polling
-    inside BOOT_BIG_LANES_WAIT_S of this stage's budget —
-    a lane mid-respawn keeps the load waiting. In v8.1
-    the load could start in the same seconds as the lane
-    workers' own spawns/preloads, and the combined
-    allocation burst hit the PC's memory wall
-    (mkl_malloc). The gate's semantics are unchanged:
-    the stage still resolves on the lane state exactly
-    as before, and the wait is bounded well inside it."""
-    try:
-        import ears as _ears_mod
-        _stage_t0 = time.monotonic()
-        client = ears._command_lane_client()
-        if client is None:
-            return ("fail", "no command ears")
-        model = (cfg.get("whisper_command_model")
-                 or _ears_mod.BIG_COMMAND_MODEL)
-        if getattr(client, "_big_state", None) == "done":
-            return ("ok", f"{client._big_resolved_name or model} "
-                            f"ready")
-        if model in ("tiny", "base", "small"):
-            return ("ok", f"command model {model} — no "
-                          f"big model to load")
-        _lanes_deadline = (time.monotonic()
-                           + BOOT_BIG_LANES_WAIT_S)
-        while time.monotonic() < _lanes_deadline:
-            if _boot_lanes_up(ears):
-                break
-            time.sleep(0.5)
-        audio = _boot_test_audio()
-        if audio is None:
-            return ("warn", "could not build the test "
-                            "clip")
-        try:
-            client.request("command", (audio, model, None),
-                           _ears_mod.COMMAND_TX_DEADLINE)
-        except Exception:
-            pass
-        # v8.2: the poll budget runs from the STAGE's
-        # start, so the lanes wait above spends the same
-        # budget — the stage still resolves well inside
-        # its 175 s deadline.
-        deadline = _stage_t0 + BOOT_BIG_MODEL_WAIT_S
-        while time.monotonic() < deadline:
-            state = getattr(client, "_big_state", None)
-            if state == "done":
-                return ("ok", f"{client._big_resolved_name or model} "
-                                f"loaded")
-            if state in ("latched", "armed"):
-                reason = ""
-                detail = getattr(client, "_big_detail",
-                                 None)
-                if detail:
-                    try:
-                        reason = str(detail[1] or "")
-                    except Exception:
-                        reason = ""
-                return ("fail", "big model unavailable"
-                        + (f" ({reason})" if reason else "")
-                        + " — small model serves")
-            try:
-                client.request("ping", None, 5.0)
-            except Exception:
-                pass
-            time.sleep(0.5)
-        return ("warn", f"still loading {model} — "
-                        f"finishes in background")
-    except Exception as exc:
-        return ("warn", f"could not check "
-                        f"({type(exc).__name__})")
-
-
-def _boot_probe_ears_test(ears, cfg, holder):
-    """The Ears running test (v8.0): once the big-model
-    stage has resolved, submit ONE real decode job
-    through the command lane and require it to COMPLETE
-    inside its normal deadline. Any result — even empty
-    text — passes: this tests pipeline completion, not
-    accuracy. A timeout/crash resolves ✗ (which still
-    never blocks the gate)."""
-    try:
-        import ears as _ears_mod
-        probe = holder.get("probe")
-        if probe is not None:
-            wait_until = (time.monotonic()
-                          + BOOT_EARS_TEST_WAIT_S)
-            while time.monotonic() < wait_until:
-                st = probe.stage("bigmodel")
-                if st is None or st.get("resolved"):
-                    break
-                time.sleep(0.5)
-        client = ears._command_lane_client()
-        if client is None:
-            return ("fail", "no command ears")
-        audio = _boot_test_audio()
-        if audio is None:
-            return ("warn", "could not build the test "
-                            "clip")
-        model = (cfg.get("whisper_command_model")
-                 or _ears_mod.BIG_COMMAND_MODEL)
-        got = client.request(
-            "command", (audio, model, None),
-            _ears_mod.COMMAND_TX_DEADLINE)
-        if got is not None:
-            return ("ok", "decode pipeline completed")
-        return ("fail", "decode did not complete in time")
-    except Exception as exc:
-        return ("warn", f"could not check "
-                        f"({type(exc).__name__})")
+# ------------------------------------------------------------- v9.0
+# The v8.0 REAL-READINESS ears stages (_boot_probe_big_model,
+# _boot_probe_ears_test, _boot_lanes_up, _boot_test_audio)
+# are REMOVED with the ears: there is no local transcription
+# model to force-load and no decode pipeline to test. The
+# brain-side sibling (one real completion through the lead
+# brain, Brain.probe_brain_answer_boot) stays — it is a
+# brain check, not an ears check.
 
 
 def hudstatus(state):
@@ -782,27 +548,27 @@ def hudstatus(state):
 
 # ------------------------------------------- v7.0 LIVENESS WATCHDOG
 # The heartbeat proves the process lives; it does not prove
-# the LOOP moves. v7.0: the main loop stamps its stage at
-# every boundary (listening / heard / transcribing /
-# thinking / speaking) and a supervisor thread checks the
-# stamp every few seconds:
+# the LOOP moves. The main loop stamps its stage at every
+# boundary (listening / thinking / speaking) and a
+# supervisor thread checks the stamp every few seconds:
 #   * "speaking" past watchdog_speaking_s (45 s) — speech
 #     is cut through the EXISTING stop path (voice.stop(),
 #     the same lever barge-in pulls), one logbook ERROR
 #     names the stage + duration, back to listening;
 #   * any other non-listening stage past watchdog_stage_s
-#     (90 s) — one logbook ERROR, and for the transcription
-#     stages the lane workers are respawned (the ears
-#     clients' own restart machinery). The process is
+#     (90 s) — one logbook ERROR names it. The process is
 #     NEVER killed from here — restarts belong to the
 #     supervisor/service layer, exit codes unchanged.
 # Interventions are throttled per stage (1 per 2 min) so a
 # pathological loop cannot spam the log the owner reads.
-# "listening" itself is never judged here — a quiet room
-# is legitimate; the ears stream watchdog (ears.py) owns
-# the listening state's health. Pure policy + arithmetic:
+# "listening" itself is never judged here — in v9.0 it is
+# the input queue's idle wait, and a quiet room (or a
+# quiet keyboard) is legitimate. Pure policy + arithmetic:
 # the supervisor thread in main() performs the effects, so
 # this class is unit-testable with a fake clock.
+# (v9.0: the v7.0 transcription-stage recovery — respawn
+# the ears lane workers — is REMOVED with the ears; there
+# are no workers left to respawn.)
 WATCHDOG_CHECK_S = 5.0      # supervisor cadence
 WATCHDOG_THROTTLE_S = 120.0  # max 1 intervention/stage/2 min
 
@@ -857,112 +623,49 @@ class _StageWatch:
 
 
 # ------------------------------------------- v5.5 COMMAND CENTER
-class _DashboardPreviewSink:
-    """ears → Command Center bridge for the live hearing
-    preview (v6.7 F): partial transcriptions stream into the
-    YOU bubble while Arjun speaks; the final transcript
-    finalizes it. The dashboard global is read live (it is
-    created lazily), and every dashboard method is already
-    guarded — a preview can never break listening."""
+# v9.0: the live-caption preview sinks (_DashboardPreviewSink,
+# _HudPreviewSink, _MultiPreviewSink) are REMOVED with the
+# ears — there is no partial-transcription stream anymore.
+# Dictated text appears in the input box whole, the moment
+# the cloud transcription returns, and is then sent.
 
-    def visible(self):
+
+# ------------------------------------------------------------- v9.0
+# UI INPUT DELEGATES. The windows (Command Center + plain
+# window) are created lazily and never import nalox.py;
+# main() installs the real handlers here and each surface
+# wires its input row to these delegates the moment it
+# exists. A surface built before main() installs the
+# handlers simply drops the input (boot is seconds; the
+# handlers land before the gate opens).
+_input_submit_fn = None
+_mic_trigger_fn = None
+_arm_dictation_fn = None
+# Barge-in (v9.0): set by the mic trigger while speech is
+# playing; say() polls it and cuts the speech — the ears'
+# monitor_interrupt replacement (there is no second stream
+# anymore; the trigger IS the interrupt).
+_barge_event = threading.Event()
+
+
+def _ui_text_submit(text):
+    """A window's input row was submitted (v9.0)."""
+    fn = _input_submit_fn
+    if fn is not None:
         try:
-            return bool(_dashboard is not None
-                        and _dashboard.is_visible())
+            fn(text)
         except Exception:
-            return False
-
-    def begin(self):
-        # v7.6: each surface gates on its OWN visibility —
-        # the fan-out sink may start the pump for the OTHER
-        # surface; a hidden dashboard must not open (or be
-        # fed) a bubble nobody can see.
-        if self.visible() and _dashboard is not None:
-            _dashboard.begin_you_preview()
-
-    def update(self, text):
-        if self.visible() and _dashboard is not None:
-            _dashboard.update_you_preview(text)
-
-    def finish(self, text):
-        if not self.visible() or _dashboard is None:
-            return
-        if text:
-            _dashboard.end_you_preview(text)
-        else:
-            _dashboard.cancel_you_preview()
+            pass
 
 
-class _HudPreviewSink:
-    """The live hearing preview's plain-window surface
-    (v7.6, item F): partials land in the HUD's conversation
-    view as an in-place "You …" line, so the owner sees his
-    words as he speaks even with the Command Center closed
-    — v7.5 field: he closed it mid-session and the screen
-    sat on a bare "Listening" while he talked. Same sink
-    contract as the dashboard's; every method gates on
-    THIS window being shown (it builds withdrawn)."""
-
-    def visible(self):
+def _ui_mic_press():
+    """A window's mic button was pressed (v9.0)."""
+    fn = _mic_trigger_fn
+    if fn is not None:
         try:
-            return bool(_hud is not None and _hud.is_shown())
+            fn()
         except Exception:
-            return False
-
-    def begin(self):
-        if self.visible():
-            _hud.preview_begin()
-
-    def update(self, text):
-        if self.visible():
-            _hud.preview_update(text)
-
-    def finish(self, text):
-        if self.visible():
-            _hud.preview_finish(text)
-
-
-class _MultiPreviewSink:
-    """Fan-out preview sink (v7.6, item F): the ears pump
-    streams whenever ANY surface is visible, and each
-    surface receives only while IT is visible — a hidden
-    Command Center no longer starves the visible plain
-    window, and vice versa. Wake semantics, the partial
-    matcher and the pump itself are untouched: this only
-    routes the same callbacks to both chat surfaces."""
-
-    def __init__(self, *sinks):
-        self._sinks = [s for s in sinks if s is not None]
-
-    def visible(self):
-        for sink in self._sinks:
-            try:
-                if sink.visible():
-                    return True
-            except Exception:
-                pass
-        return False
-
-    def begin(self):
-        for sink in self._sinks:
-            try:
-                sink.begin()
-            except Exception:
-                pass
-
-    def update(self, text):
-        for sink in self._sinks:
-            try:
-                sink.update(text)
-            except Exception:
-                pass
-
-    def finish(self, text):
-        for sink in self._sinks:
-            try:
-                sink.finish(text)
-            except Exception:
-                pass
+            pass
 
 
 # v5.5.1: the last companion line _open_dashboard logged, keyed
@@ -998,6 +701,10 @@ def _open_dashboard():
             if _hud is not None:
                 _dashboard.attach(_hud)
             _dashboard.start()
+            # v9.0: wire the input row (typed text + mic
+            # button) to the main loop's delegates.
+            _dashboard.on_text_submit = _ui_text_submit
+            _dashboard.on_mic_press = _ui_mic_press
         if _dashboard.show():
             try:
                 _hide = getattr(_hud, "hide", None)
@@ -1067,10 +774,19 @@ def _show_for_wake_up():
     never shown on this path, never substituted on failure,
     and the show flag is not written (its poller is a
     start-surface path of its own now). If the Center can't
-    open, the failure is already logged by _open_dashboard;
-    the wake itself still lands (the caller goes on to
-    listen for the command). Never raises."""
-    return _open_dashboard()
+    open, the failure is already logged by _open_dashboard.
+    v9.0: the wake WORD is gone, but "open the Command
+    Center" (voice/typed/Telegram/UI) still lands here —
+    and a successful open ARMS one dictation, so he can
+    simply start talking (the v9.0 auto-arm). Never
+    raises."""
+    ok = _open_dashboard()
+    if ok and _arm_dictation_fn is not None:
+        try:
+            _arm_dictation_fn()
+        except Exception:
+            pass
+    return ok
 
 
 # ---------------------------------------------------- v4.7 ALWAYS-ON
@@ -1689,6 +1405,7 @@ def _reminder_checker(store, speaker, cfg):
 
 def main():
     global _hud, _dashboard
+    global _input_submit_fn, _mic_trigger_fn, _arm_dictation_fn
     cfg = CONFIG
     # v7.11: the boot probe's hard cap is measured from
     # process start (GATE_CAP_S) — this is as close to
@@ -1781,7 +1498,119 @@ def main():
                 _bn_fixed))
     except Exception:
         pass
-    ears = Ears(cfg)
+    # ------------------------------------------------ v9.0 INPUT
+    # TEXT-FIRST: the main loop consumes an input queue.
+    # Every item is (text, lang, kind, rec_s, tx_s, label)
+    # and is handled exactly like a Telegram message.
+    # Producers: the windows' input rows (typed), the
+    # one-shot Dictation (mic button / hotkey / armed
+    # windows), and a "missed" sentinel for a dictation
+    # that heard speech but got nothing usable back.
+    _input_q = queue.Queue()
+
+    def _followup_s():
+        try:
+            return max(1.0, float(cfg.get("followup_seconds", 8)
+                                  or 8))
+        except Exception:
+            return 8.0
+
+    def _on_dictation_text(text, lang, source, rec_s, tx_s):
+        hudlog(f"[input] dictation ({source}): {text}")
+        # v9.0 brief: the dictated text is SHOWN in the
+        # input box (both windows) and auto-sent — he sees
+        # exactly what the brain received.
+        for _win in (_dashboard, _hud):
+            if _win is not None:
+                try:
+                    _win.set_input_text(text)
+                except Exception:
+                    pass
+        _input_q.put((text, lang, "dictation", rec_s, tx_s,
+                      f"🎙 {source}"))
+
+    def _on_dictation_empty(had_speech):
+        # He spoke but the cloud returned nothing usable:
+        # the main loop speaks the could-not-hear line
+        # (serialized there — never from this thread). A
+        # no-speech ending (an arm that heard nothing, a
+        # press with nothing said) closes silently.
+        if had_speech:
+            _input_q.put(("", None, "missed", 0.0, 0.0, ""))
+
+    def _on_dictation_state(state, seconds_left):
+        for _win in (_dashboard, _hud):
+            if _win is not None:
+                try:
+                    _win.set_dictation_state(state,
+                                             seconds_left)
+                except Exception:
+                    pass
+
+    _mic_error_spoken = [False]
+
+    def _on_mic_error():
+        hudlog("[mic] could not open the microphone")
+        if not _mic_error_spoken[0]:
+            _mic_error_spoken[0] = True
+            try:
+                if not _voice_mod.is_speaking():
+                    speaker.say("স্যার, মাইকে সমস্যা হচ্ছে।",
+                                lang="bn", fixed=True)
+            except Exception:
+                pass
+
+    dictation = Dictation(
+        cfg,
+        on_text=_on_dictation_text,
+        on_empty=_on_dictation_empty,
+        on_state=_on_dictation_state,
+        on_mic_error=_on_mic_error)
+
+    def _submit_text(text):
+        """A typed line from a window's input row (v9.0):
+        logged with its source, then queued exactly like
+        a Telegram message. Typed input wins over an
+        armed dictation (the arm is cancelled)."""
+        text = (text or "").strip()
+        if not text:
+            return
+        try:
+            dictation.cancel()
+        except Exception:
+            pass
+        hudlog(f"[input] text: {text}")
+        _input_q.put((text, None, "typed", 0.0, 0.0,
+                      "⌨ typed"))
+
+    def _mic_trigger():
+        """The mic button / global hotkey (v9.0). While
+        Nalox is speaking, the press is a BARGE-IN: the
+        event cuts the speech (say() polls it) and the
+        dictation starts; otherwise the press toggles
+        the one-shot dictation (start / finish-now)."""
+        try:
+            if _voice_mod.is_speaking():
+                _barge_event.set()
+        except Exception:
+            pass
+        dictation.trigger()
+
+    def _next_input(timeout_s):
+        """The next queued input item, or None on timeout
+        (the confirm flow's yes/no wait)."""
+        try:
+            return _input_q.get(
+                timeout=max(0.1, float(timeout_s)))
+        except queue.Empty:
+            return None
+
+    # The windows wire themselves to these delegates.
+    _input_submit_fn = _submit_text
+    _mic_trigger_fn = _mic_trigger
+    _arm_dictation_fn = lambda: dictation.arm_followup(
+        _followup_s())
+
     brain = Brain(cfg, speaker)
 
     # v7.11 (Ready Means Ready): the BOOT PROBE starts
@@ -1789,47 +1618,24 @@ def main():
     # by the time the gate below is reached, each
     # provider/subsystem has been checked, ordered and
     # marked (the dead Gemini names are already in the
-    # persisted dead set, Ollama is already started,
-    # the ears' workers are already warm). A failure to
-    # even START the probe costs nothing: _boot_probe
-    # stays None and the boot is v7.10's, exactly.
+    # persisted dead set, Ollama is already started).
+    # A failure to even START the probe costs nothing:
+    # _boot_probe stays None and the boot proceeds
+    # ungated, exactly as before v7.11.
+    # v9.0: the stage set is bootprobe.STAGE_DEFS — the
+    # four ears stages are gone with the ears; what
+    # remains is the mic (for dictation), the brain
+    # probes + the real lead answer test, voice, phone
+    # and Telegram.
     _boot_probe = None
     _boot_ctx = {"bridge": None}
     try:
         import bootprobe as _bootprobe_mod
         _boot_probe = _bootprobe_mod.BootProbe()
-        # v8.0: the ears running test reads the probe
-        # itself (it waits for the big-model stage) —
-        # publish it into the holder before any stage
-        # starts.
         _boot_ctx["probe"] = _boot_probe
         _boot_probe.start_stage(
             "mic", lambda: _boot_probe_mic(cfg),
             timeout_s=10.0)
-        _boot_probe.start_stage(
-            "wake", lambda: _boot_probe_lane(ears, "wake"),
-            timeout_s=35.0)
-        _boot_probe.start_stage(
-            "command",
-            lambda: _boot_probe_lane(ears, "command"),
-            timeout_s=45.0)
-        # v8.0: the three REAL-readiness stages — the big
-        # transcription model actually loaded, one real
-        # decode completed, one real brain answer received
-        # (see the stage functions). Their deadlines sit
-        # just under the 180 s gate cap; a stage that
-        # outlives its deadline resolves as still-warming
-        # exactly like every v7.11 stage.
-        _boot_probe.start_stage(
-            "bigmodel",
-            lambda: _boot_probe_big_model(ears, cfg,
-                                          _boot_ctx),
-            timeout_s=175.0)
-        _boot_probe.start_stage(
-            "earstest",
-            lambda: _boot_probe_ears_test(ears, cfg,
-                                          _boot_ctx),
-            timeout_s=175.0)
         _boot_probe.start_stage(
             "groq", lambda: brain.probe_groq_boot(),
             timeout_s=30.0)
@@ -1875,76 +1681,59 @@ def main():
     except Exception as exc:
         log.warning("Step-aside hook not registered: %s", exc)
 
-    # v6.7 F: live hearing preview — while Arjun speaks a
-    # command, his words stream into the Command Center's
-    # YOU bubble (the Gemini-app feel he asked for). The
-    # sink reads the dashboard global live (created lazily);
-    # a hidden or absent dashboard means no previews at all.
-    # v7.6 F: the preview now fans out to BOTH chat
-    # surfaces (Command Center + the plain window's
-    # conversation view) — whichever one he can see shows
-    # his words live; neither surface's hidden state can
-    # starve the other.
+    # v9.0: dictation status lines ("[mic] connected …"
+    # when a dictation opens the mic) route to the
+    # HUD/logbook exactly like the old ears status lines
+    # did. The wake/wake-up/mic-alert callbacks are gone
+    # with the wake word — a dictation that cannot open
+    # the mic reports through Dictation's on_mic_error
+    # (wired at construction above).
     try:
-        ears.set_preview_sink(_MultiPreviewSink(
-            _DashboardPreviewSink(), _HudPreviewSink()))
+        _dictation_mod.set_status_callback(hudlog)
     except Exception as exc:
-        log.warning("Preview sink not registered: %s", exc)
+        log.warning("Dictation status callback failed: %s", exc)
 
-    # Wake feedback (v3.4): the instant the wake word matches, post to
-    # the HUD and play a short beep, so Arjun KNOWS Nalox heard him.
-    def _on_wake():
-        # v7.10 (item P4): a successful wake opens the
-        # first-wake boot gate — the deferred warm-up
-        # work (male cache warming) starts now, once
-        # the ears have proven themselves. Once-only
-        # inside _open_boot_gate; every later wake is a
-        # no-op here.
+    # v9.0: the GLOBAL DICTATION HOTKEY (config
+    # dictation_hotkey, default Ctrl+Alt+Space) — a
+    # dedicated thread owns the Windows RegisterHotKey
+    # registration and its message loop (stdlib ctypes;
+    # no new dependency). Any failure — a taken combo,
+    # a non-Windows host — leaves the hotkey off and
+    # says so once; the buttons keep working.
+    def _hotkey_thread():
         try:
-            _open_boot_gate("first wake")
-        except Exception:
-            pass
-        hudlog("[mic] wake word heard")
-        try:
-            import winsound
-            winsound.Beep(880, 120)
-        except Exception:
-            pass
+            spec = str(cfg.get("dictation_hotkey")
+                       or "ctrl+alt+space")
+            parsed = _dictation_mod.parse_hotkey(spec)
+            if parsed is None:
+                hudlog(f"[hotkey] dictation hotkey "
+                       f"{spec!r} not understood — hotkey off")
+                return
+            if not sys.platform.startswith("win"):
+                return
+            import ctypes
+            from ctypes import wintypes
+            _MOD_NOREPEAT = 0x4000
+            _WM_HOTKEY = 0x0312
+            _user32 = ctypes.windll.user32
+            if not _user32.RegisterHotKey(
+                    None, 1, parsed[0] | _MOD_NOREPEAT,
+                    parsed[1]):
+                hudlog(f"[hotkey] could not register "
+                       f"{spec} (another app may own it) "
+                       f"— the mic buttons still work")
+                return
+            hudlog(f"[hotkey] dictation hotkey live: {spec}")
+            _msg = wintypes.MSG()
+            while _user32.GetMessageW(ctypes.byref(_msg),
+                                      None, 0, 0) > 0:
+                if _msg.message == _WM_HOTKEY:
+                    _mic_trigger()
+        except Exception as exc:
+            log.warning("Hotkey thread failed: %s", exc)
 
-    # v5.2: "Nalox, wake up" — SHOW the window, instantly. The
-    # ears and the HUD live in this same process, so the show is
-    # a direct call when the HUD exists; the show_request.flag
-    # path (watched by the poller below) is the fallback for
-    # when it doesn't. Bare "Nalox" never reaches this callback.
-    # v5.5: wake up now opens the COMMAND CENTER (fullscreen
-    # dashboard). v6.2: _show_for_wake_up is dashboard-ONLY —
-    # the plain window never comes up on this path.
-    def _on_wake_up():
-        hudlog("[wake] wake up — opening the Command Center")
-        _show_for_wake_up()
-
-    # v7.0: mic trouble alert — when the ears stream
-    # watchdog burns its whole restart budget, the owner
-    # hears ONE spoken line instead of shouting into a
-    # dead mic. Spoken through the normal speaker, and
-    # only when Nalox is not already talking.
-    def _on_mic_alert():
-        try:
-            if not _voice_mod.is_speaking():
-                speaker.say("স্যার, মাইকে সমস্যা হচ্ছে।",
-                            lang="bn", fixed=True)
-        except Exception:
-            pass
-
-    try:
-        import ears as _ears_mod
-        _ears_mod.set_wake_callback(_on_wake)
-        _ears_mod.set_wake_up_callback(_on_wake_up)
-        # Mic status lines (v3.5): "[mic] connected: ..." etc. -> HUD.
-        _ears_mod.set_status_callback(hudlog)
-        _ears_mod.set_mic_alert_callback(_on_mic_alert)
-    except Exception as exc:
-        log.warning("Ears callbacks not registered: %s", exc)
+    threading.Thread(target=_hotkey_thread, daemon=True,
+                     name="nalox-hotkey").start()
 
     # Hacker console HUD (v3) — optional, never fatal.
     if cfg.get("show_hud", True):
@@ -1956,6 +1745,10 @@ def main():
             # v4.6: the 🔄 Restart button calls this — the HUD
             # itself never imports nalox.py.
             _hud.on_restart = _restart_process
+            # v9.0: the plain window's input row (typed
+            # text + mic button) routes to the delegates.
+            _hud.on_text_submit = _ui_text_submit
+            _hud.on_mic_press = _ui_mic_press
             hudlog(f"> user: {cfg['user_name']} | lang: "
                    f"{cfg.get('default_language', 'en')}")
         except Exception as exc:
@@ -1978,8 +1771,7 @@ def main():
             _dashboard.attach(_hud)
             _dashboard.start()
             _hud.on_command_center = _open_dashboard
-            hudlog("[sys] Command Center ready — say "
-                   "'Nalox, wake up' to open it")
+            hudlog("[sys] Command Center ready")
         except Exception as exc:
             log.warning("Command Center failed to start: %s", exc)
             _dashboard = None
@@ -2091,9 +1883,8 @@ def main():
             pass
         mic_name = "unknown"
         try:
-            import ears as _ears_mod
-            mic_name = _ears_mod._device_name(
-                _ears_mod.pick_input_device(cfg))
+            mic_name = _dictation_mod._device_name(
+                _dictation_mod.pick_input_device(cfg))
         except Exception:
             pass
         out_name = speaker.output_device_name()
@@ -2177,42 +1968,21 @@ def main():
     # Heartbeat (v4.6): one line per minute into nalox_log.txt
     # ONLY (logbook.log_file_only — never the HUD feed, never the
     # HTML page). When Nalox "hangs", the heartbeat tail is the
-    # evidence: the state it died in, the mic it was on, and
-    # whether transcription jobs were piling up in the queue.
+    # evidence: the UI state it died in, the mic dictation
+    # would use, how many inputs are queued, and the
+    # dictation state. (v9.0: the ears' segment/decode
+    # aggregates are gone with the ears — there is no decode
+    # fleet left to flood.)
     try:
         def _heartbeat():
             while True:
                 time.sleep(60)
                 try:
-                    # v7.2 (S2): the gate deltas ride the
-                    # heartbeat — seg/blip/short/peak separate
-                    # "he never spoke" (peak at the floor) from
-                    # "the gate dropped it" (healthy peak,
-                    # seg=0). See ears.wake_listen_stats.
-                    _gs = ears.wake_listen_stats()
-                    # v7.4 (Defect 2): the wake-decode
-                    # aggregate rides the same line when any
-                    # decode happened this window — count by
-                    # path (t=tiny only, b=base retry,
-                    # s=small escalation, r=fast-reject) and
-                    # the slowest decode, so a flood window
-                    # shows its real milliseconds.
-                    _dec_tail = ""
-                    if _gs.get("dec"):
-                        _dec_tail = (
-                            f" dec={_gs['dec']} "
-                            f"(t{_gs.get('dec_tiny', 0)} "
-                            f"b{_gs.get('dec_base', 0)} "
-                            f"s{_gs.get('dec_small', 0)} "
-                            f"r{_gs.get('dec_rej', 0)}) "
-                            f"dmax={_gs.get('dec_max_ms', 0) / 1000.0:.1f}s")
                     logbook.log_file_only(
                         f"[heartbeat] state={_ui_state} "
-                        f"mic={ears.current_mic_name()} "
-                        f"queue={ears.transcribe_queue_size()} "
-                        f"seg={_gs['seg']} blip={_gs['blip']} "
-                        f"short={_gs['short']} "
-                        f"peak={_gs['peak']:.4f}{_dec_tail}")
+                        f"mic={dictation.current_mic_name()} "
+                        f"queue={_input_q.qsize()} "
+                        f"dict={dictation.state}")
                 except Exception:
                     pass
 
@@ -2262,9 +2032,13 @@ def main():
         log.warning("Show-signal poller failed to start: %s", exc)
 
     # Telegram phone bridge — silently off unless configured.
+    # v9.0: the bridge no longer takes the ears — voice notes
+    # transcribe through dictation.transcribe_cloud_bytes.
     try:
         from telegram_bridge import TelegramBridge
-        bridge = TelegramBridge(cfg, brain, speaker, ears)
+        bridge = TelegramBridge(
+            cfg, brain, speaker,
+            on_input=lambda: _open_boot_gate("first input"))
         # v7.11: the boot probe's Telegram stage reads
         # the bridge from the holder (its probe thread
         # started beside the Brain and waits for this).
@@ -2310,10 +2084,10 @@ def main():
     # startup. The outcome lands in the logbook as ONE
     # line with the per-stage verdicts, so a synced log
     # shows what boot knew before the first word.
-    # v8.0: the cap is 180 s (bootprobe.GATE_CAP_S) —
-    # the gate now includes the real-readiness stages
-    # (big model loaded, ears running test, brain
-    # answer test), and the owner ordered the wait.
+    # v9.0: the cap is 90 s (bootprobe.GATE_CAP_S) —
+    # the ears stages are gone; the slowest remaining
+    # stages are the Ollama probe and the brain answer
+    # test.
     if _boot_probe is not None:
         try:
             _gate = _boot_probe.wait_gate(
@@ -2360,17 +2134,6 @@ def main():
             # gate capped with stages still warming, a
             # daemon re-logs the block as they resolve.
             _log_boot_probe_detail(_boot_probe)
-            # v8.2: the gate completed (ready or capped) —
-            # the boot storm is over, so the headless live
-            # pump may start from here. An ABORTED gate
-            # (the pre-v7.11 fallback boot) does NOT mark
-            # this: there the pump waits for both lanes to
-            # be up + settled (ears._live_pump_allowed).
-            try:
-                if _gate in ("ready", "capped"):
-                    ears.note_boot_gate_done()
-            except Exception:
-                pass
             try:
                 if any(s.get("capped")
                        and not s.get("resolved")
@@ -2408,12 +2171,9 @@ def main():
             pass
 
     default_lang = (cfg.get("default_language") or "en").lower()
-    # v5.4: the wake acknowledgement is his chosen wake line
-    # (config wake_line) — see _wake_ack. Both wake paths
-    # (bare wake + "wake up") speak it through the main loop's
-    # say(ack) below; the boot greeting is separate and
-    # unchanged.
-    ack, ack_lang = _wake_ack(cfg)
+    # v9.0: there is NO wake acknowledgement anymore (the
+    # wake word is gone). followup_seconds now sizes the
+    # post-reply dictation arm window.
     followup_seconds = max(0, int(cfg.get("followup_seconds", 8) or 0))
 
     # v7.0: liveness watchdog — the loop stamps its stage
@@ -2457,18 +2217,22 @@ def main():
         """Speak a reply, mirrored to the HUD with a SPEAKING status.
 
         v7.1: fixed=True is forwarded to speaker.say — the
-        fixed-line TTS cache (the wake ack and the
-        could-not-hear line come through here; the greeting
-        and the mic warning call speaker.say directly).
+        fixed-line TTS cache (the could-not-hear line comes
+        through here; the greeting and the mic warning call
+        speaker.say directly).
 
-        v4.1 BARGE-IN: the speech runs on a worker thread while
-        ears.monitor_interrupt listens on its own stream. If Arjun
-        says the wake word / "stop" / "থামো" / "চুপ" mid-speech, the
-        monitor calls voice.stop(), the speech is cut, and this
-        returns "interrupted" — the main loop then goes straight
-        back to listening (the follow-up window), Gemini-style.
-        The boot greeting does NOT come through here (it calls
-        speaker.say directly), so it can never interrupt itself.
+        v9.0 BARGE-IN: the speech runs on a worker thread
+        while this function polls the barge-in event. A mic
+        press (button or hotkey) while Nalox speaks sets
+        the event (see _mic_trigger): the speech is cut via
+        voice.stop() and this returns "interrupted" — and
+        the press has already started the dictation, so he
+        is recording the moment the voice stops. (The ears'
+        monitor_interrupt stream is gone with the ears;
+        the trigger IS the interrupt now.) The boot
+        greeting does NOT come through here (it calls
+        speaker.say directly), so it can never interrupt
+        itself.
 
         v6.5 LIVE CHAT SYNC: the plain window and the logbook
         still receive the reply as ONE full "NALOX:" line (the
@@ -2521,11 +2285,21 @@ def main():
         worker = threading.Thread(target=_speak, daemon=True, name="say")
         worker.start()
         interrupted = False
-        try:
-            interrupted = ears.monitor_interrupt(
-                lambda: worker.is_alive(), _voice_mod.stop)
-        except Exception as exc:
-            log.warning("Barge-in monitor failed: %s", exc)
+        # v9.0: poll the barge-in event while the speech
+        # runs (a stale set from before this speech is
+        # cleared first — only a press DURING this reply
+        # may cut it).
+        _barge_event.clear()
+        while worker.is_alive():
+            if _barge_event.is_set():
+                _barge_event.clear()
+                try:
+                    _voice_mod.stop()
+                except Exception:
+                    pass
+                interrupted = True
+                break
+            worker.join(timeout=0.1)
         worker.join(timeout=40)
         if _dashboard is not None:
             try:
@@ -2539,24 +2313,27 @@ def main():
             return "interrupted"
         return "done"
 
-    def run_command(command, cmd_lang, wake_rec_s=0.0, transcribe_s=0.0):
-        """Run one heard command end-to-end (reply, exit, confirm flow).
+    def run_command(command, cmd_lang, rec_s=0.0,
+                    transcribe_s=0.0, source_label=""):
+        """Run one input end-to-end (reply, exit, confirm flow).
+
+        v9.0: the input is TEXT (typed / dictated /
+        Telegram-shaped) — this is the same door Telegram
+        uses, fed by the input queue. Returns
+        (action, spoke) so the main loop knows whether a
+        follow-up dictation arm makes sense.
 
         v4.3: ends with the [timing] stage line (field fix 4) so
         the log page shows exactly where each cycle's seconds went:
-        wake->record, transcribe, brain, speak.
+        record, transcribe, brain, speak.
         """
         _stage("thinking")
-        # v8.1: the visible input marker — the SYSTEM
+        # v9.0: the visible input marker — the SYSTEM
         # panel names where THIS turn's words came from
-        # ("🎙 Last input: live caption" when the live
-        # text of record carried the turn).
+        # ("🎙 Last input: 🎙 cloud:groq" / "⌨ typed").
         try:
-            if _dashboard is not None:
-                _src = getattr(ears, "last_input_source",
-                               "") or ""
-                if _src:
-                    _dashboard.set_last_input(_src)
+            if _dashboard is not None and source_label:
+                _dashboard.set_last_input(source_label)
         except Exception:
             pass
         hudlog(f"[mic] heard: {command}")
@@ -2565,11 +2342,12 @@ def main():
         reply, action = brain.handle(command, lang=cmd_lang)
         _brain_s = time.monotonic() - _t0
         _speak_s = 0.0
+        spoke = bool(reply)
         if reply:
             _t1 = time.monotonic()
             say(reply)
             _speak_s = time.monotonic() - _t1
-        hudlog(f"[timing] wake→record {wake_rec_s:.1f}s, "
+        hudlog(f"[timing] record {rec_s:.1f}s, "
                f"transcribe {transcribe_s:.1f}s, "
                f"brain {_brain_s:.1f}s, speak {_speak_s:.1f}s")
         # v6.0: the same numbers feed the ⚡ Nalox Level in
@@ -2578,7 +2356,7 @@ def main():
         try:
             import perflevel
             perflevel.record_sample(
-                record_s=wake_rec_s, transcribe_s=transcribe_s,
+                record_s=rec_s, transcribe_s=transcribe_s,
                 brain_s=_brain_s, speak_s=_speak_s)
         except Exception:
             pass
@@ -2591,14 +2369,14 @@ def main():
             _write_exit_flag()
             sys.exit(CLEAN_EXIT_CODE)
         if action == "standby":
-            # v5.4: stop = stop SPEAKING, keep listening (the
+            # v5.4: stop = stop SPEAKING, stay alive (the
             # owner's hard rule). A "stop"/goodbye command —
-            # voice or Telegram — must NEVER end the process:
-            # cut any speech still in progress and fall back
-            # to wake listening. The standby reply itself was
-            # already spoken above. Deliberate exit lives only
-            # in the tray menu / HUD Exit button (physical
-            # clicks) and in a confirmed PC shutdown above.
+            # typed, dictated or Telegram — must NEVER end
+            # the process: cut any speech still in progress.
+            # The standby reply itself was already spoken
+            # above. Deliberate exit lives only in the tray
+            # menu / HUD Exit button (physical clicks) and
+            # in a confirmed PC shutdown above.
             try:
                 _voice_mod.stop()
             except Exception:
@@ -2609,42 +2387,50 @@ def main():
             # 15:09 field report: he said stop, the dashboard
             # stayed up, and he ended up in Task Manager).
             _close_dashboard()
-            log.info("Standby by command — speech cut, "
-                     "back to wake listening.")
+            log.info("Standby by command — speech cut.")
             hudstatus("awake")
-            return
+            return (action, spoke)
         if action == "dashboard_open":
-            # v5.5: voice "open the dashboard" — the reply was
-            # already spoken above. v6.2: _show_for_wake_up is
-            # Command-Center-only (no window substitution).
+            # v5.5: "open the dashboard" — the reply was
+            # already spoken above. v6.2: _show_for_wake_up
+            # is Command-Center-only (no window
+            # substitution). v9.0: it also arms a dictation.
             _show_for_wake_up()
             hudstatus("listening")
-            return
+            return (action, spoke)
         if action == "dashboard_close":
-            # v5.5: voice "dashboard বন্ধ করো" — hide the
-            # Command Center, back to the normal window and
-            # plain wake listening.
+            # v5.5: "dashboard বন্ধ করো" — hide the Command
+            # Center, back to the normal window.
             _close_dashboard()
             hudstatus("listening")
-            return
+            return (action, spoke)
         if action == "restart":
             # v4.6: the spoken reply ("Restarting, Arjun — back
             # in a moment.") has already been delivered above.
-            log.info("Self-restart requested by voice.")
+            log.info("Self-restart requested by command.")
             _restart_process()
-            return
+            return (action, spoke)
         if action == "confirm":
-            # The next utterance is the yes/no answer.
+            # The NEXT input is the yes/no answer (v9.0:
+            # typed or dictated — a dictation is armed so
+            # he can simply say it; 45 s, then the question
+            # lapses silently).
             hudstatus("awake")
-            _stage("transcribing")
-            answer, ans_lang = ears.listen_for_command()
-            if answer:
+            try:
+                dictation.arm_followup(_followup_s())
+            except Exception:
+                pass
+            _item = _next_input(45.0)
+            if _item:
+                answer, ans_lang = _item[0], _item[1]
                 hudlog(f"[mic] heard: {answer}")
                 hudstatus("thinking")
                 _stage("thinking")
-                reply2, action2 = brain.handle(answer, lang=ans_lang)
+                reply2, action2 = brain.handle(
+                    answer, lang=ans_lang)
                 if reply2:
                     say(reply2)
+                    spoke = True
                 if action2 == "exit":
                     log.info("Clean exit after confirmation.")
                     try:
@@ -2656,7 +2442,10 @@ def main():
                 if action2 == "restart":
                     log.info("Self-restart after confirmation.")
                     _restart_process()
-                    return
+                    return (action2, spoke)
+                return (action2, spoke)
+            return (action, spoke)
+        return (action, spoke)
 
     # Startup greeting, then the morning briefing, then the YouTube check.
     # The greeting itself is NOT barge-in monitored (it contains the
@@ -2741,23 +2530,61 @@ def main():
                 except Exception:
                     pass
             hudstatus("speaking")
-            speaker.say(f"I have updated myself to version "
-                        f"{_updated_to}, sir.", lang="en")
+            # v9.0 (fold-in C): the announcement follows
+            # the learned language preference — under his
+            # Bengali-only order it is spoken in Bengali,
+            # never English (the v8.2 field sync caught
+            # the English line under a bn pref).
+            _ann_lang = default_lang
+            try:
+                _ann_lang = brain._pref_lang() or default_lang
+            except Exception:
+                pass
+            if str(_ann_lang).startswith("bn"):
+                speaker.say(
+                    f"স্যার, আমি নিজে নিজে version "
+                    f"{_updated_to}-তে update হয়ে গেছি।",
+                    lang="bn")
+            elif str(_ann_lang).startswith("hi"):
+                speaker.say(
+                    f"सर, मैं खुद version {_updated_to} "
+                    f"पर update हो गया हूँ।", lang="hi")
+            else:
+                speaker.say(f"I have updated myself to version "
+                            f"{_updated_to}, sir.", lang="en")
             hudstatus("listening")
     except Exception as exc:
         log.warning("Update announcement failed: %s", exc)
 
-    # Main loop with mic-failure resilience: one bad cycle must never
-    # kill responsiveness — log it, post it to the HUD, keep listening.
-    # The same failure 3 times in a row earns one short spoken line,
-    # and even that line is rate-limited (v3.5) to once per 300 s so a
-    # persistent fault can't turn into a "try again" loop on speaker.
+    # v9.0 OPEN-ARM: the Command Center opened at start
+    # (above) — arm ONE dictation so he can simply start
+    # talking. It hears nothing inside the window and
+    # closes silently; the greeting is already spoken, so
+    # there is no self-hearing.
+    try:
+        dictation.arm_followup(_followup_s())
+    except Exception:
+        pass
+
+    # Main loop (v9.0): an input-queue consumer. Typed
+    # lines, dictated lines and the missed-dictation
+    # sentinel arrive here and run exactly like Telegram
+    # messages. One bad cycle must never kill
+    # responsiveness — log it, post it, keep going. The
+    # same failure 3 times in a row earns one short spoken
+    # line, rate-limited to once per 300 s so a persistent
+    # fault can't become a "try again" loop on speaker.
     hudstatus("listening")
-    hudlog("[ready] Say 'Nalox' to wake me")
+    hudlog(f"[ready] Type, tap 🎙, or press "
+           f"{cfg.get('dictation_hotkey') or 'ctrl+alt+space'} "
+           f"and speak — Telegram works too")
 
     # v7.0: the liveness supervisor — checks the stage
     # stamp every WATCHDOG_CHECK_S and performs the one
     # recovery each stuck stage has (see _StageWatch).
+    # v9.0: the transcription-stage recovery (respawn the
+    # ears workers) is gone with the ears; a stuck
+    # non-speaking stage is named in one ERROR line.
     def _liveness_supervisor():
         while True:
             time.sleep(WATCHDOG_CHECK_S)
@@ -2775,8 +2602,7 @@ def main():
                 logbook.log(
                     "ERROR",
                     f"[watchdog] speaking stuck for "
-                    f"{_stuck_age:.0f}s — playback stopped, "
-                    f"back to listening")
+                    f"{_stuck_age:.0f}s — playback stopped")
                 try:
                     _voice_mod.stop()
                 except Exception:
@@ -2790,11 +2616,6 @@ def main():
                     f"[watchdog] stage '{_stuck_stage}' "
                     f"stuck for {_stuck_age:.0f}s — "
                     f"recovering")
-                if _stuck_stage in ("transcribing", "heard"):
-                    try:
-                        ears.respawn_transcription_workers()
-                    except Exception:
-                        pass
 
     threading.Thread(target=_liveness_supervisor,
                      daemon=True, name="liveness").start()
@@ -2805,78 +2626,49 @@ def main():
     while True:
         try:
             _stage("listening")
-            heard = ears.wait_for_wake_word()
-            if not heard:
-                continue
-            hudstatus("awake")
-            hudlog("[wake] wake word heard")
-            _stage("heard")
-            _ack_t0 = time.monotonic()
-            say(ack, lang=ack_lang, fixed=True)
-            _ack_s = time.monotonic() - _ack_t0
-            # Ears 2.0: a one-breath command ("Nalox কেমন আছো")
-            # arrives WITH the wake segment — no second recording.
-            _pending = None
+            _item = _input_q.get()
+            _text, _lang, _kind, _rec_s, _tr_s, _label = _item
+            # v9.0: the first input opens the boot
+            # warm-up gate (v7.10 P4's trigger, renamed).
             try:
-                _pending = ears.take_pending_command()
+                _open_boot_gate("first input")
             except Exception:
-                _pending = None
-            if _pending:
-                command, cmd_lang = _pending
-            else:
-                _stage("transcribing")
-                command, cmd_lang = ears.listen_for_command()
-            _rec_s = _ack_s + float(
-                _ears_mod.LAST_TIMING.get("record", 0.0))
-            _tr_s = float(_ears_mod.LAST_TIMING.get("transcribe", 0.0))
-            if not command:
-                # v6.13 SILENT-PATH FIX: the wake was ACKED
-                # out loud, so an empty command here used to
-                # loop back in TOTAL silence — the owner's
-                # 22:24 IST field report ("কথা শুনছে, কিন্তু
-                # কোনো লেখা আসে না"). The miss is now
-                # ANSWERED with one short honest line. When
-                # real speech was captured but every
-                # transcription path returned empty
-                # (ears.LAST_COMMAND_MISS == "engines-empty")
-                # it is a system fault, not a quiet room: a
-                # logbook ERROR goes with the answer, so
-                # logsync uploads it early.
-                if getattr(_ears_mod, "LAST_COMMAND_MISS",
-                           None) == "engines-empty":
-                    logbook.log(
-                        "ERROR",
-                        "[ears] speech was captured but "
-                        "every transcription path returned "
-                        "empty — answered with the "
-                        "could-not-hear line")
-                say(_missed_command_line(brain, cfg), fixed=True)
+                pass
+            if _kind == "missed":
+                # He spoke; the cloud returned nothing
+                # usable. ANSWER — never silence (the
+                # standing rule). It is also a system
+                # fault worth an early log sync.
+                logbook.log(
+                    "ERROR",
+                    "[dictation] speech was captured but "
+                    "cloud transcription returned nothing "
+                    "usable — answered with the "
+                    "could-not-hear line")
+                say(_missed_command_line(brain, cfg),
+                    fixed=True)
                 hudstatus("listening")
                 continue
-            run_command(command, cmd_lang, _rec_s, _tr_s)
-            # Follow-up window (v3): for a few seconds Nalox keeps
-            # listening WITHOUT needing the wake word again. Each new
-            # command re-opens the window; silence closes it.
-            deadline = time.time() + followup_seconds
-            while followup_seconds > 0 and time.time() < deadline:
-                hudstatus("awake")
-                hudlog(f"[sys] follow-up listening "
-                       f"({followup_seconds}s) — no wake word needed")
-                _stage("transcribing")
-                text2, lang2 = ears.listen_for_command()
-                if not text2:
-                    continue
-                run_command(text2, lang2,
-                            float(_ears_mod.LAST_TIMING.get(
-                                "record", 0.0)),
-                            float(_ears_mod.LAST_TIMING.get(
-                                "transcribe", 0.0)))
-                deadline = time.time() + followup_seconds
+            hudstatus("awake")
+            _action, _spoke = run_command(
+                _text, _lang, _rec_s, _tr_s,
+                source_label=_label)
+            # Follow-up (v9.0): after a SPOKEN reply, arm
+            # ONE dictation inside the follow-up window so
+            # the conversation can continue hands-lightly.
+            # It hears nothing -> it simply closes. A
+            # standby turn never arms (he said stop).
+            if _spoke and _action not in ("standby",) \
+                    and followup_seconds > 0:
+                try:
+                    dictation.arm_followup(_followup_s())
+                except Exception:
+                    pass
             hudstatus("listening")
         except SystemExit:
             raise
         except Exception as exc:
-            # Missing mic, device busy, model hiccup — log, breathe, retry.
+            # A bad input cycle — log, breathe, retry.
             # v5.2: the [CRASH-GUARD] tag + a logbook ERROR line,
             # so a guarded failure is VISIBLE on the diagnostics
             # page as a recovery — never as silence.
@@ -2884,7 +2676,7 @@ def main():
                       "retrying in 3 s", exc)
             logbook.log("ERROR", f"[CRASH-GUARD] main loop: "
                                  f"{type(exc).__name__}: {exc} "
-                                 "— kept listening")
+                                 "— kept going")
             hudlog(f"[error] {type(exc).__name__}: {exc}")
             if repr(exc) == last_error:
                 error_streak += 1

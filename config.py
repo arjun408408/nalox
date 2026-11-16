@@ -40,11 +40,13 @@ DEFAULTS = {
     # default ("small" from v4.3, "base" from v4.5). ---
     "wake_model": "tiny",
     # --- v6.12: EARS THREAD CAPS — each transcription
-    # worker process constructs its WhisperModels with an
-    # explicit cpu_threads, so the wake lane, the command
-    # lane and the preview process decoding at the same
-    # moment cannot thrash his 8-core / 16-thread Ryzen 7
-    # 1700. Command gets the most, preview stays light.
+    # worker process constructed its Whisper models with
+    # an explicit cpu_threads, so the wake lane, the
+    # command lane and the preview process decoding at
+    # the same moment could not thrash his 8-core /
+    # 16-thread Ryzen 7 1700. (v9.0: these ears_* keys
+    # are LEGACY — the workers are gone; the keys stay
+    # in DEFAULTS only so existing config files load.)
     # v7.2: the WAKE cap rises 2 -> 4 — the v6.12 value was
     # set while CPU headroom was still treated as scarce;
     # the owner has since lifted that constraint entirely
@@ -131,7 +133,19 @@ DEFAULTS = {
     # fallback, so hearing never depends on the network. "off" =
     # local only — voice clips never leave the laptop. The wake
     # loop is ALWAYS local regardless of this setting. ---
+    # v9.0: dictation is cloud-ONLY (the local ears are
+    # gone): "auto" = Groq Whisper first, Gemini fallback;
+    # "off" = dictation disabled — clips never leave the
+    # laptop, and typing + Telegram carry on without it.
     "cloud_ears": "auto",
+    # --- v9.0: ONE-SHOT DICTATION (dictation.py) — the
+    # global hotkey that starts/finishes a dictation from
+    # anywhere, the pause that ends one, the hard cap, and
+    # how long a manual dictation waits for speech. ---
+    "dictation_hotkey": "ctrl+alt+space",
+    "dictation_silence_s": 1.2,
+    "dictation_max_s": 60.0,
+    "dictation_onset_timeout_s": 12.0,
     # --- v3.5: mic auto-connect — "" = follow the Windows default
     # input; set to part of a device name (e.g. "USB") to prefer it ---
     "mic_device": "",

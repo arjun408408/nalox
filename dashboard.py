@@ -187,7 +187,9 @@ import traceback
 from collections import deque
 
 try:
-    import ears as _ears  # for the live mic level (same as hud)
+    import dictation as _ears  # v9.0: the live mic level now
+    # comes from the one-shot dictation recorder (same seam
+    # hud.py uses — get_level/mic_activity kept their shape)
 except Exception:  # pragma: no cover - orb just stays calm
     _ears = None
 
@@ -232,7 +234,7 @@ NOTICE_BG = "#0d2b1a"
 NOTICE_FG = "#4ade80"
 
 STATUS_TEXT = {
-    "listening": ("● Listening", ACCENT),
+    "listening": ("● Ready", ACCENT),
     "awake": ("● Awake", AMBER),
     "thinking": ("● Thinking", YOU_BLUE),
     "speaking": ("● Speaking", VIOLET),
@@ -529,8 +531,9 @@ _NOTICE_HEADLINES = {
     "8.1": "Live caption-ই এবার আসল কান",
     "8.2": "কানের crash বন্ধ, live caption ঠিক আছে",
     "8.3": "'না' বললে না-ই, না পারলে সোজা বলবে",
+    "9.0": "কান বাদ: বললেই text, text গেলেই কাজ",
 }
-_NOTICE_HEADLINE_NOW = "'না' বললে না-ই, না পারলে সোজা বলবে"
+_NOTICE_HEADLINE_NOW = "কান বাদ: বললেই text, text গেলেই কাজ"
 
 # v8.0: a version may own its WHOLE banner line when the
 # standard "v<version> — <headline>" shape cannot carry
@@ -544,6 +547,8 @@ _NOTICE_FULL = {
             "কানের crash বন্ধ, live caption ঠিক আছে"),
     "8.3": ("✅ Updated to v8.3 — "
             "'না' বললে না-ই, না পারলে সোজা বলবে"),
+    "9.0": ("✅ Updated to v9.0 — "
+            "কান বাদ: বললেই text, text গেলেই কাজ"),
 }
 
 
@@ -576,6 +581,28 @@ def collect_stats(prev_cpu_sample):
     stats["gpu"] = gpu_percent()
     stats["battery"], stats["charging"] = battery_from(_win_power())
     return stats, (sample if sample is not None else prev_cpu_sample)
+
+
+def dictation_state_text(state, seconds_left=None):
+    """The input row's dictation state line (v9.0). Pure.
+
+    recording -> he is speaking (or about to); followup ->
+    an armed window is waiting, with its countdown;
+    transcribing -> the cloud is turning speech into text;
+    anything else -> blank (the row is just a text box)."""
+    if state == "recording":
+        return "🎙 বলুন… (থামলেই পাঠিয়ে দেব)"
+    if state == "followup":
+        try:
+            left = int(math.ceil(float(seconds_left)))
+        except Exception:
+            left = None
+        if left is not None and left >= 0:
+            return f"🎙 বলুন… ({left}s)"
+        return "🎙 বলুন…"
+    if state == "transcribing":
+        return "🎙 শুনছি… লেখা হচ্ছে"
+    return ""
 
 
 def mic_live_text(level, loud_age_s):
@@ -778,20 +805,16 @@ class Dashboard:
         # carries its trailing newline (it was rendered whole
         # by a rebuild) — _tk_end_stream must not add another.
         self._tk_stream_has_nl = False
-        # v6.7 F LIVE HEARING PREVIEW: while the owner speaks
-        # a command, a YOU bubble is open in the model and its
-        # body is REPLACED by each partial transcription (the
-        # Gemini-app feel: his words appear as he speaks).
-        # The final transcript finalizes the same bubble —
-        # via end_you_preview (the ears sink) or via post()
-        # when the "[heard]" line lands, whichever is first;
-        # the loser is absorbed (_preview_final_body dedupe).
-        # _tk_preview_text mirrors the rendered body (Tk only).
-        self._preview_open = False
-        self._preview_final_body = None
-        self._preview_final_at = 0.0
-        self._tk_preview_text = None
-        self._tk_preview_has_nl = False
+        # v9.0 INPUT ROW: the typeable entry + mic button
+        # under the chat. on_text_submit / on_mic_press are
+        # public callback attributes (nalox.py wires them
+        # to its input queue / dictation); the widget refs
+        # are Tk-thread-only.
+        self.on_text_submit = None
+        self.on_mic_press = None
+        self._input_entry = None
+        self._mic_btn = None
+        self._dict_label = None
         # Test seam: when True, the state machine runs WITHOUT
         # tkinter (no display calls at all) on a helper thread.
         self._force_headless = False
@@ -1244,113 +1267,15 @@ class Dashboard:
             if who not in CHAT_WHO:
                 return
             with self._chat_lock:
-                if who == "you" and self._preview_open:
-                    # v6.7 F: the final "[heard]" line FINALIZES
-                    # the open preview bubble (same bubble, final
-                    # words) instead of adding a second one.
-                    if self._chat and self._chat[-1][0] == "you":
-                        self._chat[-1] = ("you", body)
-                    self._preview_open = False
-                    self._preview_final_body = body
-                    self._preview_final_at = time.monotonic()
-                    self._send(("chat_pend", body))
-                    return
-                if who == "you" and self._preview_final_body \
-                        is not None and \
-                        body == self._preview_final_body and \
-                        time.monotonic() - self._preview_final_at \
-                        < 5.0:
-                    # The preview already finalized this exact
-                    # line (the ears sink beat the log line to
-                    # it) — absorb the duplicate. Time-bounded:
-                    # a genuinely repeated command later is a
-                    # new line, never absorbed.
-                    self._preview_final_body = None
-                    return
-                if who == "you":
-                    self._preview_final_body = None
                 self._chat.append((who, body))
             self._send(("chat", (who, body)))
         except Exception:
             pass
 
-    # --------------------------------------- v6.7 F hearing preview
-    def begin_you_preview(self):
-        """Open the live YOU bubble for a command being
-        spoken (v6.7 F): an empty "you" entry enters the
-        model; update_you_preview replaces its body with
-        each partial transcription."""
-        try:
-            with self._chat_lock:
-                if self._preview_open:
-                    # A stale preview (its recording died
-                    # before finishing) — discard it so this
-                    # session starts clean.
-                    if self._chat and \
-                            self._chat[-1][0] == "you":
-                        self._chat.pop()
-                    self._send(("chat_pcancel", None))
-                self._preview_open = True
-                self._preview_final_body = None
-                self._chat.append(("you", ""))
-            self._send(("chat_pbegin", None))
-        except Exception:
-            pass
-
-    def update_you_preview(self, text):
-        """Replace the live bubble's body with the newest
-        partial (v6.7 F). Partials REPLACE — each one is a
-        fresh decode of everything said so far, not a delta."""
-        try:
-            text = str(text or "").strip()
-            if not text:
-                return
-            with self._chat_lock:
-                if not self._preview_open:
-                    return
-                if self._chat and self._chat[-1][0] == "you":
-                    self._chat[-1] = ("you", text)
-            self._send(("chat_pupdate", text))
-        except Exception:
-            pass
-
-    def end_you_preview(self, final_text):
-        """Finalize the live bubble with the FINAL transcript
-        (v6.7 F) — the words the brain will actually receive.
-        The matching "[heard]" log line, when it lands in
-        post(), is absorbed by the _preview_final_body
-        dedupe instead of doubling the bubble."""
-        try:
-            final_text = str(final_text or "").strip()
-            with self._chat_lock:
-                if not self._preview_open:
-                    return
-                self._preview_open = False
-                if final_text:
-                    if self._chat and \
-                            self._chat[-1][0] == "you":
-                        self._chat[-1] = ("you", final_text)
-                    self._preview_final_body = final_text
-                    self._preview_final_at = time.monotonic()
-            self._send(("chat_pend", final_text))
-        except Exception:
-            pass
-
-    def cancel_you_preview(self):
-        """Discard the live bubble (v6.7 F): the recording
-        produced nothing the brain will hear (silence,
-        garbage) — the partial was never a real line, so it
-        leaves no trace in the chat."""
-        try:
-            with self._chat_lock:
-                if not self._preview_open:
-                    return
-                self._preview_open = False
-                if self._chat and self._chat[-1][0] == "you":
-                    self._chat.pop()
-            self._send(("chat_pcancel", None))
-        except Exception:
-            pass
+    # v9.0: the v6.7 live hearing preview methods
+    # (begin/update/end/cancel_you_preview) are REMOVED with
+    # the ears — there are no partial transcriptions anymore.
+    # Dictated text arrives whole and lands via post().
 
     # --------------------------------------- v6.5 live chat sync
     def begin_nalox_reply(self):
@@ -1413,13 +1338,28 @@ class Dashboard:
         self._send(("brain", str(text)))
 
     def set_last_input(self, source):
-        """v8.1: the SYSTEM panel's input marker — where
-        the latest turn's words came from ("live caption"
-        when the live text of record carried the turn,
-        "batch ears" when the batch fallback did).
-        nalox.py pushes it as each command starts."""
+        """The SYSTEM panel's input marker — where the
+        latest turn's words came from (v9.0: "🎙 cloud:groq"
+        / "🎙 cloud:gemini" for dictation, "⌨ typed" for
+        the input box; v8.1's live-caption/batch-ears
+        sources retired with the ears). nalox.py pushes
+        it as each command starts."""
         self._input_text = str(source)
         self._send(("input", str(source)))
+
+    def set_input_text(self, text):
+        """v9.0: show text in the input box (a finished
+        dictation lands here the moment it is transcribed,
+        just before it auto-sends). Thread-safe."""
+        self._send(("input_text", str(text or "")))
+
+    def set_dictation_state(self, state, seconds_left=None):
+        """v9.0: the dictation state line under the chat —
+        "🎙 বলুন…" while recording, a countdown while a
+        follow-up arm waits for speech, "শুনছি…" while the
+        cloud transcribes. Thread-safe."""
+        self._send(("dict_state", (str(state),
+                                   seconds_left)))
 
     def set_update_notice(self, version):
         """v7.1: queue the one-time update banner. Called
@@ -1915,6 +1855,68 @@ class Dashboard:
             font=("Segoe UI", 11, "bold"))
         self._thinking_label.pack(anchor="w", padx=16,
                                   pady=(0, 4))
+        # v9.0 INPUT ROW: the text-first door — a typeable
+        # box (Enter sends, exactly like a Telegram
+        # message), a big mic button for one-shot
+        # dictation, and the dictation state line.
+        _inrow = tk.Frame(right, bg=PANEL)
+        _inrow.pack(fill="x", padx=12, pady=(2, 2))
+        _entry = tk.Entry(
+            _inrow, bg="#0d1830", fg=FG, insertbackground=FG,
+            font=("Segoe UI", 11), relief="flat",
+            highlightbackground=PANEL_EDGE,
+            highlightthickness=1)
+        _entry.pack(side="left", fill="x", expand=True,
+                    ipady=5)
+        _mic = tk.Button(
+            _inrow, text="🎙", bg=ACCENT, fg="#0B0E13",
+            font=("Segoe UI", 13, "bold"), relief="flat",
+            width=3, cursor="hand2")
+        _mic.pack(side="left", padx=(6, 0))
+        _send_btn = tk.Button(
+            _inrow, text="➤", bg=PANEL_EDGE, fg=FG,
+            font=("Segoe UI", 12, "bold"), relief="flat",
+            width=3, cursor="hand2")
+        _send_btn.pack(side="left", padx=(6, 0))
+        self._input_entry = _entry
+        self._mic_btn = _mic
+
+        def _submit_input(_event=None):
+            try:
+                _text = _entry.get().strip()
+            except Exception:
+                _text = ""
+            if not _text:
+                return "break"
+            try:
+                _entry.delete(0, "end")
+            except Exception:
+                pass
+            _cb = self.on_text_submit
+            if _cb is not None:
+                try:
+                    _cb(_text)
+                except Exception:
+                    pass
+            return "break"
+
+        _entry.bind("<Return>", _submit_input)
+        _send_btn.configure(command=_submit_input)
+
+        def _mic_press():
+            _cb = self.on_mic_press
+            if _cb is not None:
+                try:
+                    _cb()
+                except Exception:
+                    pass
+
+        _mic.configure(command=_mic_press)
+        self._dict_label = tk.Label(
+            right, text="", bg=PANEL, fg=ACCENT,
+            font=("Segoe UI", 10, "bold"))
+        self._dict_label.pack(anchor="w", padx=16,
+                              pady=(0, 4))
         self._build_cc_panel(tk, right)
 
         center = tk.Frame(body, bg=BG)
@@ -2511,10 +2513,12 @@ class Dashboard:
                 if mic and mic != "unknown":
                     self._mic_label.configure(text="🎤 " + mic)
             # v7.2: the live mic readout — level bar + the
-            # age of the last gate beat, from ears'
-            # mic_activity(). Fully guarded: any failure
-            # keeps the previous text and never breaks the
-            # tick (the panel degrades, it does not die).
+            # age of the last gate beat, from the dictation
+            # recorder's mic_activity() (v9.0 seam; the bar
+            # moves while a dictation records). Fully
+            # guarded: any failure keeps the previous text
+            # and never breaks the tick (the panel degrades,
+            # it does not die).
             if self._mic_live_label is not None:
                 try:
                     if _ears is not None:
@@ -2673,11 +2677,6 @@ class Dashboard:
         # (re)opens resumes growing in the replayed bubble.
         if self._stream_open:
             self._tk_resume_stream()
-        # v6.7 F: a hearing preview still open resumes
-        # replacing in the replayed bubble.
-        if self._preview_open:
-            self._tk_resume_preview()
-
     # --------------------------------------- v6.5 live chat sync (Tk)
     def _tk_begin_stream(self):
         """Open the live bubble in the widget: the name line
@@ -2759,125 +2758,6 @@ class Dashboard:
             self._tk_stream_text = None
             self._tk_stream_has_nl = False
 
-    # --------------------------------------- v6.7 F hearing preview (Tk)
-    def _tk_begin_preview(self):
-        """Open the live YOU bubble in the widget: the name
-        line now, the body REPLACED at the preview mark as
-        partials land."""
-        widget = self._chat_text
-        if widget is None:
-            self._chat_dirty = True
-            return
-        widget.configure(state="normal")
-        try:
-            widget.mark_set("you_preview_name", "end-1c")
-            widget.mark_gravity("you_preview_name", "left")
-            widget.insert("end", "You\n", "you_name")
-            widget.mark_set("you_preview", "end-1c")
-            widget.mark_gravity("you_preview", "left")
-            self._tk_preview_text = ""
-            self._tk_preview_has_nl = False
-            widget.see("end")
-        finally:
-            widget.configure(state="disabled")
-
-    def _tk_resume_preview(self):
-        """Re-attach the preview marks to the replayed bubble
-        (the window opened mid-command): the model's last
-        entry is the preview, rendered whole by _append_chat
-        as name + body + newline."""
-        widget = self._chat_text
-        if widget is None:
-            return
-        try:
-            with self._chat_lock:
-                body = self._chat[-1][1] if self._chat else ""
-            widget.mark_set(
-                "you_preview_name",
-                f"end-1c-{len(body) + 4}c")
-            widget.mark_gravity("you_preview_name", "left")
-            widget.mark_set("you_preview",
-                            f"end-1c-{len(body)}c")
-            widget.mark_gravity("you_preview", "left")
-            self._tk_preview_text = body
-            self._tk_preview_has_nl = True
-        except Exception:
-            self._tk_preview_text = None
-
-    def _tk_update_preview(self, text):
-        """Replace the live bubble's body with the newest
-        partial transcription."""
-        widget = self._chat_text
-        if widget is None:
-            self._chat_dirty = True
-            return
-        widget.configure(state="normal")
-        try:
-            if self._tk_preview_text is None:
-                self._tk_resume_preview()
-            if self._tk_preview_text is None:
-                self._chat_dirty = True
-                return
-            widget.delete("you_preview", "end-1c")
-            widget.insert("you_preview", text, "you_bubble")
-            self._tk_preview_text = text
-            widget.see("end")
-        finally:
-            widget.configure(state="disabled")
-
-    def _tk_end_preview(self, final_text):
-        """Finalize the live bubble with the FINAL words:
-        the body is set to the final transcript (a post()
-        finalize may already have set it — replacing with
-        the same text is harmless) and the bubble gains its
-        trailing newline."""
-        widget = self._chat_text
-        if widget is None:
-            self._chat_dirty = True
-            self._tk_preview_text = None
-            self._tk_preview_has_nl = False
-            return
-        if self._tk_preview_text is None:
-            return  # never rendered live — the model is whole
-        widget.configure(state="normal")
-        try:
-            if final_text and final_text != self._tk_preview_text:
-                widget.delete("you_preview", "end-1c")
-                widget.insert("you_preview", final_text,
-                              "you_bubble")
-                self._tk_preview_text = final_text
-            if not self._tk_preview_has_nl:
-                widget.insert("end-1c", "\n", "you_bubble")
-            widget.mark_unset("you_preview")
-            widget.mark_unset("you_preview_name")
-            widget.see("end")
-        finally:
-            widget.configure(state="disabled")
-            self._tk_preview_text = None
-            self._tk_preview_has_nl = False
-
-    def _tk_cancel_preview(self):
-        """Remove the live bubble entirely (nothing was
-        finally heard — the partial leaves no trace)."""
-        widget = self._chat_text
-        if widget is None:
-            self._chat_dirty = True
-            self._tk_preview_text = None
-            self._tk_preview_has_nl = False
-            return
-        if self._tk_preview_text is None:
-            return
-        widget.configure(state="normal")
-        try:
-            widget.delete("you_preview_name", "end-1c")
-            widget.mark_unset("you_preview")
-            widget.mark_unset("you_preview_name")
-            widget.see("end")
-        finally:
-            widget.configure(state="disabled")
-            self._tk_preview_text = None
-            self._tk_preview_has_nl = False
-
     # ------------------------------------------------ queue pump (Tk thread)
     def _poll(self):
         """after() chain on the HUD root: drain the queue into
@@ -2919,26 +2799,31 @@ class Dashboard:
                         self._tk_end_stream()
                     else:
                         self._chat_dirty = True
-                elif kind == "chat_pbegin":
-                    if self._win_open:
-                        self._tk_begin_preview()
-                    else:
-                        self._chat_dirty = True
-                elif kind == "chat_pupdate":
-                    if self._win_open:
-                        self._tk_update_preview(payload)
-                    else:
-                        self._chat_dirty = True
-                elif kind == "chat_pend":
-                    if self._win_open:
-                        self._tk_end_preview(payload)
-                    else:
-                        self._chat_dirty = True
-                elif kind == "chat_pcancel":
-                    if self._win_open:
-                        self._tk_cancel_preview()
-                    else:
-                        self._chat_dirty = True
+                elif kind == "input_text":
+                    if self._input_entry is not None:
+                        try:
+                            self._input_entry.delete(0, "end")
+                            self._input_entry.insert(
+                                0, str(payload or ""))
+                        except Exception:
+                            pass
+                elif kind == "dict_state":
+                    _st, _left = payload
+                    if self._dict_label is not None:
+                        try:
+                            self._dict_label.configure(
+                                text=dictation_state_text(
+                                    _st, _left))
+                        except Exception:
+                            pass
+                    if self._mic_btn is not None:
+                        try:
+                            self._mic_btn.configure(
+                                text="⏹" if _st in (
+                                    "recording", "followup")
+                                else "🎙")
+                        except Exception:
+                            pass
                 elif kind == "status":
                     if self._status_label is not None:
                         text, fg = STATUS_TEXT.get(
