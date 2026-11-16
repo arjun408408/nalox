@@ -3841,8 +3841,33 @@ def _cloud_transcribe(audio_f32, cfg):
 _COMMAND_RACE_CAP_S = 30.0  # both ears together, worst case
 
 
+def _partial_race_candidate(partial_text, partial_coverage):
+    """Validate a live partial for the command race (v7.5):
+    returns (text, lang) or None. The partial is a tiny-
+    model hearing, so it clears the same bar a cloud
+    reading clears — not garbage, a plausible script for
+    an allowed language, not a prompt/instruction echo —
+    plus the coverage bar: it must span at least
+    PARTIAL_MIN_COVERAGE of the final segment's audio
+    (a partial of the first half of a long command is NOT
+    the command)."""
+    text = (partial_text or "").strip()
+    if not text or partial_coverage < PARTIAL_MIN_COVERAGE:
+        return None
+    if is_garbage(text):
+        return None
+    lang = _script_lang(text, "en")
+    if not _script_plausible(text):
+        return None
+    if _looks_like_prompt_echo(text, COMMAND_PROMPT):
+        return None
+    return text, lang
+
+
 def transcribe_command_best(audio_f32, model_name, cfg,
-                            initial_prompt=None, local_fn=None):
+                            initial_prompt=None, local_fn=None,
+                            partial_text=None,
+                            partial_coverage=0.0):
     """THE command transcription entry point (v5.1).
 
     Returns (text, language, source) — source says which ear
@@ -3860,9 +3885,21 @@ def transcribe_command_best(audio_f32, model_name, cfg,
     directly and never races itself).
 
     v7.3: cloud and local RACE (see the block above) — the
-    first valid transcript wins instead of the serial walk."""
+    first valid transcript wins instead of the serial walk.
+
+    v7.5 (Live Ears): a third racer — the accumulated LIVE
+    PARTIAL (partial_text / partial_coverage, validated by
+    _partial_race_candidate) — joins with source
+    "live-partial". It is already decoded, so when valid it
+    wins at ~0 s: in the loud-room case the command text
+    lands in ~1-3 s end to end instead of waiting out a
+    10-16 s local decode. With the cloud off and a valid
+    partial present, the partial returns immediately and
+    the local decode is skipped entirely."""
     cfg = cfg or {}
     mode = str(cfg.get("cloud_ears") or "auto").strip().lower()
+    _partial = _partial_race_candidate(partial_text,
+                                       partial_coverage)
 
     def _local():
         if local_fn is not None:
@@ -3873,11 +3910,21 @@ def transcribe_command_best(audio_f32, model_name, cfg,
 
     if mode == "off" or cloud_ear_provider(cfg) is None:
         # No cloud ear can run (switched off, or no key):
-        # exactly the old local-only path, no threads.
+        # exactly the old local-only path, no threads —
+        # plus the v7.5 shortcut: a valid live partial IS
+        # the command text already; the local decode adds
+        # nothing but seconds.
+        if _partial is not None:
+            return _partial[0], _partial[1], "live-partial"
         text, lang = _local()
         return text, lang, "local"
 
     outcomes = queue.Queue()
+    if _partial is not None:
+        # v7.5: the live partial is already decoded — it
+        # enters the race FIRST (the queue is FIFO, so it
+        # wins ties) and the loop below returns it at once.
+        outcomes.put(("live-partial", _partial))
 
     def _cloud_job():
         try:
@@ -3903,7 +3950,7 @@ def transcribe_command_best(audio_f32, model_name, cfg,
                      name="nalox-local-ear").start()
     _deadline = time.monotonic() + _COMMAND_RACE_CAP_S
     _local_done = None
-    _pending = 2
+    _pending = 3 if _partial is not None else 2
     while _pending > 0:
         _left = _deadline - time.monotonic()
         if _left <= 0:
@@ -3913,7 +3960,10 @@ def transcribe_command_best(audio_f32, model_name, cfg,
         except queue.Empty:
             break
         _pending -= 1
-        if _kind == "cloud":
+        if _kind == "live-partial":
+            if _got:
+                return _got[0], _got[1], "live-partial"
+        elif _kind == "cloud":
             if _got:
                 return _got
         else:
@@ -4348,6 +4398,46 @@ class _ChunkSource:
 PREVIEW_INTERVAL_S = 0.7    # min seconds between preview decodes
 PREVIEW_DEADLINE_S = 2.5    # a preview decode never waits longer
 
+# ------------------------------------------------------------- v7.5
+# LIVE EARS (the owner's spec, 2026-11-16 09:21 IST): he
+# speaks -> Bengali text appears on screen AS he speaks ->
+# when he stops, the heard text goes to the brain -> the
+# brain answers by voice, best-effort with whatever was
+# heard. Three mechanisms, all built on the v6.7 preview
+# machinery:
+#  (a) WAKE ON THE LIVE STREAM — during wake listening the
+#      in-progress segment is preview-decoded like a
+#      command recording; a confident wake match in a
+#      partial fires the wake IMMEDIATELY (mid-speech)
+#      instead of waiting for segment end + a possibly
+#      flooded batch queue. The batch path remains the
+#      fallback/confirmation for everything the partial
+#      misses, and a partial-woken segment still gets its
+#      batch decode (priority job) to produce the
+#      one-breath remainder through the proven re-hear.
+#  (b) LIVE CAPTIONS — the same partials stream into the
+#      Command Center YOU bubble during wake listening
+#      (they already did during command recording).
+#  (c) PARTIAL IN THE RACE — a complete-looking live
+#      partial joins transcribe_command_best as a third
+#      racer, so a command's text can land in ~1-3 s
+#      instead of waiting out a 10-16 s local decode.
+WAKE_PARTIAL_TAIL_S = 2.0   # after a partial wake fires, keep
+                            # capturing this long at most for
+                            # the breath to finish (the
+                            # segmenter usually closes sooner)
+PARTIAL_MIN_COVERAGE = 0.7  # a partial must cover this share
+                            # of its segment's audio before it
+                            # may corroborate a fast-reject or
+                            # join the command race
+PENDING_COMMAND_TTL_S = 10.0  # a one-breath remainder older
+                              # than this is STALE — dropped,
+                              # never delivered to a later wake
+PENDING_PARTIAL_GRACE_S = 3.0  # take_pending_command waits
+                               # at most this long for an
+                               # in-flight live wake to land
+                               # its remainder
+
 
 def _make_tx_client(cfg, lane):
     """Build one lane's _TxWorkerClient (v6.12).
@@ -4383,6 +4473,18 @@ class _PreviewPump:
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="nalox-preview")
         self._finished = False
+        # v7.5: the newest partial this pump actually
+        # DELIVERED, with the length of the snapshot it was
+        # decoded from and a submit sequence number — the
+        # Live Ears machinery (wake firing, the command
+        # race's partial candidate, escalation economy)
+        # reads these via last_partial(); the sequence lets
+        # a caller tell "a partial of THIS segment" from a
+        # previous segment's leftover.
+        self._last_text = ""
+        self._last_audio_len = 0
+        self._submit_seq = 0
+        self._last_seq = 0
 
     def start(self):
         self._thread.start()
@@ -4391,7 +4493,26 @@ class _PreviewPump:
         """Offer the newest in-progress audio (latest wins —
         an unsubmitted older snapshot is simply replaced)."""
         with self._lock:
-            self._latest = audio
+            self._submit_seq += 1
+            self._latest = (audio, self._submit_seq)
+
+    def submit_seq(self):
+        """How many snapshots were ever submitted (v7.5) —
+        a segment boundary marker for last_partial()."""
+        with self._lock:
+            return self._submit_seq
+
+    def last_partial(self, since_seq=0):
+        """The newest delivered partial as (text,
+        audio_len, seq) — ("", 0, seq) when nothing was
+        delivered yet, or when the newest delivery belongs
+        to a snapshot submitted at or before since_seq
+        (i.e. it is a previous segment's leftover)."""
+        with self._lock:
+            if self._last_seq <= since_seq:
+                return "", 0, self._last_seq
+            return (self._last_text, self._last_audio_len,
+                    self._last_seq)
 
     def _sink_visible(self):
         try:
@@ -4402,10 +4523,11 @@ class _PreviewPump:
     def _run(self):
         while not self._stop_evt.is_set():
             with self._lock:
-                audio, self._latest = self._latest, None
-            if audio is None:
+                _slot, self._latest = self._latest, None
+            if _slot is None:
                 self._stop_evt.wait(0.05)
                 continue
+            audio, seq = _slot
             if not self._sink_visible():
                 continue  # hidden mid-recording — drop it
             got = None
@@ -4421,6 +4543,10 @@ class _PreviewPump:
                 except Exception:
                     text = ""
                 if text and not is_garbage(text):
+                    with self._lock:
+                        self._last_text = text
+                        self._last_audio_len = len(audio)
+                        self._last_seq = seq
                     try:
                         self._sink.update(text)
                     except Exception:
@@ -4448,6 +4574,70 @@ class _PreviewPump:
             self._sink.finish(text)
         except Exception:
             pass
+
+
+class _WakePartialSink:
+    """The wake loop's preview sink (v7.5, Live Ears):
+    receives the live partial transcripts of the
+    IN-PROGRESS wake segment from a _PreviewPump and hands
+    each one to Ears._wake_partial_seen, which streams the
+    captions to the Command Center and fires the wake the
+    moment a partial confidently contains the name.
+
+    Segment state lives here (the wake loop drives
+    begin_segment / end_segment as its Segmenter opens and
+    closes segments): a segment may fire at most once, and
+    partials arriving while no segment is open (a late
+    decode of a finished segment's last snapshot) are
+    dropped — the batch job owns that segment by then.
+    Everything is guarded; a sink failure can never break
+    listening."""
+
+    def __init__(self, ears):
+        self._ears = ears
+        self._closed = False
+        self._seg_open = False
+        self.fired = False
+        self.bubble_open = False
+        self.last_text = ""
+
+    # ---- _PreviewPump sink protocol ----
+    def visible(self):
+        return not self._closed
+
+    def begin(self):
+        pass  # segment state is driven by the wake loop
+
+    def update(self, text):
+        if self._closed or not self._seg_open:
+            return
+        try:
+            self._ears._wake_partial_seen(self, text)
+        except Exception:
+            pass
+
+    def finish(self, text):
+        self._closed = True
+        self._seg_open = False
+        if self.bubble_open:
+            self.bubble_open = False
+            self._ears._wake_caption_finish("")
+
+    # ---- driven by the wake loop ----
+    def begin_segment(self):
+        self._seg_open = True
+        self.fired = False
+        self.last_text = ""
+
+    def end_segment(self):
+        self._seg_open = False
+        if self.bubble_open and not self.fired:
+            # The segment never woke: the caption bubble
+            # was a near-miss that the batch path will
+            # judge on its own — the live bubble leaves
+            # no trace (the dashboard trio's cancel).
+            self.bubble_open = False
+            self._ears._wake_caption_finish("")
 
 
 class Ears:
@@ -4535,6 +4725,41 @@ class Ears:
         # v6.7 F: the live hearing preview sink (nalox.py
         # wires it to the Command Center; None = no previews).
         self._preview_sink = None
+        # v7.5 (Live Ears): the wake-on-partial machinery.
+        # _partial_wake_event is set by _fire_partial_wake
+        # when a live partial confidently contains the name
+        # — the wake loop polls it beside _wake_event and
+        # answers with the finish-the-breath drain instead
+        # of waiting for the batch queue. _wake_partials
+        # maps a submitted wake job's id to its segment's
+        # final live partial (text, coverage) — the batch
+        # handler reads it for the escalation economy (1d)
+        # and the command race (1c). _priority_job is the
+        # one partial-woken segment waiting for the tx
+        # thread's NEXT slot; its id sits in
+        # _partial_woke_ids so the handler knows the wake
+        # already fired (callbacks must not double-fire)
+        # and _partial_inflight tells take_pending_command
+        # a remainder may still land.
+        self._partial_wake_event = threading.Event()
+        self._partial_fired_at = 0.0
+        self._partial_text = ""
+        self._wake_partials = {}
+        self._partial_woke_ids = set()
+        self._partial_cut_ids = set()
+        self._priority_job = None
+        self._priority_lock = threading.Lock()
+        self._partial_inflight = threading.Event()
+        self._last_job_id = 0
+        # The tx thread stamps the job it is handling NOW
+        # (the handler reads these instead of taking new
+        # parameters — the suites call it with two args and
+        # replace it with two-arg lambdas).
+        self._current_job_id = None
+        self._current_partial_woke = False
+        # v7.5: when the current _pending_command was set
+        # (its staleness guard — see take_pending_command).
+        self._pending_command_at = 0.0
         # v7.0: the mic stream watchdog — ONE per Ears (=
         # per process), so its restart budget and its
         # once-per-session spoken alert span every
@@ -4619,6 +4844,88 @@ class Ears:
             pump.sink_finish(text or "")
         except Exception:
             pass
+
+    # ---------- v7.5 Live Ears: wake on the live stream ----
+    def _wake_caption_finish(self, text):
+        """End the Command Center caption bubble the wake
+        partials opened ("" = cancel — the final command
+        line, when one lands, posts fresh via nalox.py's
+        "[mic] heard:" exactly as it does for command
+        previews). Guarded; captions are decoration, the
+        wake itself never depends on them."""
+        sink = getattr(self, "_preview_sink", None)
+        if sink is None:
+            return
+        try:
+            sink.finish(text or "")
+        except Exception:
+            pass
+
+    def _wake_partial_seen(self, sink, text):
+        """One live partial of the in-progress wake segment
+        (v7.5): stream it to the Command Center captions
+        and, on a confident wake match, FIRE the wake.
+
+        Captions open only once the partial at least
+        NEAR-misses the name — room speech that is not
+        addressed to Nalox never opens a bubble (the same
+        purity the command preview has: it only ever shows
+        his words to Nalox). Bengali partials stream as
+        Bengali — the text is the decoder's own, untouched.
+        The fire itself uses the PROVEN matcher
+        (looks_like_wake_word — the batch tiny pass's own
+        rule) on a non-garbage partial: nothing weaker may
+        wake him, and silence/noise can never produce a
+        partial at all (no active segment, no snapshots)."""
+        text = (text or "").strip()
+        if not text or is_garbage(text):
+            return
+        sink.last_text = text
+        matched = looks_like_wake_word(text)
+        if matched or _wake_near_miss(text):
+            dash = getattr(self, "_preview_sink", None)
+            if dash is not None:
+                try:
+                    if dash.visible():
+                        if not sink.bubble_open:
+                            dash.begin()
+                            sink.bubble_open = True
+                        dash.update(text)
+                except Exception:
+                    pass
+        if matched and not sink.fired:
+            sink.fired = True
+            self._fire_partial_wake(text)
+
+    def _fire_partial_wake(self, text):
+        """The live partial contains the name — the wake
+        fires NOW (v7.5): the instant-feedback callback
+        (HUD line + beep, and the wake-UP callback when the
+        partial carries the wake-up phrase, so the Command
+        Center opens mid-speech too) plus the event the
+        wake loop polls. The batch confirmation and the
+        one-breath remainder still run — as a priority job
+        the loop submits as it returns (see
+        wait_for_wake_word's finish-the-breath drain)."""
+        self._partial_text = text
+        self._partial_fired_at = time.monotonic()
+        log.info("[ears] live partial heard the wake word: "
+                 "%r — waking now, batch confirms behind it",
+                 text)
+        if looks_like_wake_up(text):
+            _fire_wake_up_callback()
+        _fire_wake_callback()
+        self._partial_wake_event.set()
+
+    def _set_pending_command(self, text, lang):
+        """Store the one-breath remainder with its stamp
+        (v7.5): take_pending_command refuses a remainder
+        older than PENDING_COMMAND_TTL_S — a partial-woken
+        segment's batch job can land its remainder after
+        the main loop already moved on, and a stale
+        command must never execute at a later wake."""
+        self._pending_command = (text, lang)
+        self._pending_command_at = time.monotonic()
 
     def stop(self):
         self._stop.set()
@@ -4758,9 +5065,63 @@ class Ears:
     # ---------- wake word loop ----------
     def take_pending_command(self):
         """The one-breath command remainder, if the last wake
-        segment carried one (Ears 2.0). (text, lang) or None."""
-        pending, self._pending_command = self._pending_command, None
+        segment carried one (Ears 2.0). (text, lang) or None.
+
+        v7.5 (Live Ears): two guards around the live wake.
+        GRACE — when a partial fired the wake, its priority
+        batch job may still be producing the remainder
+        (priority slot + one re-hear); wait for it, at most
+        PENDING_PARTIAL_GRACE_S, instead of falling into a
+        fresh recording that can only hear silence. The
+        wait also covers a late partial whose segment rides
+        the NORMAL queue (a job in flight + a partial fired
+        moments ago). With no live wake in play this returns
+        instantly, exactly as before. TTL — a remainder
+        older than PENDING_COMMAND_TTL_S is stale (its
+        moment passed while the loop was busy elsewhere):
+        dropped with a log line, never delivered."""
+        pending = self._pending_command
+        if pending is None and self._pending_might_land():
+            _deadline = time.monotonic() \
+                + PENDING_PARTIAL_GRACE_S
+            while time.monotonic() < _deadline \
+                    and not self._stop.is_set():
+                time.sleep(0.05)
+                if self._pending_command is not None:
+                    pending = self._pending_command
+                    break
+                if not self._pending_might_land():
+                    break
+        if pending is None:
+            return None
+        self._pending_command = None
+        _at = getattr(self, "_pending_command_at", 0.0) or 0.0
+        if _at and time.monotonic() - _at \
+                > PENDING_COMMAND_TTL_S:
+            log.info("[ears] dropped a stale one-breath "
+                     "command (%.0fs old): %r",
+                     time.monotonic() - _at, pending[0])
+            return None
         return pending
+
+    def _pending_might_land(self):
+        """True while a live-wake remainder can still be on
+        its way (v7.5): a partial-woke priority job is in
+        flight, or a partial fired within the grace window
+        while wake jobs are still queued/running."""
+        try:
+            if self._partial_inflight.is_set():
+                return True
+        except Exception:
+            pass
+        try:
+            return bool(self._partial_fired_at
+                        and time.monotonic()
+                        - self._partial_fired_at
+                        < PENDING_PARTIAL_GRACE_S
+                        and self.transcribe_queue_size() > 0)
+        except Exception:
+            return False
 
     def current_mic_name(self):
         """The mic the streams currently open on (v4.6 heartbeat)."""
@@ -4786,13 +5147,37 @@ class Ears:
             worker.start()
             self._tx_worker = worker
 
+    def _take_priority_job(self):
+        """The partial-woken segment waiting for the tx
+        thread's next slot (v7.5), or None. Taken BEFORE
+        the queue every iteration — its remainder is the
+        one thing a flooded queue must never delay."""
+        with self._priority_lock:
+            job, self._priority_job = self._priority_job, None
+            return job
+
     def _tx_loop(self):
         while not self._stop.is_set():
-            try:
-                audio, model_name, job_id, submitted_at = \
-                    self._tx_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
+            job = self._take_priority_job()
+            if job is None:
+                try:
+                    job = self._tx_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+            if self._tx_handle_one(job):
+                return  # crash-guard: this thread dies
+
+    def _tx_handle_one(self, job):
+        """Run ONE wake job (v7.5: factored out of _tx_loop
+        so the priority slot and the queue share the exact
+        same policy). Returns True only for the v5.2
+        crash-guard case, where the tx thread must die."""
+        audio, model_name, job_id, submitted_at = job
+        partial_woke = job_id in self._partial_woke_ids
+        self._partial_woke_ids.discard(job_id)
+        self._current_job_id = job_id
+        self._current_partial_woke = partial_woke
+        try:
             # v7.1 (F3): a wake segment that waited longer
             # than ears_wake_segment_max_age_s in the queue
             # is STALE — the moment it was spoken for has
@@ -4802,12 +5187,16 @@ class Ears:
             # it, with a throttled log line: the drop is
             # visible, never silent. Wake listening only —
             # a submitted COMMAND is never dropped anywhere.
+            # v7.5: a partial-woken job is EXEMPT — the wake
+            # already fired on it and its remainder is owed;
+            # it waited in the priority slot, not the queue.
             try:
                 _max_age = float(self.cfg.get(
                     "ears_wake_segment_max_age_s", 10.0) or 0.0)
             except Exception:
                 _max_age = 10.0
-            if _max_age > 0 and submitted_at \
+            if not partial_woke and _max_age > 0 \
+                    and submitted_at \
                     and time.monotonic() - submitted_at \
                     > _max_age:
                 _now = time.monotonic()
@@ -4817,7 +5206,7 @@ class Ears:
                              "segment (queued %.1fs) — "
                              "listening continues",
                              _now - submitted_at)
-                continue
+                return False
             woke = False
             try:
                 woke = bool(self._handle_wake_segment(audio,
@@ -4838,7 +5227,21 @@ class Ears:
                           "fresh worker will take over",
                           type(exc).__name__, exc)
                 _fire_status("[CRASH-GUARD] wake worker restarted")
-                return
+                return True
+            if job_id in self._partial_cut_ids:
+                # v7.5: this segment was CUT mid-speech by
+                # the live-wake tail cap — its wake stands
+                # (the queue drain below still runs) but a
+                # remainder decoded from half a command must
+                # not execute; the fresh recording owns the
+                # command.
+                self._partial_cut_ids.discard(job_id)
+                if self._pending_command is not None:
+                    log.info("[ears] live-wake segment was "
+                             "cut mid-speech — its partial "
+                             "remainder %r is not delivered",
+                             self._pending_command[0])
+                    self._pending_command = None
             if woke:
                 # Segments still queued were recorded BEFORE the
                 # wake — their moment has passed; drop them so a
@@ -4853,23 +5256,57 @@ class Ears:
                 if dropped:
                     log.info("Wake fired — dropped %d stale "
                              "queued segment(s)", dropped)
-                self._wake_event.set()
+                if not partial_woke:
+                    # v7.5: a partial-woken job's wake fired
+                    # already (the loop returned on it) — the
+                    # event must NOT be set again, or the
+                    # next wait would wake on nothing.
+                    self._wake_event.set()
+            return False
+        finally:
+            self._current_job_id = None
+            self._current_partial_woke = False
+            if partial_woke:
+                self._partial_inflight.clear()
 
-    def _submit_wake_segment(self, audio, model_name):
+    def _submit_wake_segment(self, audio, model_name,
+                             priority=False):
         """Queue one completed wake segment for transcription.
 
         Returns True if queued. On a full queue the OLDEST job is
         dropped (the freshest speech is the most likely to be the
         wake word) and the drop is logged. Never blocks.
+
+        v7.5: priority=True is the partial-woken segment —
+        the wake already fired on its live partial, so this
+        job only owes the batch confirmation + the
+        one-breath remainder. It waits in a dedicated slot
+        the tx thread takes BEFORE the queue (a flooded
+        queue must not delay the one segment that already
+        woke him), and its id joins _partial_woke_ids so
+        the handler can skip the already-fired callbacks.
+        The job tuple keeps its proven 4-shape either way.
         """
         self._ensure_tx_worker()
         with self._tx_lock:
             self._tx_seq += 1
             job_id = self._tx_seq
+            self._last_job_id = job_id
         # v7.1 (F3): the submit stamp rides the job — the
         # consumer drops wake segments that waited too long
         # (see _tx_loop).
         job = (audio, model_name, job_id, time.monotonic())
+        if priority:
+            with self._priority_lock:
+                if self._priority_job is None:
+                    self._priority_job = job
+                    self._partial_woke_ids.add(job_id)
+                    self._partial_inflight.set()
+                    return True
+            # The slot is taken (a wake cycle is already
+            # being confirmed) — fall through to the queue
+            # as a normal job; the wake it carries was not
+            # partial-fired, so nothing is owed priority.
         try:
             self._tx_queue.put_nowait(job)
             return True
@@ -5120,6 +5557,42 @@ class Ears:
         records its path + duration into the listen stats
         (_note_decode_stat), aggregated by the heartbeat.
         """
+        # v7.5 (Live Ears): this job's live-stream context,
+        # stamped by the tx thread (attributes, not
+        # parameters — the suites call this handler with two
+        # args and replace it with two-arg lambdas). The
+        # segment's final live partial (text, coverage) was
+        # registered under its job id by the wake loop; an
+        # already-woke job's wake fired on that partial, so
+        # its callbacks must not fire twice and its only
+        # remaining job is the batch confirmation + the
+        # one-breath remainder.
+        _job_id = getattr(self, "_current_job_id", None)
+        _already_woke = bool(getattr(
+            self, "_current_partial_woke", False))
+        _partial = None
+        if _job_id is not None:
+            try:
+                _partial = self._wake_partials.pop(_job_id,
+                                                   None)
+            except Exception:
+                _partial = None
+            if _partial is None and _already_woke:
+                # The priority slot can reach this handler a
+                # breath before the wake loop registers the
+                # partial under this id (it registers in the
+                # statements right after submitting) — give
+                # it a short, bounded moment to land; the
+                # re-hear below is what the partial feeds.
+                _pdl = time.monotonic() + 0.3
+                while _partial is None \
+                        and time.monotonic() < _pdl:
+                    time.sleep(0.02)
+                    try:
+                        _partial = self._wake_partials.pop(
+                            _job_id, None)
+                    except Exception:
+                        break
         kwargs = dict(beam_size=1, language=None, word_timestamps=False)
         kwargs.update(_DECODE_GUARDS)
         kwargs["initial_prompt"] = COMMAND_PROMPT
@@ -5208,15 +5681,46 @@ class Ears:
         clear_non_match = bool(text) and not is_garbage(text) \
             and not looks_like_wake_word(text) \
             and not _wake_near_miss(text)
-        fast_reject = bool(_waiting >= 1 and clear_non_match)
+        # v7.5 (Live Ears, escalation economy): the live
+        # partial is a SECOND tiny hearing of substantially
+        # the same audio (it covered >= PARTIAL_MIN_COVERAGE
+        # of this segment before the segment even closed).
+        # When it too is a clean non-match — no wake word,
+        # no near-miss — the segment has been heard twice
+        # with the same verdict, so the small escalation is
+        # not bought even with an EMPTY queue: in the
+        # 2026-11-16 09:10-09:15 field flood the partials
+        # existed for the owner's constant speech, yet 60%
+        # of segments still escalated (the v7.4 rule needed
+        # queue pressure, and the queue kept draining to
+        # zero between floods). The criteria stay the
+        # conservative family: BOTH hearings must be clean
+        # non-matches — garbage, a match or a near-miss in
+        # either one keeps the full existing effort.
+        _partial_clear = bool(
+            _partial and _partial[0]
+            and _partial[1] >= PARTIAL_MIN_COVERAGE
+            and not is_garbage(_partial[0])
+            and not looks_like_wake_word(_partial[0])
+            and not _wake_near_miss(_partial[0]))
+        fast_reject = bool(clear_non_match
+                           and (_waiting >= 1 or _partial_clear))
         # The decode path taken, for the heartbeat stats
         # (v7.4 observability — see _note_decode_stat).
         path = "fast-reject" if fast_reject else "tiny"
-        if fast_reject:
+        if fast_reject and _waiting >= 1:
             log.info("[ears] fast-reject under queue pressure "
                      "(%d job(s) waiting): %r is a clear "
                      "non-match — no retry spent",
                      _waiting, text)
+        elif fast_reject:
+            log.info("[ears] fast-reject on live-partial "
+                     "evidence (the partial covered %.0f%% "
+                     "of the segment and also heard no "
+                     "name): %r is a clear non-match — no "
+                     "retry spent",
+                     100.0 * (_partial[1] if _partial else 0.0),
+                     text)
 
         def _retry_with_escalation_model():
             """The one escalation-model retry (v7.1 F1: the
@@ -5323,6 +5827,16 @@ class Ears:
                  text, lang, no_speech, took)
         _post_heard(text)
         if not looks_like_wake_word(text):
+            if _already_woke:
+                # v7.5: the live partial fired this wake but
+                # the batch decode disagrees — visible in
+                # the log, never silent; no command is taken
+                # from the segment (the main loop's fresh
+                # recording owns the command now).
+                log.info("[ears] live partial woke Nalox "
+                         "but the batch decode heard %r — "
+                         "no command taken from this segment",
+                         text)
             return False
         # English anchor: an out-of-set detected label (e.g. "ur"
         # for Bengali speech) never propagates — the remainder's
@@ -5356,10 +5870,19 @@ class Ears:
             # If the command path hears nothing usable, the
             # wake remainder stands — a command is never lost.
             try:
+                # v7.5: the segment's live partial joins the
+                # race as the third racer — for a partial-
+                # woken segment it is the FULL utterance the
+                # owner just spoke, and it can win in ~0 s
+                # while the local decode is still warming up.
                 ctext, clang, csrc = transcribe_command_best(
                     audio, command_model, self.cfg,
                     initial_prompt=COMMAND_PROMPT,
-                    local_fn=self._local_command)
+                    local_fn=self._local_command,
+                    partial_text=(_partial[0] if _partial
+                                  else None),
+                    partial_coverage=(_partial[1] if _partial
+                                      else 0.0))
             except Exception as exc:
                 log.error("[CRASH-GUARD] one-breath "
                           "re-transcription failed: %s: %s",
@@ -5400,15 +5923,25 @@ class Ears:
                                  crlang, remainder)
                         remainder, rlang = cand, crlang
             took = time.monotonic() - started
-            self._pending_command = (remainder, rlang)
+            self._set_pending_command(remainder, rlang)
             LAST_TIMING["record"] = len(audio) / SAMPLE_RATE
             LAST_TIMING["transcribe"] = took
             log.info("One-breath command: %r (%s)", remainder, rlang)
-        if wake_up:
-            log.info("Wake-UP phrase heard (segment: %r) — "
-                     "window show requested", text)
-            _fire_wake_up_callback()
-        _fire_wake_callback()
+        if _already_woke:
+            # v7.5: the live partial already fired both
+            # callbacks mid-speech (that is what woke him) —
+            # firing them again here would double the beep
+            # and the HUD line. The batch decode's job was
+            # only the confirmation + remainder above.
+            log.info("Wake word confirmed by the batch "
+                     "decode (segment: %r) — the live "
+                     "partial fired the wake already", text)
+        else:
+            if wake_up:
+                log.info("Wake-UP phrase heard (segment: %r) — "
+                         "window show requested", text)
+                _fire_wake_up_callback()
+            _fire_wake_callback()
         return True
 
     def wait_for_wake_word(self):
@@ -5457,6 +5990,23 @@ class Ears:
             the room was empty or the gate dropped his speech.
             Gate beats also stamp mic_activity() for the
             Command Center's live mic readout.
+          - v7.5 (Live Ears): while a segment is IN PROGRESS
+            it is also preview-decoded (a second _PreviewPump
+            on the preview lane, tiny-only) and the partials
+            stream to the Command Center as live captions.
+            A partial that confidently contains the name
+            fires the wake IMMEDIATELY (see _fire_partial_
+            wake): this loop then finishes the breath (the
+            segmenter closing the segment, or
+            WAKE_PARTIAL_TAIL_S at most), submits the
+            segment as a PRIORITY job — the batch decode
+            still confirms it and produces the one-breath
+            remainder through the proven re-hear, now with
+            the partial itself as a race candidate — and
+            returns. Segments the partial never fired keep
+            the exact batch behaviour above; the segment's
+            final partial is registered under its job id
+            either way, for the handler's escalation economy.
         """
         block = int(0.1 * SAMPLE_RATE)
         segmenter = Segmenter()
@@ -5466,7 +6016,19 @@ class Ears:
         log.info("Listening for wake word '%s' (Ears 2.0 segments, "
                  "model %s)...", self.cfg["assistant_name"], model_name)
         self._wake_event.clear()
+        self._partial_wake_event.clear()
         self._ensure_tx_worker()
+        # v7.5: the live-stream state (pump + sink are born
+        # lazily at the first segment — a silent room never
+        # spawns the preview worker, and silence can never
+        # produce a partial, so silence can never wake).
+        wake_pump = None
+        wake_sink = None
+        live_chunks = []
+        live_open = False
+        live_last_submit = 0.0
+        live_seg_base_seq = 0
+        partial_deadline = None
         source = _ChunkSource(self, block)
         health = _MicHealth()
         # v7.0: the stream-health watchdog (policy on the
@@ -5488,6 +6050,47 @@ class Ears:
                     return True
                 if self._wake_event.is_set():
                     self._wake_event.clear()
+                    return True
+                # v7.5: a live partial fired the wake — the
+                # drain runs until the segmenter closes the
+                # segment (handled at the completion below)
+                # or the tail cap cuts it here.
+                if partial_deadline is None \
+                        and self._partial_wake_event.is_set():
+                    self._partial_wake_event.clear()
+                    partial_deadline = time.monotonic() \
+                        + WAKE_PARTIAL_TAIL_S
+                    log.info("[ears] finishing the breath "
+                             "after the live wake (<= %.1fs)",
+                             WAKE_PARTIAL_TAIL_S)
+                if partial_deadline is not None \
+                        and time.monotonic() >= partial_deadline:
+                    # The breath never closed (continuous
+                    # speech): submit what was captured as a
+                    # CUT priority job — it confirms the wake
+                    # and drains the queue, but its partial
+                    # remainder is NOT delivered (the speech
+                    # was cut mid-command; the fresh
+                    # recording owns the command).
+                    if live_chunks:
+                        _cut_audio = np.concatenate(live_chunks)
+                        if len(_cut_audio) >= SAMPLE_RATE * 0.4 \
+                                and self._submit_wake_segment(
+                                    _cut_audio, model_name,
+                                    priority=True):
+                            self._note_listen_stat("seg")
+                            self._partial_cut_ids.add(
+                                self._last_job_id)
+                            _pt, _pl, _ps = wake_pump \
+                                .last_partial(
+                                    since_seq=live_seg_base_seq) \
+                                if wake_pump is not None \
+                                else ("", 0, 0)
+                            if _pt:
+                                self._wake_partials[
+                                    self._last_job_id] = (
+                                        _pt, _pl / float(
+                                            len(_cut_audio)))
                     return True
                 _wnow = time.monotonic()
                 if _wnow - last_watch_at >= MIC_WATCH_CHECK_S:
@@ -5575,6 +6178,14 @@ class Ears:
                         self._speaking_blocked_since = 0.0
                     self._was_speaking = True
                     segmenter.reset()
+                    if live_open:
+                        # v7.5: Nalox's own voice killed the
+                        # in-progress segment — its partials
+                        # are over too.
+                        live_open = False
+                        live_chunks = []
+                        if wake_sink is not None:
+                            wake_sink.end_segment()
                     continue
                 self._speaking_blocked_since = 0.0
                 if self._was_speaking:
@@ -5582,6 +6193,11 @@ class Ears:
                     self._speech_end = time.monotonic()
                 if time.monotonic() - self._speech_end < ECHO_TAIL_SECONDS:
                     segmenter.reset()  # speaker echo tail — discard
+                    if live_open:
+                        live_open = False
+                        live_chunks = []
+                        if wake_sink is not None:
+                            wake_sink.end_segment()
                     continue
                 rms = _rms(chunk)
                 if not segmenter.active:
@@ -5599,15 +6215,94 @@ class Ears:
                 if segmenter.last_was_blip:
                     self._note_listen_stat("blip")
                 if segment is None:
+                    # v7.5 (Live Ears): while the segment is
+                    # IN PROGRESS, stream snapshots of it to
+                    # the preview lane — the partials drive
+                    # the live captions and can fire the
+                    # wake mid-speech (see the loop top).
+                    if segmenter.active:
+                        if not live_open:
+                            live_open = True
+                            live_chunks = []
+                            if wake_pump is None:
+                                wake_sink = _WakePartialSink(
+                                    self)
+                                wake_pump = _PreviewPump(
+                                    wake_sink)
+                                wake_pump.start()
+                            wake_sink.begin_segment()
+                            live_seg_base_seq = \
+                                wake_pump.submit_seq()
+                            live_last_submit = 0.0
+                        live_chunks.append(chunk)
+                        if now - live_last_submit \
+                                >= PREVIEW_INTERVAL_S:
+                            live_last_submit = now
+                            try:
+                                wake_pump.submit(
+                                    np.concatenate(live_chunks))
+                            except Exception:
+                                pass
                     continue
                 audio = np.concatenate(segment)
+                # v7.5: the segment closed — harvest its
+                # final live partial BEFORE submitting, with
+                # a short bounded wait for the freshest
+                # snapshot's decode to land (it decides the
+                # handler's escalation economy and joins the
+                # one-breath re-hear race).
+                _ptxt, _pcov = "", 0.0
+                if live_open and wake_pump is not None:
+                    _pdl = time.monotonic() + 0.8
+                    while True:
+                        _pt, _pl, _ps = wake_pump \
+                            .last_partial(
+                                since_seq=live_seg_base_seq)
+                        _pcov = (_pl / float(len(audio))
+                                 if len(audio) else 0.0)
+                        if _pcov >= PARTIAL_MIN_COVERAGE \
+                                or time.monotonic() >= _pdl \
+                                or self._stop.is_set():
+                            break
+                        time.sleep(0.05)
+                    _ptxt = _pt
+                    wake_sink.end_segment()
+                    live_open = False
+                    live_chunks = []
                 if len(audio) < SAMPLE_RATE * 0.4:
                     self._note_listen_stat("short")
                     continue
                 # v4.6: the worker transcribes; capture never waits.
-                if self._submit_wake_segment(audio, model_name):
+                # v7.5: a segment from a fired drain rides
+                # the priority slot instead of the queue. The
+                # event check here also closes the race where
+                # the partial fired during THIS read cycle —
+                # after the loop-top check but before the
+                # segment completed.
+                _drain = partial_deadline is not None \
+                    or self._partial_wake_event.is_set()
+                if _drain:
+                    self._partial_wake_event.clear()
+                if self._submit_wake_segment(
+                        audio, model_name, priority=_drain):
                     self._note_listen_stat("seg")
+                    if _ptxt:
+                        self._wake_partials[
+                            self._last_job_id] = (_ptxt, _pcov)
+                        while len(self._wake_partials) > 8:
+                            self._wake_partials.pop(
+                                next(iter(
+                                    self._wake_partials)))
+                if _drain:
+                    # The wake already fired on the partial;
+                    # the batch job confirms it behind us.
+                    return True
         finally:
+            if wake_pump is not None:
+                try:
+                    wake_pump.sink_finish("")
+                except Exception:
+                    pass
             source.close()
         return False
 
@@ -5778,11 +6473,31 @@ class Ears:
         # crash-contained since v4.8) — this wrap is the last net,
         # so NO transcription failure of any shape can escape into
         # the main loop and cost more than this one command.
+        # v7.5 (Live Ears): the recording's accumulated
+        # live partial joins the race as the third ear —
+        # read it BEFORE _finish_preview closes the pump.
+        # Coverage = how much of the final recording the
+        # partial's snapshot spanned; below
+        # PARTIAL_MIN_COVERAGE the race ignores it.
+        _ptext, _plen = "", 0
+        if pump is not None:
+            try:
+                _ptext, _plen, _pseq = pump.last_partial()
+            except Exception:
+                _ptext, _plen = "", 0
+        _coverage = 0.0
+        try:
+            if _plen and audio is not None and len(audio):
+                _coverage = _plen / float(len(audio))
+        except Exception:
+            _coverage = 0.0
         try:
             text, lang, ear_src = transcribe_command_best(
                 audio, self.cfg["whisper_command_model"], self.cfg,
                 initial_prompt=COMMAND_PROMPT,
-                local_fn=self._local_command)
+                local_fn=self._local_command,
+                partial_text=_ptext or None,
+                partial_coverage=_coverage)
         except Exception as exc:
             log.error("[CRASH-GUARD] command transcription "
                       "escaped containment: %s: %s",

@@ -656,3 +656,137 @@ not invent one.
   heartbeat appends "dec=N (t.. b.. s.. r..) dmax=..s"
   when any decode ran, so the next sync shows real
   milliseconds instead of an undecidable window.
+
+## v7.5 "Live Ears" — wake on the live stream + walk self-discovery (2026-11-16)
+
+Owner's spec (09:21 IST, dictated): fix the HEARING
+first — he speaks → Bengali text appears on screen
+INSTANTLY as he speaks (live captions) → when he
+stops, the heard text goes to the brain → the brain
+answers by voice, best-effort with whatever was
+heard. Field evidence: the v7.4 session (09:10–09:15)
+showed six worker-slow episodes in ~5 loud minutes
+(60% of segments escalating tiny→small, decodes to
+16 s, v7.4 fast-reject r0), and his Brain Test showed
+his Groq account lacks the shipped walk's first three
+models (404 ×3; only openai/gpt-oss-120b answered).
+
+- LIVE EARS (ears.py). While a wake segment is IN
+  PROGRESS, wait_for_wake_word streams snapshots of
+  it to a second _PreviewPump (preview lane, tiny-only)
+  whose sink is _WakePartialSink. (a) WAKE ON THE
+  PARTIAL: Ears._wake_partial_seen fires the wake the
+  moment a non-garbage partial passes the PROVEN
+  looks_like_wake_word (the batch tiny pass's own
+  rule) — callbacks fire mid-speech (wake-up partials
+  also raise the window), _partial_wake_event is set,
+  and the loop finishes the breath (segmenter close,
+  or WAKE_PARTIAL_TAIL_S = 2.0 s cap) and submits the
+  segment as a PRIORITY job (dedicated slot
+  _priority_job, taken by _tx_loop before the queue;
+  the job tuple keeps its 4-shape; the handler learns
+  the context from _current_job_id /
+  _current_partial_woke attributes, never new params).
+  The batch decode still confirms: agreement → the
+  one-breath remainder via the proven re-hear, with
+  callbacks NOT re-fired; disagreement → logged
+  ("live partial woke Nalox but the batch decode
+  heard…"), no command taken. A segment CUT by the
+  tail cap (id in _partial_cut_ids) keeps its wake
+  but its remainder is suppressed in _tx_handle_one.
+  Silence/noise can never wake: no active segment →
+  no snapshots → no partials (the pump is created
+  lazily at the first segment; the real-audio harness
+  gates this). F1–F4 + v7.4 fast-reject + cooldown
+  semantics are unchanged for batch jobs; a
+  partial-woke job is exempt from the F3 stale drop
+  (its remainder is owed).
+  (b) LIVE CAPTIONS: the same partials forward to the
+  dashboard preview sink (begin/update in place) once
+  a partial at least near-misses the name — room
+  speech never opens a bubble; an unwoken segment's
+  bubble is cancelled at segment end; Bengali
+  partials display as Bengali (the decoder's own
+  text, untouched). The final "[mic] heard:" line
+  finalizes as before.
+  (c) COMMAND RACE: the accumulated partial joins
+  transcribe_command_best as a third racer (source
+  "live-partial") after _partial_race_candidate
+  validates it (cloud-guard family + coverage ≥
+  PARTIAL_MIN_COVERAGE = 0.7 of the final audio). It
+  is enqueued first (wins ties); with the cloud off
+  it returns immediately and the local decode is
+  skipped. listen_for_command passes its recording
+  pump's partial; the one-breath re-hear passes the
+  wake segment's registered partial. _PreviewPump
+  now records (text, snapshot length, submit seq) —
+  last_partial(since_seq) separates this segment's
+  partial from a previous segment's leftover; the
+  wake loop registers the final partial under the
+  job id in _wake_partials (pruned to 8).
+  (d) ESCALATION ECONOMY: the v7.4 fast-reject gains
+  a second trigger — the batch tiny pass is a clear
+  non-match AND the segment's live partial (coverage
+  ≥ 0.7, clean, no wake word, no near-miss) heard no
+  name either: two tiny hearings, same verdict → no
+  small escalation even with an EMPTY queue (the
+  field's r0 shape: the queue kept draining to zero
+  between floods). Any doubt (garbage/match/
+  near-miss/low coverage in either hearing) keeps
+  full effort. Pinned by test_v75 D5 (flood with
+  partials: 8 tiny passes, 0 escalations, 8
+  fast-rejects).
+  (e) PENDING HYGIENE: _set_pending_command stamps
+  the remainder; take_pending_command drops one
+  older than PENDING_COMMAND_TTL_S = 10 s, and while
+  a live wake's remainder may still land (priority
+  job in flight, or a recent partial fire with jobs
+  queued) it waits up to PENDING_PARTIAL_GRACE_S =
+  3 s instead of recording silence. No live wake in
+  play → instant return, exactly as before.
+- WALK SELF-DISCOVERY (brain.py). Boot validation's
+  /models fetch now also stores the account's ORDERED
+  model list on Brain._discovered_models and logs it
+  + the effective walk as [brain] logbook lines.
+  _model_candidates composes the walk from models
+  that EXIST: normal walk = instant-class first
+  (configured members in configured order, then the
+  account's other instant-class names in /models
+  order) → configured order ∩ existing → any other
+  chat-capable model present (_chat_capable excludes
+  whisper/tts/embed/guard/orpheus/canary/safeguard
+  names); head_override walks get existence filtering
+  only (the tier head leads iff it exists). The
+  groq_model / groq_power_model heads ride in the
+  walk, so they are filtered by existence too.
+  /models failed/empty → the configured walk,
+  byte-identical to v7.4. Composition is pure
+  ordering: nothing persists (Defect-1 discipline),
+  the stale rule runs first, the status line still
+  reads _last_answered only. On the owner's account
+  the walk collapses to openai/gpt-oss-120b alone —
+  zero 404 round-trips.
+- BRAIN TEST POLISH (brainbench.py). (a) A keyed
+  provider with NO key configured is reported
+  "skipped — no <Provider> key" with ZERO network
+  calls — in collect_candidates (Groq joins
+  OpenRouter here) and again inside _run_candidate
+  as defence in depth. (b) An Ollama candidate's
+  FIRST call gets CANDIDATE_BUDGET_S +
+  OLLAMA_FIRST_CALL_EXTRA_S (45 s), still bounded by
+  the whole-test deadline; a first-call timeout (incl.
+  the requests ReadTimeout class) reports
+  "timeout — cold load?", distinct from a hard
+  failure. (c) The Groq set comes from the account
+  list via _groq_account_models: configured names the
+  account has are measured, configured names it lacks
+  are rows marked "not on this account" (never
+  called), plus up to 3 discovered chat-capable extras
+  (instant-class first); a failed fetch keeps the
+  v7.4 behaviour.
+Tests: test_v75 (new) + the full battery. Frozen as
+ever: GLM stays benchmark-only (needs his OpenRouter
+key in Settings + his word), voice/TTS, phone app,
+Telegram, exit codes. NOT fixed here: the
+2026-11-16 07:50:14 exit-code-1 crash — still no
+traceback evidence; do not invent one.

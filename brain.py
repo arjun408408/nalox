@@ -863,6 +863,52 @@ _MODEL_WALK_PROVIDERS = {
 # winner, so the memory self-heals.
 _GROQ_STALE_REMEMBERED = "openai/gpt-oss-120b"
 
+# ------------------------------------------------------------- v7.5
+# WALK SELF-DISCOVERY. Field proof (2026-11-16 09:10 IST,
+# the owner's own Brain Test): his Groq account's model
+# list contains NONE of the shipped walk's first three
+# names — llama-3.1-8b-instant, llama-3.3-70b-versatile and
+# qwen/qwen3-32b all answered HTTP 404, and every answer
+# fell through two dead names to the reasoning model. A
+# configured walk cannot know an account's entitlements;
+# the account's own /models list can. Boot validation
+# already fetches that list — v7.5 keeps it (ordered) on
+# the Brain (_discovered_models) and _model_candidates
+# composes the EFFECTIVE walk from models that EXIST:
+# instant-class names first, then the configured order
+# filtered to existing, then any other chat-capable model
+# the account has. A failed/empty /models fetch changes
+# nothing — the configured walk rules exactly as before.
+_NON_CHAT_MARKERS = ("whisper", "tts", "embed", "guard",
+                     "orpheus", "canary", "safeguard",
+                     "speech-to-text", "text-to-speech")
+
+
+def _model_key(name):
+    """A model id's canonical key — the "models/" prefix
+    some providers prepend is presentation, not identity."""
+    name = str(name or "").strip()
+    if name.startswith("models/"):
+        return name[len("models/"):]
+    return name
+
+
+def _is_instant_class(mid):
+    """An instant-class model name (the fast chat tier —
+    e.g. llama-3.1-8b-instant)."""
+    return "instant" in _model_key(mid).lower()
+
+
+def _chat_capable(mid):
+    """A discovered model that can plausibly ANSWER (not a
+    speech/embed/guard specialist). Deliberately generous —
+    an unknown chat model is a better walk tail than a
+    certain 404."""
+    low = _model_key(mid).lower()
+    if not low:
+        return False
+    return not any(marker in low for marker in _NON_CHAT_MARKERS)
+
 
 def _model_error_snippet(status, resp):
     """The error snippet when this HTTP failure is a DEAD
@@ -2070,6 +2116,14 @@ class Brain:
         # dict; validation records into _working_models
         # only (answered=False), never here.
         self._last_answered = {}
+        # v7.5 (walk self-discovery): the account's OWN
+        # model list per walk provider, in the order the
+        # provider's /models endpoint returned it, captured
+        # by boot validation (_check_one_key). Empty until
+        # validation runs (or when /models failed) — and
+        # empty means _model_candidates returns the
+        # configured walk untouched.
+        self._discovered_models = {}
         # v7.4: SMART ROUTING state — the tier of the last
         # ANSWER ("power" / "instant" / None before the
         # first routed answer); brain_status_line marks a
@@ -5775,6 +5829,62 @@ class Brain:
             if head_override:
                 out = [head_override] + [
                     m for m in out if m != head_override]
+        # v7.5: compose with the account's DISCOVERED model
+        # list when validation captured one (see the v7.5
+        # note at _GROQ_STALE_REMEMBERED). The configured
+        # heads (groq_model / groq_power_model ride in `out`
+        # / the override) are filtered by existence like
+        # every other name; nothing here may persist
+        # anything (the Defect-1 discipline is untouched —
+        # this only ORDERS the walk).
+        try:
+            _disc = list(self._discovered_models.get(provider)
+                         or [])
+        except Exception:
+            _disc = []
+        if _disc and out:
+            _disc_keys = {_model_key(m) for m in _disc}
+            _seen = set()
+            _kept = []
+
+            def _take(name):
+                _k = _model_key(name)
+                if _k and _k in _disc_keys and _k not in _seen:
+                    _seen.add(_k)
+                    _kept.append(name)
+
+            if head_override:
+                # Tier/validation walk: EXISTENCE ONLY — the
+                # override head leads iff it exists, the
+                # configured order is otherwise untouched,
+                # then any other chat-capable model the
+                # account has.
+                for _m in out:
+                    _take(_m)
+                for _m in _disc:
+                    if _chat_capable(_m):
+                        _take(_m)
+            else:
+                # Chat walk: instant-class first (configured
+                # members in configured order, then the
+                # account's other instant-class names in
+                # /models order), then the configured order
+                # filtered to existing, then any other
+                # chat-capable model present.
+                for _m in out:
+                    if _is_instant_class(_m):
+                        _take(_m)
+                for _m in _disc:
+                    if _is_instant_class(_m) \
+                            and _chat_capable(_m):
+                        _take(_m)
+                for _m in out:
+                    _take(_m)
+                for _m in _disc:
+                    if _chat_capable(_m):
+                        _take(_m)
+            if _kept:
+                out = _kept
         return out
 
     def _remember_working_model(self, provider, model, label,
@@ -6032,13 +6142,42 @@ class Brain:
             if prov in _MODEL_WALK_PROVIDERS:
                 try:
                     ids = set()
+                    ordered_ids = []
                     for item in (resp.json().get("data")
                                  or []):
                         mid = str(item.get("id") or "")
                         if mid:
+                            if mid not in ids:
+                                ordered_ids.append(mid)
                             ids.add(mid)
                             if mid.startswith("models/"):
-                                ids.add(mid[len("models/"):])
+                                bare = mid[len("models/"):]
+                                if bare not in ids:
+                                    ordered_ids.append(bare)
+                                ids.add(bare)
+                    # v7.5 (walk self-discovery): keep the
+                    # account's list — _model_candidates
+                    # composes the effective walk from models
+                    # that EXIST on this account, so a shipped
+                    # name the account lacks (the field's
+                    # three 404s, 2026-11-16 09:10 IST) costs
+                    # no round-trip ever again. The repair
+                    # loop below then probes in that effective
+                    # order. Both lines go to the logbook, so
+                    # the synced log shows what the account
+                    # actually offers.
+                    try:
+                        self._discovered_models[prov] = \
+                            list(ordered_ids)
+                    except Exception:
+                        pass
+                    _lb("BRAIN",
+                        f"[brain] {label}: models on this "
+                        f"account ({len(ordered_ids)}): "
+                        f"{', '.join(ordered_ids[:16])}")
+                    _lb("BRAIN",
+                        f"[brain] {label}: effective walk: "
+                        f"{' -> '.join(self._model_candidates(prov))}")
                     for cand in self._model_candidates(prov):
                         if cand not in ids:
                             continue

@@ -73,6 +73,14 @@ GLM_MODELS = ("z-ai/glm-5.2", "z-ai/glm-5.2:free")
 CANDIDATE_BUDGET_S = 15.0    # per candidate, all prompts
 TEST_BUDGET_S = 170.0        # the whole test
 _MAX_TOKENS = 400            # same cap as the agent path
+# v7.5: an Ollama candidate's FIRST call may take this much
+# EXTRA time — a cold local model spends tens of seconds
+# just loading into VRAM before its first token (the field
+# test's qwen3:8b ReadTimeout at the plain 15 s cap,
+# 2026-11-16 09:10 IST). A first call that still times out
+# is reported as "timeout — cold load?", distinct from a
+# hard failure. The whole test stays inside TEST_BUDGET_S.
+OLLAMA_FIRST_CALL_EXTRA_S = 45.0
 
 _run_lock = threading.Lock()
 _state_lock = threading.Lock()
@@ -119,6 +127,76 @@ def _cfg_candidates(cfg, single_key, list_key):
     return out
 
 
+def _groq_account_models(cfg):
+    """The Groq account's own model list (v7.5), ordered as
+    the /models endpoint returned it — or None when the
+    fetch fails for any reason (no key, non-200, network),
+    in which case the bench keeps its v7.4 behaviour. One
+    short guarded call; the bench is the only caller."""
+    key = str(cfg.get("groq_api_key") or "").strip()
+    if not key:
+        return None
+    try:
+        import requests
+        resp = requests.get(
+            GROQ_BASE + "/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=5)
+        if resp.status_code != 200:
+            return None
+        out = []
+        for item in (resp.json().get("data") or []):
+            mid = str(item.get("id") or "").strip()
+            if mid.startswith("models/"):
+                mid = mid[len("models/"):]
+            if mid and mid not in out:
+                out.append(mid)
+        return out or None
+    except Exception:
+        return None
+
+
+def _discovered_groq_rows(cfg, configured):
+    """The bench's Groq rows under self-discovery (v7.5):
+    the configured names in configured order — the ones
+    the account HAS are measured, the ones it lacks are
+    reported "not on this account" without a call — plus
+    up to 3 chat-capable models the account has that the
+    config never named (instant-class first). Returns
+    None when the account list is unavailable."""
+    account = _groq_account_models(cfg)
+    if account is None:
+        return None
+    try:
+        import brain as _brain
+        _key = _brain._model_key
+        _chat = _brain._chat_capable
+        _inst = _brain._is_instant_class
+    except Exception:
+        def _key(m):
+            return str(m or "").strip()
+        def _chat(m):
+            return bool(str(m or "").strip())
+        def _inst(m):
+            return "instant" in str(m or "").lower()
+    account_keys = {_key(m) for m in account}
+    rows = []
+    for model in configured:
+        if _key(model) in account_keys:
+            rows.append(("Groq", "groq", model, ""))
+        else:
+            rows.append(("Groq", "groq", model,
+                         "not on this account"))
+    configured_keys = {_key(m) for m in configured}
+    extras = [m for m in account
+              if _key(m) not in configured_keys
+              and _chat(m)]
+    extras.sort(key=lambda m: 0 if _inst(m) else 1)
+    for model in extras[:3]:
+        rows.append(("Groq", "groq", model, ""))
+    return rows
+
+
 def collect_candidates(cfg):
     """[(provider_label, kind, model, note)] — kind is
     "groq" / "openrouter" / "ollama"; note is a skip
@@ -127,9 +205,23 @@ def collect_candidates(cfg):
     Never raises."""
     rows = []
     try:
-        for model in _cfg_candidates(cfg, "groq_model",
-                                     "groq_models"):
-            rows.append(("Groq", "groq", model, ""))
+        _groq_configured = _cfg_candidates(cfg, "groq_model",
+                                           "groq_models")
+        if not str(cfg.get("groq_api_key") or "").strip():
+            # v7.5: no key — the rows REPORT the gap, no
+            # network call is made (v7.4 attempted and the
+            # field table filled with 401 noise).
+            for model in _groq_configured:
+                rows.append(("Groq", "groq", model,
+                             "no Groq key"))
+        else:
+            _disc_rows = _discovered_groq_rows(
+                cfg, _groq_configured)
+            if _disc_rows is not None:
+                rows.extend(_disc_rows)
+            else:
+                for model in _groq_configured:
+                    rows.append(("Groq", "groq", model, ""))
     except Exception:
         pass
     try:
@@ -330,8 +422,32 @@ def _median(values):
     return (vals[mid - 1] + vals[mid]) / 2.0
 
 
+def _skipped_row(kind, model, reason):
+    """A reported-without-a-call row (v7.5)."""
+    return {
+        "provider": kind, "model": model,
+        "status": f"skipped — {reason}",
+        "answered": 0, "prompts": len(PROMPTS),
+        "ttft_s": None, "total_s": None,
+        "bn_ratio": 0.0, "guard_pass": False,
+        "note": "",
+    }
+
+
 def _run_candidate(cfg, kind, model, test_deadline):
     """Measure one candidate. Returns its row dict."""
+    # v7.5: a keyed provider with NO key configured is
+    # reported, never called — defence in depth behind
+    # collect_candidates' own skip notes (the field's 401
+    # noise came from rows that reached the transport with
+    # an empty key).
+    if kind in ("groq", "openrouter"):
+        _field = ("groq_api_key" if kind == "groq"
+                  else "openrouter_api_key")
+        _label = "Groq" if kind == "groq" else "OpenRouter"
+        if not str(cfg.get(_field) or "").strip():
+            return _skipped_row(kind, model,
+                                f"no {_label} key")
     if kind == "groq":
         key = str(cfg.get("groq_api_key") or "").strip()
 
@@ -356,9 +472,17 @@ def _run_candidate(cfg, kind, model, test_deadline):
     ttfts = []
     totals = []
     timed_out = False
+    cold_timeout = False
     last_error = ""
-    for _name, prompt in PROMPTS:
-        remaining = budget_end - time.monotonic()
+    for _idx, (_name, prompt) in enumerate(PROMPTS):
+        # v7.5: an Ollama candidate's FIRST call gets the
+        # cold-load allowance on top of the candidate
+        # budget (still bounded by the whole-test deadline).
+        _end = budget_end
+        if kind == "ollama" and _idx == 0:
+            _end = min(budget_end + OLLAMA_FIRST_CALL_EXTRA_S,
+                       test_deadline)
+        remaining = _end - time.monotonic()
         if remaining <= 0.25:
             timed_out = True
             break
@@ -370,14 +494,30 @@ def _run_candidate(cfg, kind, model, test_deadline):
         except TimeoutError:
             timed_out = True
             last_error = "timeout"
+            if kind == "ollama" and _idx == 0:
+                # The model may simply still be loading —
+                # reported distinctly from a hard timeout.
+                cold_timeout = True
             break
         except Exception as exc:
+            # requests spells a read timeout as an exception
+            # class of its own, not TimeoutError — the same
+            # cold-load reading applies when a local model's
+            # first call dies that way.
+            if kind == "ollama" and _idx == 0 \
+                    and "timeout" in type(exc).__name__.lower():
+                timed_out = True
+                cold_timeout = True
+                last_error = "timeout"
+                break
             last_error = f"{type(exc).__name__}: {exc}"[:80]
             break
     if len(replies) == len(PROMPTS):
         status = "ok"
     elif replies:
         status = "partial"
+    elif cold_timeout:
+        status = "timeout — cold load?"
     elif timed_out:
         status = "timeout"
     else:
@@ -389,7 +529,8 @@ def _run_candidate(cfg, kind, model, test_deadline):
         "total_s": (sum(totals) / len(totals)) if totals else None,
         "bn_ratio": _bengali_ratio(" ".join(replies)),
         "guard_pass": bool(replies) and _guards_pass(replies),
-        "note": last_error if status in ("failed", "timeout")
+        "note": last_error if status in (
+            "failed", "timeout", "timeout — cold load?")
         else "",
     }
 
