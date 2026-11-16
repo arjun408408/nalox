@@ -1,46 +1,10 @@
 Nalox log sync
 Version: 8.0
-Synced: 2026-11-16 18:08:37 (laptop local time)
+Synced: 2026-11-16 18:11:46 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-07:50:20 [BRAIN] [brain] Brain: checking…
-07:50:20 [SYSTEM] [prefs] call me: sir | language: bn
-07:50:20 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
-07:50:21 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-07:50:21 [SYSTEM] Nalox v7.2 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-07:50:21 [SYSTEM] [sys] Command Center opened at start
-07:50:21 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-07:50:22 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-07:50:28 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-07:50:28 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-07:50:28 [SYSTEM] [ready] Say 'Nalox' to wake me
-07:50:28 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-07:50:29 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-07:51:11 [MIC] [heard] nalox, open the chrome
-07:51:18 [MIC] [mic] wake word heard
-07:51:18 [WAKE] [wake] wake word heard
-07:51:18 [NALOX] NALOX: Yes Sir, I'm here.
-07:51:21 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=3 blip=0 short=0 peak=0.0602
-07:51:26 [ERROR] [voice] ElevenLabs unavailable (402 — payment/credits). Using the local voice for this session.
-07:51:31 [VOICE] via google-tts: Yes Sir, I'm here.
-07:51:31 [ERROR] [voice] say() overran its budget (13s > 11s)
-07:51:31 [YOU] [mic] heard: logs open the chrome
-07:51:31 [SYSTEM] [dashboard] Command Center closed.
-07:51:31 [NALOX] NALOX: ক্রোম খুলছি।
-07:51:35 [VOICE] via google-tts: ক্রোম খুলছি।
-07:51:35 [SYSTEM] [timing] wake→record 15.4s, transcribe 23.6s, brain 0.1s, speak 3.5s
-07:51:35 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-07:51:40 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-07:51:54 [SYSTEM] [logsync] log sent
-07:52:21 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=2 blip=0 short=0 peak=0.0954
-07:52:37 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-07:52:43 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-07:53:21 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=5 blip=1 short=0 peak=0.0630
-07:53:39 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-07:53:48 [BRAIN] Groq answered
-07:54:01 [VOICE] via google-tts: হ্যাঁ, স্যার। আর কিছু করতে পারি?
 07:54:09 [SYSTEM] [dashboard] Command Center closed.
 07:54:12 [BRAIN] Groq answered
 07:54:21 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=3 blip=2 short=0 peak=0.0117
@@ -1511,6 +1475,39 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 18:08:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=2 blip=2 short=0 peak=0.0373 dec=3 (t1 b0 s2 r0) dmax=8.0s
 18:08:14 [VOICE] via google-tts: ইউটিউব খুলছি। ঠিক আছে sir, ইউটিউবে music চালিয়ে দিলাম। আরেকটা গান চালাব?
 18:08:14 [VOICE] [voice] male voice unavailable — female fallback for this reply
+18:08:41 [SYSTEM] [logsync] log sent
+18:09:09 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:09:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=5 blip=1 short=0 peak=0.0554 dec=3 (t2 b0 s1 r0) dmax=5.2s
+18:09:14 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:09:14 [MIC] [heard] volem encho, me siera busita para el lándezón.
+18:09:27 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:10:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0579 dec=13 (t12 b0 s1 r0) dmax=10.1s
+18:10:43 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:10:56 [MIC] [heard] nalox uoi
+18:11:00 [MIC] [mic] wake word heard
+18:11:00 [WAKE] [wake] wake word heard
+18:11:00 [NALOX] NALOX: Yes Sir,
+18:11:02 [VOICE] via google-tts: Yes Sir,
+18:11:03 [YOU] [mic] heard: and i looks away
+18:11:05 [BRAIN] [brain] primary FreeLLMAPI answered (1875 ms)
+18:11:05 [NALOX] NALOX: কোনো বিশেষ কাজ না, স্যার। কীভাবে সাহায্য করতে পারি?
+18:11:11 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=9 short=0 peak=0.0422 dec=10 (t7 b0 s3 r0) dmax=5.3s
+18:11:12 [ERROR] Voice path edge-tts failed:
+18:11:12 [ERROR] [voice] edge-tts unavailable — skipping it for a while
+18:11:16 [VOICE] via google-tts: কোনো বিশেষ কাজ না, স্যার।
+18:11:16 [VOICE] [voice] male voice unavailable — female fallback for this reply
+18:11:18 [VOICE] via google-tts: কীভাবে সাহায্য করতে পারি?
+18:11:18 [SYSTEM] [timing] wake→record 4.9s, transcribe 4.2s, brain 1.9s, speak 13.6s
+18:11:18 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+18:11:30 [SYSTEM] [ears] heard via cloud:groq
+18:11:30 [MIC] [heard] তুমি আমার জোনে নোটপেড ওপেন করো আয় নোটপেড আমার নামে ভালক কিছু লাখো।
+18:11:30 [YOU] [mic] heard: তুমি আমার জোনে নোটপেড ওপেন করো আয় নোটপেড আমার নামে ভালক কিছু লাখো।
+18:11:30 [NALOX] NALOX: ল্যাপটপ লক করছি।
+18:11:33 [VOICE] via google-tts: ল্যাপটপ লক করছি।
+18:11:33 [VOICE] [voice] male voice unavailable — female fallback for this reply
+18:11:34 [SYSTEM] [timing] wake→record 7.9s, transcribe 3.3s, brain 0.0s, speak 4.3s
+18:11:34 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+18:11:39 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
