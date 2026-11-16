@@ -1,45 +1,10 @@
 Nalox log sync
 Version: 8.2
-Synced: 2026-11-16 19:38:28 (laptop local time)
+Synced: 2026-11-16 19:45:04 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-12:11:35 [NALOX] NALOX: Opening chrome.
-12:11:37 [VOICE] via google-tts: Opening chrome.
-12:11:38 [SYSTEM] [timing] wake→record 8.8s, transcribe 3.1s, brain 0.0s, speak 2.7s
-12:11:38 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:11:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:11:51 [SYSTEM] [ears] heard via cloud:groq
-12:11:51 [MIC] [heard] দাকো তুমি আখন কি করবে তুমি আখন যাবে ক্রোম ওপেন করবে ক্রোম ওপেন করার পালি
-12:11:51 [YOU] [mic] heard: দাকো তুমি আখন কি করবে তুমি আখন যাবে ক্রোম ওপেন করবে ক্রোম ওপেন করার পালি
-12:11:51 [NALOX] NALOX: ক্রোম খুলছি।
-12:11:53 [VOICE] via google-tts: ক্রোম খুলছি।
-12:11:54 [SYSTEM] [timing] wake→record 8.9s, transcribe 3.3s, brain 0.1s, speak 2.8s
-12:11:54 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:12:09 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:12:09 [SYSTEM] [ears] heard via cloud:groq
-12:12:09 [MIC] [heard] পোতমমতো তুমি আমান কথা পুলো সনো
-12:12:09 [YOU] [mic] heard: পোতমমতো তুমি আমান কথা পুলো সনো
-12:12:09 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-12:12:10 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-12:12:11 [BRAIN] [brain] chat race: Groq answered first (1406 ms)
-12:12:11 [NALOX] NALOX: গুলিয়ে যাচ্ছে, স্যার — আওয়াজটা পরিষ্কার পচ্ছি না। চাইলে একটু ধীরে, পরিষ্কারে বলবেন, বা টাইপ করে পাঠাবেন।
-12:12:12 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-12:12:13 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-12:12:17 [VOICE] via google-tts: গুলিয়ে যাচ্ছে, স্যার — আওয়াজটা পরিষ্কার পচ্ছি না।
-12:12:23 [VOICE] via google-tts: চাইলে একটু ধীরে, পরিষ্কারে বলবেন, বা টাইপ করে পাঠাবেন।
-12:12:23 [SYSTEM] [timing] wake→record 8.6s, transcribe 3.1s, brain 1.4s, speak 11.9s
-12:12:23 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:13:00 [SYSTEM] [ears] heard via local
-12:13:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=0 short=0 peak=0.1422
-12:13:16 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:14:07 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-13:09:30 [VOICE] [voice] starting with google-tts (worked last time)
-13:09:30 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-13:09:30 [SYSTEM] > user: Arjun | lang: en
-13:09:30 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-13:09:30 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
 13:09:30 [BRAIN] [brain] Brain: checking…
 13:09:30 [SYSTEM] [prefs] call me: sir | language: bn
 13:09:31 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
@@ -1480,6 +1445,38 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 19:38:08 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 19:38:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=1 short=0 peak=0.0702
 19:38:17 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:38:31 [SYSTEM] [logsync] log sent
+19:38:32 [SYSTEM] [dashboard] Command Center closed.
+19:39:09 [SYSTEM] [sys] boot warm-up gate opened (120s)
+19:39:09 [VOICE] [voice] male voice cache warmed
+19:39:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=9 blip=0 short=0 peak=0.2014 dec=10 (t10 b0 s0 r0) dmax=8.0s
+19:39:39 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:39:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:40:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0794 dec=12 (t12 b0 s0 r0) dmax=8.0s
+19:40:58 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:41:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:41:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=3 short=0 peak=0.0833 dec=11 (t11 b0 s0 r0) dmax=8.0s
+19:42:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=3 blip=1 short=0 peak=0.0509 dec=3 (t2 b0 s1 r0) dmax=13.0s
+19:42:39 [MIC] [heard] ان بیڈیار ڈکیناتہ یہاں ڈکیناتہ یہاں ڈکیناتہ یہاں
+19:42:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:43:01 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:43:07 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:43:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=6 blip=0 short=0 peak=0.0463 dec=5 (t3 b0 s1 r1) dmax=8.0s
+19:43:47 [MIC] [heard] e quando vai?
+19:44:02 [MIC] [heard] nalox, indonesia, লো, ব fahren, খো, কো, ři,ন,মো, াো, ঞropol, কো, খো, জো, ব,ঞি, ব,কো,কো,ব,ওো,ব,খো,ঞব,লব,াব,ছো,ব,ম� ł,মব,ধ,ব,াব,মব,া,াব,াব,াব,াব,াব,াব,াব,ব,ন,াব,া�
+19:44:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=3 seg=13 blip=0 short=0 peak=0.0672 dec=8 (t7 b0 s0 r1) dmax=9.6s
+19:44:32 [MIC] [mic] wake word heard
+19:44:32 [WAKE] [wake] wake word heard
+19:44:32 [NALOX] NALOX: Yes Sir,
+19:44:33 [VOICE] via tts-cache: Yes Sir,
+19:44:33 [YOU] [mic] heard: indonesia, লো, ব fahren, খো, কো, ři,ন,মো, াো, ঞropol, কো, খো, জো, ব,ঞি, ব,কো,কো,ব,ওো,ব,খো,ঞব,লব,াব,ছো,ব,ম� ł,মব,ধ,ব,াব,মব,া,াব,াব,াব,াব,াব,াব,াব,ব,ন,াব,া�
+19:44:42 [ERROR] [BRAIN] FreeLLMAPI FAILED: ReadTimeout: HTTPConnectionPool(host='127.0.0.1', port=31415): Read timed out. (read timeout=8.0)
+19:44:42 [BRAIN] [brain] primary FreeLLMAPI failed: ReadTimeout: HTTPConnectionPool(host='127.0.0.1', port=31415): Read timed out. (read timeout=8.0) — falling back
+19:44:43 [BRAIN] [brain] Muse Wonder: billing required (HTTP 402) — parked for this session; the other brains keep answering
+19:44:50 [ERROR] [BRAIN] Ollama FAILED: no working model — tried llama3.1 (last not pulled: llama3.1) — pull one with SETUP-OLLAMA.txt
+19:44:50 [BRAIN] [brain] chat fallback: Ollama failed: no working model — tried llama3.1 (last not pulled: llama3.1) — pull one with SETUP-OLLAMA.txt
+19:44:50 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+19:44:57 [ERROR] Voice path edge-tts failed:
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
