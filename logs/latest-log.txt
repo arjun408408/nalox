@@ -1,50 +1,10 @@
 Nalox log sync
 Version: 8.1
-Synced: 2026-11-16 18:52:01 (laptop local time)
+Synced: 2026-11-16 19:01:38 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-10:23:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:23:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=1 short=0 peak=0.0468 dec=12 (t10 b0 s2 r0) dmax=10.0s
-10:24:13 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:24:27 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:24:32 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:24:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=0 short=0 peak=0.0756 dec=15 (t12 b0 s3 r0) dmax=10.0s
-10:25:31 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:25:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=3 seg=14 blip=2 short=0 peak=0.0384 dec=9 (t8 b0 s1 r0) dmax=13.0s
-10:25:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:26:19 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:26:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=0 short=0 peak=0.1924 dec=18 (t16 b0 s2 r0) dmax=10.1s
-10:26:52 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:27:08 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:27:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=4 short=0 peak=0.4763 dec=14 (t13 b0 s1 r0) dmax=10.0s
-10:28:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:28:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:28:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=20 blip=3 short=0 peak=0.0493 dec=20 (t19 b0 s1 r0) dmax=8.0s
-11:52:32 [VOICE] [voice] starting with google-tts (worked last time)
-11:52:32 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-11:52:33 [SYSTEM] > user: Arjun | lang: en
-11:52:33 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-11:52:33 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-11:52:33 [BRAIN] [brain] Brain: checking…
-11:52:33 [SYSTEM] [prefs] call me: sir | language: bn
-11:52:35 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-11:52:35 [SYSTEM] Nalox v7.5 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-11:52:36 [SYSTEM] [sys] Command Center opened at start
-11:52:36 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-11:52:37 [BRAIN] [brain] Groq: models on this account (11): openai/gpt-oss-120b, meta-llama/llama-prompt-guard-2-86m, allam-2-7b, openai/gpt-oss-safeguard-20b, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3-turbo, canopylabs/orpheus-arabic-saudi, canopylabs/orpheus-v1-english, qwen/qwen3.8-27b, openai/gpt-oss-20b, whisper-large-v3
-11:52:37 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> allam-2-7b -> openai/gpt-oss-20b
-11:52:37 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-11:52:43 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-11:52:43 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-11:52:43 [SYSTEM] [ready] Say 'Nalox' to wake me
-11:52:43 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-11:52:43 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-11:53:02 [MIC] [heard] hello, jarabes!
-11:53:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-11:53:20 [SYSTEM] [dashboard] Command Center closed.
-11:53:35 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=2 short=0 peak=0.4076 dec=7 (t3 b0 s3 r1) dmax=16.1s
 11:53:55 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 11:53:58 [SYSTEM] [sys] exiting (restart): self-update to v7.6 (54 files applied)
 11:53:58 [SYSTEM] Restarting Nalox…
@@ -1484,6 +1444,52 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 18:51:10 [SYSTEM] [ears] worker restarted (crashed)
 18:51:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=2 short=0 peak=0.0079
 18:51:47 [SYSTEM] [ears] transcription worker restarting too often — pausing
+18:52:04 [SYSTEM] [logsync] log sent
+18:52:42 [SYSTEM] [sys] boot warm-up gate opened (120s)
+18:52:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=5 short=0 peak=0.0088 dec=1 (t1 b0 s0 r0) dmax=0.4s
+18:53:01 [VOICE] [voice] male voice cache warmed
+18:53:07 [SYSTEM] [ears] worker restarted (crashed)
+18:53:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=0 short=0 peak=0.0090 dec=1 (t1 b0 s0 r0) dmax=0.2s
+18:54:10 [SYSTEM] [ears] worker restarted (crashed)
+18:54:15 [SYSTEM] [ears] transcription worker restarting too often — pausing
+18:54:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=2 blip=4 short=0 peak=0.0613 dec=2 (t1 b0 s1 r0) dmax=2.1s
+18:55:02 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:55:19 [SYSTEM] [ears] worker restarted (crashed)
+18:55:34 [SYSTEM] [ears] transcription worker restarting too often — pausing
+18:55:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=4 short=0 peak=0.1499 dec=10 (t9 b0 s1 r0) dmax=8.0s
+18:56:39 [SYSTEM] [ears] worker restarted (crashed)
+18:56:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=2 short=0 peak=0.0125 dec=1 (t1 b0 s0 r0) dmax=0.2s
+18:57:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=1 short=0 peak=0.0114
+18:57:46 [SYSTEM] [ears] worker restarted (crashed)
+18:57:46 [SYSTEM] [ears] transcription worker restarting too often — pausing
+18:58:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=2 short=0 peak=0.0707 dec=9 (t5 b0 s4 r0) dmax=2.1s
+18:58:46 [SYSTEM] [ears] worker restarted (crashed)
+18:58:50 [SYSTEM] [ears] transcription worker restarting too often — pausing
+18:59:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:59:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=5 short=0 peak=0.1176 dec=12 (t8 b0 s4 r0) dmax=10.6s
+19:00:19 [VOICE] [voice] starting with google-tts (worked last time)
+19:00:19 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+19:00:19 [BRAIN] [brain] remembered 1 dead models from last sessions
+19:00:19 [SYSTEM] > user: Arjun | lang: en
+19:00:19 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+19:00:19 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+19:00:19 [BRAIN] [brain] Brain: checking…
+19:00:19 [SYSTEM] [prefs] call me: sir | language: bn
+19:00:19 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+19:00:19 [SYSTEM] Nalox v8.1 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
+19:00:19 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+19:00:19 [SYSTEM] [ears] worker restarted (crashed)
+19:00:20 [SYSTEM] [ears] worker restarted (crashed)
+19:00:20 [BRAIN] [brain] Groq: models on this account (11): whisper-large-v3, qwen/qwen3.8-27b, meta-llama/llama-prompt-guard-2-22m, meta-llama/llama-prompt-guard-2-86m, openai/gpt-oss-20b, canopylabs/orpheus-arabic-saudi, allam-2-7b, openai/gpt-oss-120b, whisper-large-v3-turbo, openai/gpt-oss-safeguard-20b, canopylabs/orpheus-v1-english
+19:00:20 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b
+19:00:20 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+19:00:20 [BRAIN] [brain] Gemini boot check: 1 configured model(s) not on this account — marked dead before the first turn: gemini-2.0-flash
+19:00:21 [BRAIN] [brain] boot answer test: FreeLLMAPI answered in 1562 ms
+19:00:22 [SYSTEM] [ears] transcription worker restarting too often — pausing
+19:00:30 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+19:01:19 [heartbeat] state=idle mic=unknown queue=0 seg=0 blip=0 short=0 peak=0.0000
+19:01:22 [SYSTEM] [ears] worker restarted (crashed)
+19:01:25 [SYSTEM] [ears] transcription worker restarting too often — pausing
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
@@ -1798,3 +1804,5 @@ Thread 0x000065a0 (most recent call first):
 ===== CLEAN EXIT 2026-11-16 18:50:35 — self-restart (supervisor relaunches) =====
 
 ===== Nalox boot 2026-11-16 18:50:42 — faulthandler armed =====
+
+===== Nalox boot 2026-11-16 19:00:19 — faulthandler armed =====
