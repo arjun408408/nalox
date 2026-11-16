@@ -1,95 +1,10 @@
 Nalox log sync
-Version: 7.5
-Synced: 2026-11-16 10:21:06 (laptop local time)
+Version: 7.6
+Synced: 2026-11-16 11:55:30 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-15:00:06 [YOU] [mic] heard: can i look close the room?
-15:00:12 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0
-15:00:13 [BRAIN] [tool] take_camera_photo
-15:00:20 [BRAIN] FreeLLMAPI answered
-15:00:20 [NALOX] NALOX: Photo taken and saved in the Nalox Captures folder. Would you like me to open it so you can have a look?
-15:00:33 [VOICE] via edge-tts: Photo taken and saved in the Nalox Captures folder. Would you like me to open it so you can have a look?
-15:00:33 [SYSTEM] [timing] wake→record 3.8s, transcribe 2.7s, brain 13.9s, speak 13.6s
-15:00:33 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:00:40 [SYSTEM] [ears] heard via cloud:groq
-15:00:40 [MIC] [heard] can you close the chrome?
-15:00:40 [YOU] [mic] heard: can you close the chrome?
-15:00:40 [NALOX] NALOX: Opening chrome.
-15:00:43 [VOICE] via edge-tts: Opening chrome.
-15:00:44 [SYSTEM] [timing] wake→record 4.0s, transcribe 2.6s, brain 0.0s, speak 3.5s
-15:00:44 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:00:49 [SYSTEM] [ears] heard via cloud:groq
-15:00:49 [MIC] [heard] right.
-15:00:49 [YOU] [mic] heard: right.
-15:00:53 [BRAIN] FreeLLMAPI answered
-15:00:53 [NALOX] NALOX: Photo saved in Nalox Captures. Want me to open it so you can see it?
-15:01:05 [VOICE] via edge-tts: Photo saved in Nalox Captures. Want me to open it so you can see it?
-15:01:05 [SYSTEM] [timing] wake→record 2.9s, transcribe 2.2s, brain 4.6s, speak 11.5s
-15:01:05 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:01:10 [SYSTEM] [ears] heard via cloud:groq
-15:01:10 [MIC] [heard] looks they opened it
-15:01:10 [YOU] [mic] heard: looks they opened it
-15:01:12 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0
-15:01:16 [BRAIN] [length-guard] FreeLLMAPI reply rejected — too long for a command answer; trying the next provider
-15:01:17 [ERROR] [BRAIN] OpenRouter FAILED: HTTP 401 — 401 — Missing Authentication header
-15:01:18 [ERROR] [BRAIN] Gemini FAILED: HTTP 404 — [{'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please upda
-15:01:18 [ERROR] [BRAIN] Groq FAILED: HTTP 404 — model_not_found — The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
-15:01:20 [ERROR] [BRAIN] OpenAI FAILED: HTTP 429 — credit_balance_exhausted — You have no credits remaining. Add credits to continue using the API at https://platform.open
-15:01:23 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ FreeLLMAPI key টা একবার check করবেন।
-15:01:27 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-15:01:32 [VOICE] via pyttsx3: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ FreeLLMAPI key টা একবার check করবেন।
-15:01:32 [SYSTEM] [timing] wake→record 2.9s, transcribe 2.0s, brain 13.6s, speak 8.5s
-15:01:32 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:01:45 [SYSTEM] [ears] heard via cloud:groq
-15:01:45 [MIC] [heard] তো তোমরা যাটা ফাটো তুললে সেইই ফাটোটার দেখাওতা কেমন হয়েছে
-15:01:45 [YOU] [mic] heard: তো তোমরা যাটা ফাটো তুললে সেইই ফাটোটার দেখাওতা কেমন হয়েছে
-15:01:48 [BRAIN] [tool] open_folder {'name': 'Nalox Captures'}
-15:01:51 [BRAIN] [tool] open_folder {'name': 'pictures'}
-15:01:56 [BRAIN] [cot-guard] FreeLLMAPI reply rejected — internal reasoning, not an answer; trying the next provider
-15:01:57 [ERROR] [BRAIN] Gemini FAILED: HTTP 404 — [{'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please upda
-15:01:58 [ERROR] [BRAIN] Groq FAILED: HTTP 404 — model_not_found — The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
-15:01:59 [ERROR] [BRAIN] OpenAI FAILED: HTTP 429 — credit_balance_exhausted — You have no credits remaining. Add credits to continue using the API at https://platform.open
-15:02:02 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ FreeLLMAPI key টা একবার check করবেন।
-15:02:12 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-15:02:15 [VOICE] via edge-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ FreeLLMAPI key টা একবার check করবেন।
-15:02:15 [SYSTEM] [timing] wake→record 10.4s, transcribe 2.5s, brain 16.9s, speak 13.8s
-15:02:15 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:02:21 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:02:52 [MIC] [heard] nalox, start your system.
-15:02:52 [MIC] [mic] wake word heard
-15:02:53 [WAKE] [wake] wake word heard
-15:02:53 [NALOX] NALOX: Yes Sir, I'm here.
-15:02:55 [VOICE] via pyttsx3: Yes Sir, I'm here.
-15:02:56 [YOU] [mic] heard: start your system
-15:03:00 [BRAIN] FreeLLMAPI answered
-15:03:00 [NALOX] NALOX: What would you like me to start, sir? A particular app, a search, or something else?
-15:03:12 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-15:03:12 [VOICE] via edge-tts: What would you like me to start, sir? A particular app, a search, or something else?
-15:03:13 [SYSTEM] [timing] wake→record 5.5s, transcribe 1.0s, brain 3.9s, speak 12.9s
-15:03:13 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:03:22 [SYSTEM] [ears] heard via cloud:groq
-15:03:22 [MIC] [heard] কিছুকো নাগে যে তুমি আমার ফাটো তুলে সেই ফাটো দেখাউতে কেমন হয়েছে
-15:03:22 [YOU] [mic] heard: কিছুকো নাগে যে তুমি আমার ফাটো তুলে সেই ফাটো দেখাউতে কেমন হয়েছে
-15:03:25 [BRAIN] [tool] take_camera_photo
-15:03:31 [BRAIN] [tool] open_folder {'name': 'Nalox Captures'}
-15:03:34 [BRAIN] [tool] open_folder {'name': 'C:\\Users\\arjun\\Downloads\\nalox-assistant\\nalox-assistant\\Nalox Captures'}
-15:03:37 [BRAIN] FreeLLMAPI answered
-15:03:37 [NALOX] NALOX: <dots_function_call> <invoke name="open_file"> <parameter name="path">C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\Nalox Captures\camera_20261115_150325.jpg</parameter> </invoke> </dots_function_call>
-15:04:11 [VOICE] via edge-tts: <dots_function_call> <invoke name="open_file"> <parameter name="path">C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\Nalox Captures\camera_20261115_150325.jpg</parameter> </invoke> </dots_function_call>
-15:04:11 [SYSTEM] [timing] wake→record 6.4s, transcribe 2.8s, brain 15.2s, speak 34.4s
-15:04:11 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:04:12 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0
-15:04:17 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-15:05:12 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-15:05:25 [SYSTEM] [ears] transcription stuck — listening continues
-15:06:13 [ERROR] [supervisor] Nalox process DIED (exit code 1) — relaunching in 5 seconds. A traceback in nalox_fault.log, if present, names the native fault.
-15:06:18 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-15:26:57 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-15:27:31 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-15:28:10 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-15:30:14 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
 15:42:13 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
 15:59:16 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
 15:59:17 [SYSTEM] > user: Arjun | lang: en
@@ -1647,10 +1562,87 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 10:20:57 [BRAIN] [brainbench] Ollama · qwen2.5:7b — failed 0/3 · RuntimeError: HTTP 404
 10:20:59 [BRAIN] [brainbench] Ollama · llama3.1:8b — failed 0/3 · RuntimeError: HTTP 404
 10:20:59 [BRAIN] [brainbench] Brain Test done in 50s — fastest full pass: groq · qwen/qwen3.8-27b (first token 0.59s)
+10:21:06 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:21:09 [SYSTEM] [logsync] log sent
+10:21:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=2 seg=17 blip=0 short=0 peak=0.0636 dec=12 (t10 b0 s2 r0) dmax=13.0s
+10:21:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:22:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:22:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=0 short=0 peak=0.3239 dec=16 (t15 b0 s1 r0) dmax=16.6s
+10:23:10 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:23:13 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:23:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:23:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=1 short=0 peak=0.0468 dec=12 (t10 b0 s2 r0) dmax=10.0s
+10:24:13 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:24:27 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:24:32 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:24:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=0 short=0 peak=0.0756 dec=15 (t12 b0 s3 r0) dmax=10.0s
+10:25:31 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:25:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=3 seg=14 blip=2 short=0 peak=0.0384 dec=9 (t8 b0 s1 r0) dmax=13.0s
+10:25:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:26:19 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:26:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=0 short=0 peak=0.1924 dec=18 (t16 b0 s2 r0) dmax=10.1s
+10:26:52 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:27:08 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:27:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=4 short=0 peak=0.4763 dec=14 (t13 b0 s1 r0) dmax=10.0s
+10:28:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:28:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+10:28:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=20 blip=3 short=0 peak=0.0493 dec=20 (t19 b0 s1 r0) dmax=8.0s
+11:52:32 [VOICE] [voice] starting with google-tts (worked last time)
+11:52:32 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+11:52:33 [SYSTEM] > user: Arjun | lang: en
+11:52:33 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+11:52:33 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+11:52:33 [BRAIN] [brain] Brain: checking…
+11:52:33 [SYSTEM] [prefs] call me: sir | language: bn
+11:52:35 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+11:52:35 [SYSTEM] Nalox v7.5 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
+11:52:36 [SYSTEM] [sys] Command Center opened at start
+11:52:36 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+11:52:37 [BRAIN] [brain] Groq: models on this account (11): openai/gpt-oss-120b, meta-llama/llama-prompt-guard-2-86m, allam-2-7b, openai/gpt-oss-safeguard-20b, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3-turbo, canopylabs/orpheus-arabic-saudi, canopylabs/orpheus-v1-english, qwen/qwen3.8-27b, openai/gpt-oss-20b, whisper-large-v3
+11:52:37 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> allam-2-7b -> openai/gpt-oss-20b
+11:52:37 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+11:52:43 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+11:52:43 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+11:52:43 [SYSTEM] [ready] Say 'Nalox' to wake me
+11:52:43 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
+11:52:43 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
+11:53:02 [MIC] [heard] hello, jarabes!
+11:53:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+11:53:20 [SYSTEM] [dashboard] Command Center closed.
+11:53:35 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=2 short=0 peak=0.4076 dec=7 (t3 b0 s3 r1) dmax=16.1s
+11:53:55 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+11:53:58 [SYSTEM] [sys] exiting (restart): self-update to v7.6 (54 files applied)
+11:53:58 [SYSTEM] Restarting Nalox…
+11:53:59 [ERROR] [supervisor] Nalox process DIED (exit code 1) — relaunching in 5 seconds. A traceback in nalox_fault.log, if present, names the native fault.
+11:54:07 [VOICE] [voice] starting with google-tts (worked last time)
+11:54:07 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+11:54:07 [SYSTEM] > user: Arjun | lang: en
+11:54:08 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+11:54:08 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+11:54:08 [BRAIN] [brain] Brain: checking…
+11:54:08 [SYSTEM] [prefs] call me: sir | language: bn
+11:54:09 [BRAIN] [brain] Groq: models on this account (11): qwen/qwen3.8-27b, whisper-large-v3-turbo, allam-2-7b, whisper-large-v3, meta-llama/llama-prompt-guard-2-22m, canopylabs/orpheus-arabic-saudi, openai/gpt-oss-20b, meta-llama/llama-prompt-guard-2-86m, openai/gpt-oss-120b, openai/gpt-oss-safeguard-20b, canopylabs/orpheus-v1-english
+11:54:09 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> allam-2-7b -> openai/gpt-oss-20b
+11:54:09 [BRAIN] [brain] Groq: auto chat head: qwen/qwen3.8-27b (validation pick — leads the chat walk)
+11:54:09 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+11:54:09 [SYSTEM] Nalox v7.6 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: Groq ✓ | robot: off | briefing_news: False | full_control: True
+11:54:10 [SYSTEM] [sys] Command Center opened at start
+11:54:10 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+11:54:11 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+11:54:17 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+11:54:17 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+11:54:17 [SYSTEM] [sys] self-updated to v7.6
+11:54:23 [VOICE] via google-tts: I have updated myself to version 7.6, sir.
+11:54:23 [SYSTEM] [ready] Say 'Nalox' to wake me
+11:54:23 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
+11:54:23 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
+11:54:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+11:55:00 [SYSTEM] [dashboard] Command Center closed.
+11:55:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=3 seg=9 blip=2 short=0 peak=0.2578
+11:55:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
-  File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
 
 Thread 0x00003cec (most recent call first):
@@ -1947,3 +1939,8 @@ Thread 0x000065a0 (most recent call first):
 ===== CLEAN EXIT 2026-11-16 09:19:37 — supervisor saw code 42 =====
 
 ===== Nalox boot 2026-11-16 10:19:45 — faulthandler armed =====
+
+===== Nalox boot 2026-11-16 11:52:32 — faulthandler armed =====
+===== CLEAN EXIT 2026-11-16 11:53:58 — self-restart (supervisor relaunches) =====
+
+===== Nalox boot 2026-11-16 11:54:07 — faulthandler armed =====
