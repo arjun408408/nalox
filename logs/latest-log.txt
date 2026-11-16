@@ -1,114 +1,10 @@
 Nalox log sync
 Version: 7.7
-Synced: 2026-11-16 13:10:50 (laptop local time)
+Synced: 2026-11-16 13:20:26 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-18:19:03 [MIC] [mic] wake word heard
-18:19:03 [WAKE] [wake] wake word heard
-18:19:03 [NALOX] NALOX: Yes Sir, I'm here.
-18:19:05 [VOICE] via pyttsx3: Yes Sir, I'm here.
-18:19:11 [SYSTEM] [ears] heard via cloud:groq
-18:19:11 [MIC] [heard] can you hear me?
-18:19:11 [YOU] [mic] heard: can you hear me?
-18:19:15 [BRAIN] FreeLLMAPI answered
-18:19:15 [NALOX] NALOX: Yes, I can hear you, sir. What can I do for you?
-18:19:19 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-18:19:22 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-18:19:23 [VOICE] via pyttsx3: Yes, I can hear you, sir. What can I do for you?
-18:19:24 [SYSTEM] [timing] wake→record 5.4s, transcribe 2.4s, brain 3.5s, speak 9.0s
-18:19:24 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-18:19:29 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-18:19:44 [SYSTEM] [ears] worker restarted (timeout)
-18:19:48 [SYSTEM] [ears] worker restarted (timeout)
-18:19:52 [SYSTEM] [ears] worker restarted (timeout)
-18:19:56 [SYSTEM] [ears] worker restarted (timeout)
-18:19:56 [SYSTEM] [ears] transcription worker restarting too often — pausing
-18:20:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:20:52 [SYSTEM] [dashboard] Command Center closed.
-18:21:03 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-18:33:58 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-18:33:58 [SYSTEM] > user: Arjun | lang: en
-18:33:58 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-18:33:58 [VOICE] [voice] active: ElevenLabs — your custom voice
-18:33:58 [BRAIN] [brain] Brain: checking…
-18:33:58 [SYSTEM] [prefs] call me: sir | language: bn
-18:33:58 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-18:33:58 [SYSTEM] Nalox v6.3 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — your custom voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-18:33:59 [SYSTEM] [sys] Command Center opened at start
-18:33:59 [NALOX] NALOX: Good evening, sir! Hi sir, how are you? I'm Nalox. How can I help you today?
-18:33:59 [ERROR] [BRAIN] Claude key REJECTED: HTTP 401 — authentication_error — invalid x-api-key
-18:33:59 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-18:34:00 [ERROR] [voice] ElevenLabs unavailable (402 — payment/credits). Using the local voice for this session.
-18:34:08 [VOICE] via pyttsx3: Good evening, sir! Hi sir, how are you? I'm Nalox. How can I help you today?
-18:34:08 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-18:34:08 [SYSTEM] [dashboard] Command Center closed.
-18:34:08 [SYSTEM] [ready] Say 'Nalox' to wake me
-18:34:08 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-18:34:08 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-18:34:37 [SYSTEM] [ears] worker restarted (timeout)
-18:34:50 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-18:34:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:35:03 [SYSTEM] [supervisor] [supervisor] another supervisor is already running — this one is standing down (one supervisor per install).
-18:35:21 [SYSTEM] [dashboard] Command Center closed.
-18:35:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:36:26 [SYSTEM] [ears] worker restarted (timeout)
-18:36:49 [MIC] [heard] nalox.
-18:36:49 [MIC] [mic] wake word heard
-18:36:50 [WAKE] [wake] wake word heard
-18:36:50 [NALOX] NALOX: Yes Sir, I'm here.
-18:36:52 [VOICE] via pyttsx3: Yes Sir, I'm here.
-18:36:57 [SYSTEM] [ears] heard via cloud:groq
-18:36:57 [MIC] [heard] open youtube.
-18:36:57 [YOU] [mic] heard: open youtube.
-18:36:57 [SYSTEM] [dashboard] Command Center closed.
-18:36:57 [NALOX] NALOX: ইউটিউব খুলছি।
-18:36:58 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-18:37:02 [VOICE] via edge-tts: ইউটিউব খুলছি।
-18:37:02 [SYSTEM] [timing] wake→record 5.0s, transcribe 2.5s, brain 0.1s, speak 4.7s
-18:37:02 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-18:37:05 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-18:37:35 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-18:37:35 [SYSTEM] [ears] worker restarted (timeout)
-18:37:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:38:10 [SYSTEM] [dashboard] Command Center closed.
-18:38:39 [SYSTEM] [ears] worker restarted (timeout)
-18:38:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:39:45 [MIC] [heard] e a raça que até tu já ame.
-18:39:50 [SYSTEM] [dashboard] Command Center closed.
-18:39:54 [SYSTEM] [ears] worker restarted (timeout)
-18:39:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1
-18:40:06 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-18:40:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:41:07 [SYSTEM] [ears] worker restarted (timeout)
-18:41:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-18:41:25 [SYSTEM] [dashboard] Command Center closed.
-18:41:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:42:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:43:05 [BRAIN] FreeLLMAPI answered
-18:43:29 [SYSTEM] [ears] worker restarted (timeout)
-18:43:36 [VOICE] via edge-tts: I'm awake, sir. What can I do for you?
-18:43:42 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-18:43:43 [VOICE] via pyttsx3: সব ঠিকঠাক, sir।
-18:43:56 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-18:43:58 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-18:44:10 [BRAIN] [length-guard] FreeLLMAPI reply rejected — too long for a command answer; trying the next provider
-18:44:10 [ERROR] [BRAIN] OpenRouter FAILED: HTTP 401 — 401 — Missing Authentication header
-18:44:11 [ERROR] [BRAIN] Gemini FAILED: HTTP 404 — [{'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please upda
-18:44:12 [ERROR] [BRAIN] Groq FAILED: HTTP 404 — model_not_found — The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
-18:44:14 [ERROR] [BRAIN] OpenAI FAILED: HTTP 429 — credit_balance_exhausted — You have no credits remaining. Add credits to continue using the API at https://platform.open
-18:44:21 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-18:44:26 [VOICE] via pyttsx3: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ FreeLLMAPI key টা একবার check করবেন।
-18:44:43 [SYSTEM] [dashboard] Command Center closed.
-18:44:47 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-18:54:05 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-18:54:05 [SYSTEM] > user: Arjun | lang: en
-18:54:05 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-18:54:05 [VOICE] [voice] active: ElevenLabs — your custom voice
-18:54:05 [BRAIN] [brain] Brain: checking…
-18:54:05 [SYSTEM] [prefs] call me: sir | language: bn
-18:54:05 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
 18:54:05 [SYSTEM] Nalox v6.4 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — your custom voice | brain: Brain: FreeLLMAPI ✓ | robot: off | briefing_news: False | full_control: True
 18:54:05 [SYSTEM] [sys] Command Center opened at start
 18:54:05 [NALOX] NALOX: Good evening, sir! Hi sir, how are you? I'm Nalox. How can I help you today?
@@ -1584,6 +1480,69 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 13:10:49 [SYSTEM] [ears] heard via cloud:groq
 13:10:49 [MIC] [heard] একন সাচ করো কুন কুড় মোপেনি করাস একন সাচ করো পকি গেমি
 13:10:49 [YOU] [mic] heard: একন সাচ করো কুন কুড় মোপেনি করাস একন সাচ করো পকি গেমি
+13:10:51 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
+13:10:53 [SYSTEM] [logsync] log sent
+13:10:57 [BRAIN] [brain] reply translated to Bengali (rescue)
+13:10:57 [NALOX] NALOX: আমি দুঃখিত, কিন্তু আমি পোকেমন গেম সহ অনলাইন লেনদেন বা পণ্য ক্রয় করতে সহায়তা করতে পারি না। আপনার কেনাকাটার জন্য অনুগ্রহ করে অফিসিয়াল Nintendo স্টোর বা অনুমোদিত খুচরা বিক্রেতা ব্যবহার করুন।
+13:11:06 [VOICE] via google-tts: আমি দুঃখিত, কিন্তু আমি পোকেমন গেম সহ অনলাইন লেনদেন বা পণ্য ক্রয় করতে সহায়তা করতে পারি না।
+13:11:15 [VOICE] via google-tts: আপনার কেনাকাটার জন্য অনুগ্রহ করে অফিসিয়াল Nintendo স্টোর বা অনুমোদিত খুচরা বিক্রেতা ব্যবহার করুন।
+13:11:16 [SYSTEM] [timing] wake→record 8.4s, transcribe 3.3s, brain 7.3s, speak 19.0s
+13:11:16 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:11:27 [SYSTEM] [ears] heard via cloud:groq
+13:11:27 [MIC] [heard] আমে বলছি তুমি আখন সাচ করবে, ওপেন করবে, পকি গেম্স বলে হয়ট হয়ে সাইড আছে
+13:11:27 [YOU] [mic] heard: আমে বলছি তুমি আখন সাচ করবে, ওপেন করবে, পকি গেম্স বলে হয়ট হয়ে সাইড আছে
+13:11:29 [BRAIN] [brain] chat race: Groq answered first (1344 ms)
+13:11:29 [NALOX] NALOX: আমি বুঝতে পারছি না “পকি গেম্স” বলতে আপনার নির্দিষ্ট কোন খেলা বা অ্যাপটি খুলতে চান। দয়া করে সঠিক নামটি বলুন, আমি সেটি খুঁজে খুলে দেব।
+13:11:31 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
+13:11:38 [VOICE] via google-tts: আমি বুঝতে পারছি না “পকি গেম্স” বলতে আপনার নির্দিষ্ট কোন খেলা বা অ্যাপটি খুলতে চান।
+13:11:43 [VOICE] via google-tts: দয়া করে সঠিক নামটি বলুন, আমি সেটি খুঁজে খুলে দেব।
+13:11:45 [SYSTEM] [timing] wake→record 8.5s, transcribe 3.3s, brain 1.3s, speak 16.0s
+13:11:45 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:12:23 [SYSTEM] [ears] heard via local
+13:12:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=0 short=0 peak=0.0763
+13:12:43 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:12:48 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:13:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2162 dec=13 (t12 b0 s1 r0) dmax=8.0s
+13:13:50 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:14:05 [MIC] [heard] aloha !
+13:14:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1652 dec=11 (t5 b0 s5 r1) dmax=5.3s
+13:14:45 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:14:58 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:15:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.3184 dec=12 (t10 b0 s2 r0) dmax=10.1s
+13:15:40 [SYSTEM] [dashboard] Command Center closed.
+13:16:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=12 blip=0 short=0 peak=0.1653 dec=10 (t10 b0 s0 r0) dmax=8.0s
+13:16:43 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:17:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0357 dec=13 (t9 b0 s4 r0) dmax=8.0s
+13:18:10 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:18:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0320 dec=13 (t7 b0 s6 r0) dmax=5.2s
+13:18:47 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:18:50 [MIC] [heard] nalox, খোআোলো
+13:19:20 [MIC] [mic] wake word heard
+13:19:21 [WAKE] [wake] wake word heard
+13:19:21 [NALOX] NALOX: Yes Sir,
+13:19:22 [VOICE] via tts-cache: Yes Sir,
+13:19:23 [YOU] [mic] heard: খোআোলো
+13:19:24 [BRAIN] [tool] google_search {'query': 'Pokémon games website official'}
+13:19:30 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:19:31 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=0 short=0 peak=0.1538 dec=3 (t3 b0 s0 r0) dmax=5.7s
+13:19:39 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:19:39 [SYSTEM] [timing] wake→record 6.8s, transcribe 35.7s, brain 7.5s, speak 9.1s
+13:19:39 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:19:52 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:19:52 [SYSTEM] [ears] heard via cloud:groq
+13:19:52 [MIC] [heard] নায় লোক্স তুমি আমাদ জনে নোট পেড ওপেন করে আমান নামে কিছো ভালো দিনিশ লেখো
+13:19:52 [YOU] [mic] heard: নায় লোক্স তুমি আমাদ জনে নোট পেড ওপেন করে আমান নামে কিছো ভালো দিনিশ লেখো
+13:19:53 [BRAIN] [tool] open_app {'name': 'notepad'}
+13:19:57 [ERROR] [BRAIN] Groq FAILED: HTTP 429 — rate_limit_exceeded — Rate limit reached for model `qwen/qwen3.8-27b` in organization `org_01m7et8kg1eskv4a4k8cqmyzdz` s
+13:20:00 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:20:09 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:20:09 [SYSTEM] [timing] wake→record 8.6s, transcribe 2.8s, brain 7.4s, speak 9.5s
+13:20:09 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:20:22 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:20:22 [SYSTEM] [ears] heard via cloud:groq
+13:20:22 [MIC] [heard] দাই কোতুমি নোটপেড ওপেন করের পর আমান নামে কিছু ভালো দিনিশ লিখে
+13:20:22 [YOU] [mic] heard: দাই কোতুমি নোটপেড ওপেন করের পর আমান নামে কিছু ভালো দিনিশ লিখে
+13:20:23 [BRAIN] [tool] open_app {'name': 'notepad'}
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
