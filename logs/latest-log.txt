@@ -1,44 +1,10 @@
 Nalox log sync
 Version: 8.0
-Synced: 2026-11-16 18:32:06 (laptop local time)
+Synced: 2026-11-16 18:42:15 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-09:12:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:13:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=0 short=0 peak=0.1941 dec=13 (t8 b0 s5 r0) dmax=10.0s
-09:14:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:14:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=20 blip=0 short=0 peak=0.1210 dec=18 (t15 b0 s3 r0) dmax=16.0s
-09:14:36 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:15:00 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-09:17:11 [VOICE] [voice] starting with google-tts (worked last time)
-09:17:11 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-09:17:12 [SYSTEM] > user: Arjun | lang: en
-09:17:12 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-09:17:12 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-09:17:12 [BRAIN] [brain] Brain: checking…
-09:17:12 [SYSTEM] [prefs] call me: sir | language: bn
-09:17:12 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
-09:17:13 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-09:17:13 [SYSTEM] Nalox v7.4 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-09:17:13 [SYSTEM] [sys] Command Center opened at start
-09:17:13 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-09:17:16 [SYSTEM] [dashboard] Command Center closed.
-09:17:20 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-09:17:20 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-09:17:20 [SYSTEM] [ready] Say 'Nalox' to wake me
-09:17:20 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-09:17:20 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-09:17:25 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-09:17:27 [SYSTEM] [dashboard] Command Center closed.
-09:18:03 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:18:13 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=17 blip=1 short=0 peak=0.1685 dec=11 (t9 b0 s2 r0) dmax=16.0s
-09:18:32 [SYSTEM] [sys] exiting (restart): Settings — Save & Restart
-09:18:33 [SYSTEM] [supervisor] Nalox exited (code 0) — a restart-style exit, relaunching in 5 seconds.
-09:18:40 [VOICE] [voice] starting with google-tts (worked last time)
-09:18:40 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-09:18:40 [SYSTEM] > user: Arjun | lang: en
-09:18:40 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
 09:18:40 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
 09:18:40 [BRAIN] [brain] Brain: checking…
 09:18:40 [SYSTEM] [prefs] call me: sir | language: bn
@@ -1497,6 +1463,34 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 18:30:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 18:31:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=13 blip=3 short=0 peak=0.0827 dec=9 (t9 b0 s0 r0) dmax=8.0s
 18:31:48 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:32:06 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:32:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=8 blip=4 short=0 peak=0.0410 dec=7 (t7 b0 s0 r0) dmax=11.7s
+18:32:11 [SYSTEM] [logsync] log sent
+18:33:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=1 short=0 peak=0.0536 dec=14 (t14 b0 s0 r0) dmax=0.0s
+18:33:20 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:33:23 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:34:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=4 short=0 peak=0.0359 dec=12 (t12 b0 s0 r0) dmax=11.8s
+18:34:39 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:34:52 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:35:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=0 short=0 peak=0.1333 dec=13 (t13 b0 s0 r0) dmax=8.0s
+18:35:53 [MIC] [heard] eu vou acorre que eu vou fazer no ver.
+18:36:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:36:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=2 seg=15 blip=2 short=0 peak=0.0481 dec=11 (t9 b0 s2 r0) dmax=10.2s
+18:36:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:36:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:37:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=18 blip=7 short=0 peak=0.0412 dec=16 (t16 b0 s0 r0) dmax=12.9s
+18:37:50 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:37:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:38:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=5 short=0 peak=0.0672 dec=13 (t13 b0 s0 r0) dmax=8.1s
+18:39:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=1 short=0 peak=0.0396 dec=12 (t12 b0 s0 r0) dmax=8.0s
+18:39:26 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:39:37 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:40:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=17 blip=2 short=0 peak=0.1767 dec=13 (t12 b0 s1 r0) dmax=8.0s
+18:40:55 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:41:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=16 blip=3 short=0 peak=0.0512 dec=17 (t17 b0 s0 r0) dmax=8.0s
+18:42:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=4 short=0 peak=0.0807 dec=10 (t10 b0 s0 r0) dmax=8.0s
+18:42:14 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:42:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
