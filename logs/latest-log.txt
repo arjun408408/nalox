@@ -1,28 +1,10 @@
 Nalox log sync
 Version: 7.9
-Synced: 2026-11-16 14:11:51 (laptop local time)
+Synced: 2026-11-16 14:14:28 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-20:33:49 [NALOX] NALOX: আপনার স্ক্রিনে WhatsApp চ্যাট তালিকা এবং কয়েকটি নোটিফিকেশন দেখা যাচ্ছে, স্যার। আর কী সহায়তা করতে পারি?
-20:33:59 [VOICE] via google-tts: আপনার স্ক্রিনে WhatsApp চ্যাট তালিকা এবং কয়েকটি নোটিফিকেশন দেখা যাচ্ছে, স্যার।
-20:34:04 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-20:34:05 [VOICE] via google-tts: আর কী সহায়তা করতে পারি?
-20:34:06 [SYSTEM] [timing] wake→record 9.9s, transcribe 3.3s, brain 14.3s, speak 16.9s
-20:34:06 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-20:34:18 [SYSTEM] [ears] heard via cloud:groq
-20:34:18 [MIC] [heard] আমি যখন বললাম যা আমার স্কিনে কি দেখারেছে তকন তুমি বলবা তোমার স্কিনে শুধু সেল তোমার ইসকিলে শুধু ও ওড সেল দেখায়া চাল পিছনে কিছু
-20:34:18 [YOU] [mic] heard: আমি যখন বললাম যা আমার স্কিনে কি দেখারেছে তকন তুমি বলবা তোমার স্কিনে শুধু সেল তোমার ইসকিলে শুধু ও ওড সেল দেখায়া চাল পিছনে কিছু
-20:34:19 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-20:34:20 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-20:34:21 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-20:34:31 [ERROR] [BRAIN] Gemini FAILED: ReadTimeout: HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=9.171999999998661)
-20:34:32 [BRAIN] [tool] take_screenshot {'name': 'take_screenshot'}
-20:34:34 [BRAIN] Groq answered
-20:34:34 [NALOX] NALOX: স্ক্রিনের শট নেওয়া হয়েছে, স্যার। আর কিছু করতে পারি?
-20:34:40 [VOICE] via google-tts: স্ক্রিনের শট নেওয়া হয়েছে, স্যার।
-20:34:45 [VOICE] via google-tts: আর কিছু করতে পারি?
 20:34:45 [SYSTEM] [timing] wake→record 8.4s, transcribe 3.9s, brain 15.7s, speak 11.2s
 20:34:45 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
 20:34:55 [SYSTEM] [ears] heard via cloud:groq
@@ -1535,6 +1517,39 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 14:11:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 14:11:32 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 14:11:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=0 short=0 peak=0.2002 dec=7 (t6 b0 s1 r0) dmax=12.7s
+14:11:55 [SYSTEM] [logsync] log sent
+14:12:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.3526 dec=11 (t5 b0 s6 r0) dmax=8.0s
+14:13:14 [MIC] [heard] εναλόξ, κανογιάρμοι
+14:13:19 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+14:13:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1823 dec=12 (t2 b0 s10 r0) dmax=12.7s
+14:13:37 [MIC] [heard] nalox, wake up
+14:13:37 [WAKE] [wake] wake up — opening the Command Center
+14:13:37 [MIC] [mic] wake word heard
+14:13:37 [WAKE] [wake] wake word heard
+14:13:37 [NALOX] NALOX: Yes Sir,
+14:13:39 [VOICE] via tts-cache: Yes Sir,
+14:13:51 [SYSTEM] [ears] heard via cloud:groq
+14:13:51 [MIC] [heard] now look, they're going to come
+14:13:51 [YOU] [mic] heard: now look, they're going to come
+14:13:51 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
+14:13:52 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
+14:13:52 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
+14:13:53 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
+14:13:56 [BRAIN] [brain] chat fallback: Ollama failed: not reachable at http://localhost:11434
+14:13:58 [BRAIN] [brain] reply translated to Bengali (rescue)
+14:13:58 [NALOX] NALOX: আমি শুনছি, আর যা আসবে তার জন্য প্রস্তুত আছি, স্যার। শুধু আমাকে আদেশ দিন.
+14:14:06 [VOICE] via edge-tts: আমি শুনছি, আর যা আসবে তার জন্য প্রস্তুত আছি, স্যার।
+14:14:13 [SYSTEM] [dashboard] Command Center closed.
+14:14:13 [ERROR] Voice path edge-tts failed:
+14:14:17 [VOICE] via google-tts: শুধু আমাকে আদেশ দিন.
+14:14:17 [VOICE] [voice] male voice unavailable — female fallback for this reply
+14:14:17 [SYSTEM] [timing] wake→record 10.0s, transcribe 3.1s, brain 7.0s, speak 19.0s
+14:14:17 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+14:14:25 [SYSTEM] [ears] big local model ready — using large-v3-turbo on cuda (float16)
+14:14:25 [SYSTEM] [ears] big local model loading…
+14:14:28 [SYSTEM] [ears] heard via cloud:groq
+14:14:28 [MIC] [heard] oh
+14:14:28 [YOU] [mic] heard: oh
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
