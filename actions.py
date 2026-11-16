@@ -90,9 +90,128 @@ def _front_app(name):
            process_hints=sorted(procs))
 
 
+# ---------------------------------------------------------------- v7.7
+def _hidden_console_kwargs():
+    """subprocess kwargs that keep a console child INVISIBLE
+    (v7.7, item G): CREATE_NO_WINDOW on Windows, nothing
+    elsewhere. Console children (taskkill, powershell,
+    shutdown, CLI shims) of a windowless parent otherwise
+    flash a console window during tasks — the owner's
+    "~1 second CMD flash" when he asks for a song."""
+    if os.name == "nt":
+        return {"creationflags": getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
+# ------------------------------------------------- v7.7: Chrome profile
+# The owner's screenshot (2026-11-16 12:01 IST): Nalox opened
+# Chrome for a song and stalled at the "Who's using Chrome?"
+# profile picker — Chrome was launched with no profile, so
+# it asked. The fix: launch Chrome with its LAST-USED
+# profile (named in Chrome's own "Local State" file) via
+# --profile-directory, so the picker never appears. When
+# the last profile cannot be determined, launches behave
+# exactly as before (the fallback is today's behaviour,
+# never a broken launch).
+def _chrome_last_profile(state_path=None):
+    """Chrome's last-used profile directory name (e.g.
+    "Default" / "Profile 1") from the Local State file, or
+    None when it cannot be determined. Pure file reading —
+    unit-testable with a fixture path."""
+    try:
+        if state_path is None:
+            base = os.path.expandvars(
+                r"%LOCALAPPDATA%\Google\Chrome\User Data")
+            state_path = os.path.join(base, "Local State")
+        import json
+        with open(state_path, encoding="utf-8") as fh:
+            state = json.load(fh)
+        profile = (state.get("profile") or {}).get("last_used")
+        if not profile or not isinstance(profile, str):
+            return None
+        profile = profile.strip()
+        # A directory NAME, never a path — anything with a
+        # separator in it is not a profile name.
+        if not profile or "/" in profile or "\\" in profile:
+            return None
+        return profile
+    except Exception:
+        return None
+
+
+def _chrome_exe_path():
+    """The chrome.exe path open_app would use, or None."""
+    for cand in APP_CANDIDATES.get("chrome", []):
+        path = os.path.expandvars(cand)
+        try:
+            if os.path.isabs(path) and os.path.exists(path):
+                return path
+            found = shutil.which(path)
+            if found:
+                return found
+        except Exception:
+            continue
+    return None
+
+
+def _chrome_command(url=None):
+    """The argv for launching Chrome DIRECTLY with its
+    last-used profile (v7.7, item F) — [exe,
+    --profile-directory=<dir>] plus the URL when given.
+    None when the exe or the profile is unknown: callers
+    then keep today's launch behaviour unchanged."""
+    exe = _chrome_exe_path()
+    if not exe:
+        return None
+    profile = _chrome_last_profile()
+    if not profile:
+        return None
+    argv = [exe, f"--profile-directory={profile}"]
+    if url:
+        argv.append(url)
+    return argv
+
+
+def _default_browser_is_chrome():
+    """True when Chrome is the Windows default browser
+    (the http association's ProgId is ChromeHTML…), False
+    when another browser is, None when undeterminable
+    (off Windows / registry unreadable)."""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\Shell\Associations"
+            r"\UrlAssociations\http\UserChoice")
+        try:
+            progid, _ = winreg.QueryValueEx(key, "ProgId")
+        finally:
+            winreg.CloseKey(key)
+        return str(progid).startswith("ChromeHTML")
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- browser
 def open_url(url):
     _step_aside()
+    # v7.7 (item F): when Chrome is the default browser and
+    # its last-used profile is known, launch Chrome directly
+    # with that profile — webbrowser.open() hands Chrome no
+    # profile and the "Who's using Chrome?" picker stalls
+    # the task (the owner's 2026-11-16 screenshot).
+    if _default_browser_is_chrome():
+        argv = _chrome_command(url)
+        if argv:
+            try:
+                subprocess.Popen(argv,
+                                 **_hidden_console_kwargs())
+                _front(process_hints=_BROWSER_PROCS,
+                       timeout_s=3.0)
+                return url
+            except Exception:
+                pass  # fall through to today's behaviour
     opened = webbrowser.open(url)  # opens in Arjun's DEFAULT browser
     if opened is not False:
         _front(process_hints=_BROWSER_PROCS, timeout_s=3.0)
@@ -196,13 +315,26 @@ def open_app(name):
     for cand in candidates:
         path = os.path.expandvars(cand)
         try:
+            # v7.7 (item F): Chrome launches with its
+            # last-used profile when known, so the profile
+            # picker never stalls the open (os.startfile
+            # cannot take arguments, so a known profile
+            # means a direct Popen instead).
+            if key in ("chrome", "google chrome", "browser"):
+                argv = _chrome_command()
+                if argv:
+                    subprocess.Popen(
+                        argv, **_hidden_console_kwargs())
+                    _front_app(name)
+                    return f"Opening {name}."
             if os.path.isabs(path) and os.path.exists(path):
                 os.startfile(path)
                 _front_app(name)
                 return f"Opening {name}."
             found = shutil.which(path)
             if found:
-                subprocess.Popen([found])
+                subprocess.Popen([found],
+                                 **_hidden_console_kwargs())
                 _front_app(name)
                 return f"Opening {name}."
             if path.endswith(".exe") and not os.path.isabs(path):
@@ -255,7 +387,8 @@ def close_app(name):
         try:
             done = subprocess.run(
                 ["taskkill", "/IM", proc, "/F"],
-                capture_output=True, timeout=10)
+                capture_output=True, timeout=10,
+                **_hidden_console_kwargs())
             if done.returncode == 0:
                 closed = True
         except Exception:
@@ -331,17 +464,20 @@ def lock_pc():
 
 
 def shutdown_pc():
-    subprocess.Popen(["shutdown", "/s", "/t", "5"])
+    subprocess.Popen(["shutdown", "/s", "/t", "5"],
+                     **_hidden_console_kwargs())
     return "Shutting down. Goodbye!"
 
 
 def restart_pc():
-    subprocess.Popen(["shutdown", "/r", "/t", "5"])
+    subprocess.Popen(["shutdown", "/r", "/t", "5"],
+                     **_hidden_console_kwargs())
     return "Restarting your laptop."
 
 
 def cancel_shutdown():
-    subprocess.Popen(["shutdown", "/a"])
+    subprocess.Popen(["shutdown", "/a"],
+                     **_hidden_console_kwargs())
 
 
 FOLDERS = {
@@ -415,7 +551,8 @@ def _ps_empty_recycle_bin():
     proc = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command",
          "Clear-RecycleBin -Force -ErrorAction Stop"],
-        capture_output=True, timeout=60)
+        capture_output=True, timeout=60,
+        **_hidden_console_kwargs())
     if proc.returncode != 0:
         detail = (proc.stderr or b"").decode("utf-8", "replace")
         raise OSError("Clear-RecycleBin failed: " + detail.strip()[:200])
@@ -445,7 +582,8 @@ def _open_shell_location(location):
         return
     except Exception:
         pass
-    subprocess.Popen(["explorer.exe", location])
+    subprocess.Popen(["explorer.exe", location],
+                     **_hidden_console_kwargs())
 
 
 def open_this_pc():

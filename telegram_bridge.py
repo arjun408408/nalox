@@ -244,6 +244,14 @@ class TelegramBridge(threading.Thread):
                 self.speaker.say(reply, lang=getattr(self.brain, "last_lang", None))
         if action == "exit":
             log.info("Exit requested from Telegram.")
+            # v7.7: speech stops before the exit begins —
+            # this thread itself was inside the voice layer
+            # in the 2026-11-16 fault dump.
+            try:
+                import voice as _voice_mod
+                _voice_mod.stop_for_exit()
+            except Exception:
+                pass
             os._exit(42)  # supervisor treats 42 as a clean, do-not-restart exit
 
     def _transcribe_voice(self, voice):

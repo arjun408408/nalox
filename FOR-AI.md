@@ -864,3 +864,179 @@ TTS engines, phone/Telegram, GLM (still unmeasurable —
 his OpenRouter account has zero credits and
 glm-5.2:free 404s), the exit-1 crash (no traceback
 exists; do not invent one).
+
+## v7.7 — "শোনার লাইন এবার ডুববে না" (2026-11-16)
+
+Field evidence: the synced log of 2026-11-16 11:55 IST
+(v7.6 session) and 12:05 IST. Ten items, one release:
+
+A. THE EXIT-1 CAUSE IS NOW PROVEN — the 11:55 sync's
+fault tail contains the first traceback ever captured:
+"Windows fatal exception: code 0xe0000002", current
+thread inside the SAPI5 driver (pyttsx3/drivers/
+sapi5.py; say -> _pump ->
+setBusy -> startLoop -> runAndWait) called from
+voice.py's in-process pyttsx3 thread, main thread
+waiting in nalox.py's say() join, a Telegram thread ALSO
+inside the voice layer — and the same session's
+self-update restart "exiting (restart): self-update to
+v7.6" was followed by "[supervisor] Nalox process DIED
+(exit code 1)". This is the cause family for the exit-1
+deaths (2026-11-15 x4 + 2026-11-16 07:50 + 11:53). (Two
+earlier watcher claims of this theory were checked
+against their syncs and REJECTED — those syncs genuinely
+lacked the dump; it is proven only now, by this one.)
+Fix: pyttsx3 runs in a CHILD PROCESS (voice.py
+_PYTTSX3_CHILD_SRC, `python -c … speak|render`), spawned
+through the single seam Speaker._launch_tts_child,
+polled with the old stop/timeout discipline
+(PYTTSX3_TIMEOUT unchanged); a child crash/timeout is an
+ordinary engine failure for _try_engine's breaker. The
+robot path renders via the child too (its playback stays
+in-process — sounddevice/winsound are not SAPI).
+Speaker._speak_pyttsx3(text, robot) signature unchanged.
+Plus voice.stop_for_exit() — every exit path now stops
+in-flight speech BEFORE exiting: nalox._restart_process,
+the voice exit actions, updater.check_and_update,
+hud._on_exit/_on_restart, tray exit/restart,
+settings_ui Save & Restart, telegram_bridge exit. (The
+boot stand-down sys.exit(43) is pre-Speaker — no speech
+can exist; deliberately untouched.)
+
+B. WAKE FLOOD, ROUND 2 (ears.py). Field: heartbeat
+queue=3 SATURATED, seg=9, peak=0.2578 (gate 0.006), zero
+[heard]; the earlier session's dec=7 had s3 — small
+escalations were ~half the wake worker's time. (i)
+_queue_pressure (waiting >= 1, snapshotted with the
+existing _waiting): NO 'small' escalation for that
+segment at ANY of the three small triggers (garbage /
+out-of-set-lang / Bengali-script rescue) — the garbage
+trigger had no gate at all before. The base near-miss
+retry is NOT the small escalation and stays (different,
+resident model; dec_base was 0 in the flood window).
+Zero pressure = v7.6 exactly. (ii) _take_queue_job():
+>= 2 waiting -> take the NEWEST, drop the older ones,
+one aggregate line "[ears] dropped N stale wake
+segments (queue pressure)"; 0/1 waiting = the old FIFO
+get; the v7.5 priority slot still goes first; F3's
+stale-age drop still applies to the taken job. (iii)
+ears_wake_threads default 4 -> 6 (config.py DEFAULTS +
+patch_config PATCH_IF_ABSENT + a chained migration:
+stored 2 -> 4 (v7.2 step) -> 6 (v7.7 step); any other
+value preserved). _LANE_DEFAULT_THREADS is NOT the
+production default and is unchanged (test_v612 pins the
+keyless (2,4,2) fallback tuple).
+
+D. GARBLE-TOLERANT INTENT (brain.py). The owner's
+screenshot: "আমার জন্য একটা সং প্লে করো" heard as "আমে
+বলছি যে তুমি আয় আমাত জনে একটা সগ পিলে করো সগ" -> the
+could-not-hear line. _correct_bengali_command_garble():
+context-gated on a play verb token; rewrites সগ/সংগ/
+সাঁগ/সঙ -> সং and পিলে -> প্লে; applied ONLY inside
+_bengali_commands (never to agent/writing/quoted text).
+The corrected play path strips verbs + song noun +
+field fillers token-wise; an empty remainder plays the
+bangla-song default. Plus an ASR-tolerance clause in
+_system_prompt (infer intent from the sounds; the
+could-not-hear fallback is only for NO plausible
+intent).
+
+E. COMPLETION MANNER (brain.py). The owner's shape:
+completed form, never the progressive ("স্যার, আমি সং
+চালিয়ে দিলাম", not "আমি চালাচ্ছি"), then ONE
+next-step ask specific to the finished action. The
+v6.6 close clause is rewritten to say exactly that
+(its test needles are preserved). Deterministic play
+confirmations (the গান block, the corrected path,
+_play_reply, the content-intents play line) now return
+_song_done_line(): "ঠিক আছে {addr}, … চালিয়ে দিলাম।"
++ a rotating play-specific offer ("আরেকটা গান
+চালাব?" / "ভলিউম বাড়িয়ে দেব?") appended only when
+the previous reply did not end with an offer.
+Anti-repetition state: Brain._last_reply_had_offer,
+recorded by handle() via _note_reply_closing on every
+routed reply; _guard_reply's new post-check
+(_strip_repeated_generic_offer) removes a trailing
+GENERIC offer ("আর কিছু করতে পারি?" / "anything
+else?") when the previous reply already ended with
+one. The app-open line "ক্রোম খুলছি।" is NOT changed
+(v6.8 field-verified, test-pinned).
+
+F. CHROME PROFILE (actions.py). The screenshot's
+picker stall: Chrome now launches with its last-used
+profile — _chrome_last_profile() reads the Local State
+JSON (profile.last_used), _chrome_command() builds
+[exe, --profile-directory=<dir>, url?], open_url uses
+it when the registry says Chrome is the default
+browser, open_app uses it for chrome targets.
+os.startfile cannot take arguments, so a known profile
+means a direct Popen. Unknown profile / non-Chrome
+default = today's behaviour, byte for byte.
+
+G. NO CONSOLE FLASHES. Every console-capable child in
+the task paths now launches with CREATE_NO_WINDOW
+(per-module _hidden_console_kwargs(), phone_control's
+existing pattern): actions (open_app Popen, taskkill,
+shutdown/restart, the PowerShell recycle-bin fallback,
+the explorer fallback), voice (the pyttsx3 child + the
+PowerShell speech path), vision's PowerShell runner,
+dashboard's nvidia-smi probe, settings_ui's autostart
+PowerShell, updater's pip/adb/patch children.
+Supervisor/boot behaviour untouched by design.
+
+H. CHAINS COMPLETE EVERY STEP (brain.py). Field:
+"নোটপ্যাড ওপেন করে আমার নামে কিছু লিখবে" — Notepad opened,
+nothing written. Three layers: (1) _app_control_intents
+DEFERS to the agent when an open carries a second
+action clause (লিখ / write / type tokens, or play+song)
+instead of consuming the utterance for the open alone;
+(2) the agent loops (OpenAI-compatible AND Ollama)
+continue the turn ONCE when a model stops to narrate
+after >= 1 tool on a chain request
+(_looks_like_chain_request + _CHAIN_CONTINUATION);
+(3) the wrapper replaces a non-blocker final reply
+with the honest partial line when the continuation
+produced no further tool
+(_turn_partial_after_continuation). Anthropic's loop is
+unchanged (dormant provider, never configured). Two
+precision rules the battery enforced: the chain
+detector counts Bengali VERBS only (the nouns মেসেজ/
+জবাব in the narrate list mark action-ness, not a
+second action), and the continuation judges the chain
+shape on the owner's words with any stern note
+stripped (_owner_utterance) — the narrate retry's own
+system text must not fake a chain.
+
+I. DEAD-MODEL MEMORY (brain.py). Field: Gemini's
+gone-hop (2.5-flash -> 2.0-flash -> 2.5-flash-lite ->
+flash-latest) re-paid on EVERY turn. Brain._dead_models
+holds (provider, model-key) pairs that returned
+_MODEL_MISS; _agent_openai_walk filters them before
+walking and fails at once when all candidates are
+known-dead; _agent_ollama's loop gets the same filter.
+Session scope only.
+
+J. AGENT-PATH LANGUAGE SEAM (brain.py). Reproduced
+against v7.6 before fixing: a substantive English
+reply on the agent path WAS rescued (the v7.6 A6 pin),
+but a language-rejected CAPABILITY CLAIM fell through
+_rescue_wrong_language_reply's claim exclusion into
+the could-not-hear line — the narrate guard, which the
+exclusion defers to, never sees a language-rejected
+reply. The 11:58 turns match this shape (Groq answered
+in English, guard rejected, turn ended with "ওটা ঠিক
+ধরতে পারলাম না"). Fix: at the answerless endgame a
+claim candidate now returns the narrate guard's own
+honest line ("দুঃখিত sir, কাজটা এখন করে উঠতে পারলাম
+না।") instead of None — the claim TEXT is still never
+spoken or translated (narration rules unchanged), but
+the could-not-hear line can no longer end a turn in
+which a provider produced a substantive reply.
+test_v76 A5 is updated to the new endgame (translator
+still never called; the None expectation became the
+honest line) — disclosed intentional change.
+
+NOT in v7.7: brain providers/race composition (v7.6's
+field proof still owed — undisturbed), TTS engine
+order, phone/Telegram behaviour, wake matcher
+thresholds.

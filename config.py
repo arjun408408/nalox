@@ -52,7 +52,7 @@ DEFAULTS = {
     # answer instantly, so it gets the headroom. Existing
     # installs holding the shipped 2 are migrated by
     # patch_config.py; a hand-set value is preserved. ---
-    "ears_wake_threads": 4,
+    "ears_wake_threads": 6,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
     # --- v7.0: SELF-HEALING WATCHDOGS — the ears watch the

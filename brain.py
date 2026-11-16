@@ -1045,6 +1045,64 @@ def _normalise_asr(text):
                     for tok in cleaned.split())
 
 
+# ------------------------------------------------------------- v7.7
+# SOUNDS-LIKE CORRECTION FOR BENGALI COMMANDS (item D). The
+# owner's order (2026-11-16 12:01 IST, with a screenshot):
+# "আমি যদি ভুলভালও বলি তাহলে ও বুঝে যাবে যে এই করতে বলছে"
+# — even said wrong, Nalox must understand. His screenshot:
+# he asked "আমার জন্য একটা সং প্লে করো"; the ears delivered
+# "আমে বলছি যে তুমি আয় আমাত জনে একটা সগ পিলে করো সগ" (সং ->
+# সগ, প্লে -> পিলে) and Nalox answered the could-not-hear
+# line. The correction is CONTEXT-GATED: it only runs when
+# a play verb is among the tokens (the verb proves the
+# command family), and it only rewrites the two field-
+# attested confusions inside that family — the song noun's
+# garbles (সগ / সংগ / সাঁগ / সঙ -> সং) and পিলে -> প্লে. It
+# is applied ONLY inside _bengali_commands' play intent —
+# never to the text the agent, the writing paths or quoted
+# content see — so a correction can never rewrite what he
+# asked to have written down.
+_PLAY_VERB_TOKENS = {"প্লে", "পিলে", "বাজাও", "চালাও",
+                     "শোনাও", "শুনাও", "play"}
+_SONG_GARBLE_TOKENS = {"সগ": "সং", "সংগ": "সং",
+                       "সাঁগ": "সং", "সঙ": "সং"}
+# Function-word fillers of the field garbles — stripped
+# (token-wise) when the corrected play query is extracted,
+# so "আমে বলছি যে তুমি আয় আমাত জনে একটা সং প্লে করো" leaves
+# an EMPTY query (the default song), never a garbage one.
+_PLAY_QUERY_FILLERS = {
+    "আমে", "বলছি", "যে", "তুমি", "আয়", "আমাত", "জনে",
+    "জন্য", "আমার", "এখান", "একাছ", "কোম", "যেতা", "সেট",
+    "করো", "করছি", "কাজ", "এখন", "একটা", "একটি", "প্লিজ",
+    "টা", "please",
+}
+
+
+def _correct_bengali_command_garble(text):
+    """The sounds-like correction (v7.7, item D): returns
+    the corrected text when a play verb gates the family
+    and at least one garble token was rewritten; returns
+    the input UNCHANGED otherwise (callers compare)."""
+    raw = text or ""
+    toks = _ASR_PUNCT_RE.sub(" ", raw).split()
+    if not any(tok in _PLAY_VERB_TOKENS for tok in toks):
+        return raw
+    out = []
+    changed = False
+    for tok in toks:
+        if tok == "পিলে":
+            out.append("প্লে")
+            changed = True
+        elif tok in _SONG_GARBLE_TOKENS:
+            out.append(_SONG_GARBLE_TOKENS[tok])
+            changed = True
+        else:
+            out.append(tok)
+    if not changed:
+        return raw
+    return " ".join(out)
+
+
 def _tokens_run_in(tokens, phrase_tokens):
     """True when phrase_tokens equals tokens or appears in it
     as one unbroken run (v5.8 — custom-command matching: his
@@ -2028,6 +2086,119 @@ def _looks_like_action_request(text):
     return any(p in raw for p in _NARRATE_ACTION_BN)
 
 
+# ------------------------------------------------------------- v7.7
+# CHAINED REQUESTS (item H). The owner's field case
+# (2026-11-16): "নোটপ্যাড ওপেন করে আমার নামে কিছু লিখবে" —
+# Notepad opened and the turn ENDED; the writing never
+# happened. Two seams produced it: the deterministic app
+# opener consumed the whole utterance for its first clause
+# (see the deferral in _app_control_intents), and inside
+# the agent loop a model that has run ONE tool often stops
+# and narrates the remaining steps as if they were done —
+# the v6.8 act-don't-narrate guard keys on ZERO executions,
+# so the partial case slipped through. The continuation
+# note below is the loop's answer; _looks_like_chain_
+# request is its (conservative) trigger.
+_CHAIN_CONTINUATION = (
+    "\n\n[IMPORTANT — Nalox system note: the owner's "
+    "request has MORE steps, and you stopped after the "
+    "first one to describe the rest. Do NOT describe them "
+    "— call the remaining tool(s) NOW, in this turn, until "
+    "every step of the request is actually done. Then "
+    "confirm briefly what was done.]")
+
+_CHAIN_BN_VERBS = tuple(
+    v for v in _NARRATE_ACTION_BN
+    if v not in ("মেসেজ", "জবাব")) + (
+    "লিখ", "ওপেন", "চালাও", "বাজাও", "শোনাও", "টাইপ")
+
+
+def _owner_utterance(text):
+    """The owner's words with any system stern note
+    stripped (v7.7, item H): the narrate guard's retry
+    calls the walk with text + _NARRATE_STERN, and the
+    note's own verbs ("open", "send", …) must not make a
+    single-step request look like a chain to the
+    continuation check — the chain shape is judged on
+    what the OWNER asked for, never on system text."""
+    t = text or ""
+    if _NARRATE_STERN and t.endswith(_NARRATE_STERN):
+        t = t[:-len(_NARRATE_STERN)]
+    return t
+
+
+def _looks_like_chain_request(text):
+    """True when the utterance asks for MORE THAN ONE
+    action (v7.7, item H): a split-chain marker, two or
+    more distinct action verbs (English / romanized /
+    Bengali), or the Bengali conjunctive shape "X করে Y"
+    (having done X, do Y). Deliberately conservative — a
+    single-verb command ("open chrome", "গান চালাও") is
+    never a chain, so the agent loop's normal termination
+    is untouched for the common case."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if len(_split_chain(t)) > 1:
+        return True
+    toks = set(_normalise_asr(t).split())
+    verbs = toks & (_NARRATE_ACTION_EN | _NARRATE_ACTION_ROMAN
+                    | {"play"})
+    bn = sum(1 for p in _CHAIN_BN_VERBS if p in t)
+    if len(verbs) + bn >= 2:
+        return True
+    if "করে" in t and bn >= 1:
+        return True
+    return False
+
+
+def _is_generic_offer(sentence):
+    """True when a closing sentence is the GENERIC
+    follow-up offer (v7.7, item E) — "আর কিছু করতে পারি?"
+    / "anything else?" — as opposed to an offer specific
+    to what was just done."""
+    s = sentence or ""
+    if "আর কিছু করতে পারি" in s or "আর কিছু চাই" in s:
+        return True
+    low = s.lower()
+    return "anything else" in low \
+        or "what else can i" in low
+
+
+def _reply_ends_with_offer(reply):
+    """True when a reply's LAST sentence is an ask — a
+    question, the generic offer, or the owner's next-step
+    shape ("…বলো।"). The item-E anti-repetition state
+    (Brain._last_reply_had_offer) is built from this."""
+    try:
+        sents = _split_sentences(reply or "")
+        if not sents:
+            return False
+        last = sents[-1].strip()
+        return last.endswith("?") or "?" in last \
+            or _is_generic_offer(last) \
+            or last.endswith("বলো।") or last.endswith("বলো")
+    except Exception:
+        return False
+
+
+def _reply_names_blocker(reply):
+    """True when a reply honestly names a blocker (v7.7,
+    item H) — "পারলাম না / can't / unable / failed …".
+    Such a reply is a truthful report, never a false
+    completion, so the partial-completion guard keeps it
+    verbatim."""
+    r = reply or ""
+    if any(m in r for m in ("পারলাম না", "পারছি না",
+                            "পারব না", "হয়নি", "হলো না")):
+        return True
+    low = r.lower()
+    return any(m in low for m in
+               ("can't", "cannot", "can not", "unable",
+                "failed", "blocked", "not possible",
+                "unavailable"))
+
+
 def _is_capability_claim(reply):
     """True when a reply is substantially a bare capability
     / intent claim (v6.8): short, no question back, no
@@ -2235,6 +2406,37 @@ class Brain:
         # _rescue_wrong_language_reply). No entry = nothing
         # to rescue.
         self._lang_rescue_candidates = {}
+        # v7.7 (item I): SESSION DEAD-MODEL MEMORY — the
+        # (provider, model) pairs that have already answered
+        # "gone" (a _MODEL_MISS) in this process. Field
+        # 2026-11-16 11:57–12:02 IST: EVERY turn re-paid
+        # Gemini's serial hop — gemini-2.5-flash gone ->
+        # gemini-2.0-flash gone -> gemini-2.5-flash-lite
+        # gone -> flash-latest — because the walk started
+        # from the configured head every time and nothing
+        # remembered the corpses. The walk now filters
+        # these out (see _agent_openai_walk): a model proven
+        # dead is never requested again this session, and a
+        # provider whose candidates are ALL dead reports
+        # unavailable at once instead of hopping. Session
+        # scope only — a restart re-probes, exactly like
+        # the Groq walk's remembered working model.
+        self._dead_models = set()
+        # v7.7 (item E): the last turn's closing — whether
+        # the previous spoken reply already ended with a
+        # follow-up offer, and which generic offer text it
+        # used. The anti-repetition post-check in
+        # _guard_reply reads it: the generic "আর কিছু করতে
+        # পারি?" must never land twice in a row.
+        self._last_reply_had_offer = False
+        # v7.7 (item H): set by the agent loop when its
+        # continuation fired (a multi-step request whose
+        # model stopped to narrate after the first tool)
+        # and STILL no further tool ran — the wrapper then
+        # replaces a completion claim with the honest
+        # partial line instead of reporting undone work as
+        # done.
+        self._turn_partial_after_continuation = False
         # v7.6 (chat race): per-thread flags for race
         # workers — "quiet" silences _brain_fail's logbook
         # line (a race loser's failure is expected, not
@@ -2425,7 +2627,9 @@ class Brain:
 
         parts = _split_chain(text)
         if len(parts) == 1:
-            return self._handle_single(parts[0], raw_text)
+            _r = self._handle_single(parts[0], raw_text)
+            self._note_reply_closing(_r[0])
+            return _r
         replies = []
         action = None
         for part in parts:
@@ -2441,8 +2645,25 @@ class Brain:
                 # chain), a standby (he said stop — nothing after
                 # it runs), or a yes/no question ends the chain
         if not replies:
-            return self._chat_fallback(raw_text), None
-        return " ".join(replies), action
+            _fb = self._chat_fallback(raw_text)
+            self._note_reply_closing(_fb)
+            return _fb, None
+        _joined = " ".join(replies)
+        self._note_reply_closing(_joined)
+        return _joined, action
+
+    def _note_reply_closing(self, reply):
+        """Record how this turn's spoken reply ENDED
+        (v7.7, item E): whether it closed with a follow-up
+        offer. The next turn's anti-repetition checks (the
+        _guard_reply post-check, _song_done_line) read the
+        flag — an offer may land once, never twice in a
+        row. Guarded: bookkeeping must never break a turn."""
+        try:
+            self._last_reply_had_offer = \
+                _reply_ends_with_offer(reply)
+        except Exception:
+            pass
 
     def _handle_single(self, text, raw_text):
         """One (sub-)command through the full local router.
@@ -3283,12 +3504,42 @@ class Brain:
             if not query or query == "গান":
                 played, _q = self._play_on_youtube("bangla song")
                 if played:
-                    return "গান চালাচ্ছি।"
+                    return self._song_done_line()
                 return ("সরাসরি চালাতে পারলাম না — গানের search "
                         "খুলে দিলাম।")
             played, q = self._play_on_youtube(query)
             if played:
-                return f"ইউটিউবে {q} চালাচ্ছি।"
+                return self._song_done_line(q)
+            return (f"সরাসরি চালাতে পারলাম না — {q}-এর search "
+                    "খুলে দিলাম।")
+
+        # v7.7 (item D): the SOUNDS-LIKE play path — the
+        # field garble ("একটা সগ পিলে করো", "একটা সাঁগ
+        # চালাও") corrects to সং + a play verb and lands
+        # here; without a correction this block never runs
+        # and the router above/below is untouched. The
+        # query is what survives token-wise after the
+        # verbs, the song noun and the field fillers are
+        # stripped — an empty remainder means "a song",
+        # the bangla-song default, never a garbage search.
+        _corrected = _correct_bengali_command_garble(text)
+        if _corrected != text and ("সং" in _corrected
+                                   or "গান" in _corrected):
+            _rest = [tok for tok in _corrected.split()
+                     if tok not in _PLAY_VERB_TOKENS
+                     and tok not in ("সং", "গান")
+                     and tok not in _PLAY_QUERY_FILLERS]
+            _query = " ".join(_rest).strip(" .!?")
+            if not _query:
+                played, _q = self._play_on_youtube(
+                    "bangla song")
+                if played:
+                    return self._song_done_line()
+                return ("সরাসরি চালাতে পারলাম না — গানের search "
+                        "খুলে দিলাম।")
+            played, q = self._play_on_youtube(_query)
+            if played:
+                return self._song_done_line(q)
             return (f"সরাসরি চালাতে পারলাম না — {q}-এর search "
                     "খুলে দিলাম।")
 
@@ -3304,7 +3555,7 @@ class Brain:
                 if query:
                     played, q = self._play_on_youtube(query)
                     if played:
-                        return f"ইউটিউবে {q} চালাচ্ছি।"
+                        return self._song_done_line(q)
                     return (f"সরাসরি চালাতে পারলাম না — {q}-এর "
                             "search খুলে দিলাম।")
                 actions.open_youtube()
@@ -3774,6 +4025,25 @@ class Brain:
             or "খোলো" in text or "খুলুন" in text \
             or "ওপেন" in text
         if is_open:
+            # v7.7 (item H): a SECOND action clause rides
+            # on this open — "নোটপ্যাড ওপেন করে আমার নামে
+            # কিছু লিখবে" (open Notepad AND write), "open
+            # chrome, play a song". Opening here and
+            # returning would silently DROP the second
+            # step (the owner's field case: Notepad opened,
+            # nothing was ever written). Defer the whole
+            # utterance to the agent, whose loop now runs
+            # chained steps to completion. The markers are
+            # narrow: a write/type verb, or a play verb
+            # with its object — a bare open never defers.
+            if "লিখ" in text \
+                    or tset & {"write", "type"} \
+                    or ("play" in tset
+                        and tset & {"song", "music", "video"}) \
+                    or ("গান" in text and (
+                        "চালাও" in text or "বাজাও" in text
+                        or "শোনাও" in text or "শুনাও" in text)):
+                return None
             if disp_en == "YouTube":
                 actions.open_youtube()
                 return self._loc("Opening YouTube.",
@@ -4226,12 +4496,45 @@ class Brain:
         actions.play_on_youtube(q)
         return (url is not None), q
 
+    # v7.7 (item E): after playing a song, the ONE specific
+    # follow-up offer rotates between these — and is only
+    # ever appended when the previous reply did not already
+    # end with an offer (see _song_done_line).
+    _PLAY_OFFERS_BN = ("আরেকটা গান চালাব?",
+                       "ভলিউম বাড়িয়ে দেব?")
+
+    def _song_done_line(self, query=None):
+        """The play confirmation in the owner's shape
+        (v7.7, item E): COMPLETED form, never the
+        progressive — he objected to "আমি চালাচ্ছি" and
+        asked for done-and-dusted: "স্যার, আমি সং চালিয়ে
+        দিলাম". Then AT MOST ONE follow-up offer specific
+        to the finished action (the next song / the
+        volume), rotating, and never when the previous
+        reply already ended with an offer."""
+        addr = self._addr_bn()
+        if query:
+            line = (f"ঠিক আছে {addr}, ইউটিউবে {query} "
+                    "চালিয়ে দিলাম।")
+        else:
+            line = f"ঠিক আছে {addr}, গান চালিয়ে দিলাম।"
+        try:
+            if not getattr(self, "_last_reply_had_offer",
+                           False):
+                idx = getattr(self, "_play_offer_idx", 0)
+                self._play_offer_idx = idx + 1
+                line += " " + self._PLAY_OFFERS_BN[
+                    idx % len(self._PLAY_OFFERS_BN)]
+        except Exception:
+            pass
+        return line
+
     def _play_reply(self, query, played):
         """The short spoken line for a play attempt, in the
         command's language — honest when only search opened."""
         if self.lang == "bn":
             if played:
-                return f"ইউটিউবে {query} চালাচ্ছি।"
+                return self._song_done_line(query)
             return (f"সরাসরি চালাতে পারলাম না, {self._addr_bn()} — "
                     f"{query}-এর search খুলে দিলাম।")
         if self.lang == "hi":
@@ -5384,7 +5687,7 @@ class Brain:
             if self.lang == "bn":
                 played, _q = self._play_on_youtube("bangla song")
                 if played:
-                    return "গান চালাচ্ছি।"
+                    return self._song_done_line()
                 return ("সরাসরি চালাতে পারলাম না — গানের search "
                         "খুলে দিলাম।")
             if self.lang == "hi":
@@ -6852,7 +7155,37 @@ class Brain:
                              "trimmed to two sentences")
                 return trimmed
             return reply
+        # v7.7 (item E): the anti-repetition post-check —
+        # the generic closing offer must not land twice in
+        # a row (see _strip_repeated_generic_offer).
+        if reply and not writing:
+            reply = self._strip_repeated_generic_offer(reply)
         return reply
+
+    def _strip_repeated_generic_offer(self, reply):
+        """v7.7 (item E): when the PREVIOUS spoken reply
+        already ended with a follow-up offer, a trailing
+        GENERIC offer ("আর কিছু করতে পারি?" / "anything
+        else?") is stripped from this one — the completion
+        itself stands, plainly. A specific offer (tied to
+        what was just done) is never stripped, and a reply
+        that is ONLY the offer is left alone (stripping it
+        would empty the turn). The state is the flag
+        handle() records per turn (_note_reply_closing)."""
+        try:
+            if not getattr(self, "_last_reply_had_offer",
+                           False):
+                return reply
+            sents = _split_sentences(reply or "")
+            if len(sents) < 2:
+                return reply
+            if _is_generic_offer(sents[-1]):
+                log.info("[brain] repeated generic closing "
+                         "offer stripped (item E)")
+                return " ".join(sents[:-1])
+            return reply
+        except Exception:
+            return reply
 
     def _chat_fallback(self, text):
         reply = self._agent_reply(text)
@@ -7015,6 +7348,17 @@ class Brain:
         # v5.6: ACT FIRST — the recycle-bin incident: a chain
         # model narrated 13 s of deliberation and did nothing.
         # The thinking stays inside; the tool call is the reply.
+        # v7.7 (item D): ASR TOLERANCE — the transcripts he
+        # is heard through carry phonetic mistakes, Bengali
+        # most of all; the model must reason about the
+        # SOUNDS, not surrender to the spelling.
+        prompt += (" Transcripts of Arjun's speech contain "
+                   "phonetic mistakes — Bengali words are "
+                   "often misheard (সং heard as সগ or সাঁগ, "
+                   "প্লে as পিলে). Infer the most likely "
+                   "intended request from the sounds and ACT "
+                   "on it; say you could not understand ONLY "
+                   "when no plausible intent exists at all.")
         prompt += (" Act first: when a request matches one of "
                    "your tools, call the tool and report the "
                    "result in one short line. Never narrate your "
@@ -7050,14 +7394,30 @@ class Brain:
         # asks. (Writing tasks never see this: they run
         # through _plain_chat's own system line, not this
         # prompt.)
-        prompt += (" Conversational close: after you complete "
-                   "a task or answer a question, you may end "
-                   "the reply with ONE short follow-up offer in "
-                   "the reply's own language — in Bengali, for "
+        # v7.7 (item E): the close is now the owner's own
+        # shape — a COMPLETED-form confirmation (never the
+        # progressive "আমি চালাচ্ছি" he objected to) plus at
+        # most one SPECIFIC next-step ask; the generic offer
+        # survives only as an occasional alternative, never
+        # twice in a row (the post-check in _guard_reply
+        # enforces the repetition rule on top).
+        prompt += (" Conversational close: when you complete "
+                   "a task, confirm it in the COMPLETED form — "
+                   "what is DONE, never the progressive (in "
+                   "Bengali: 'ঠিক আছে স্যার, গান চালিয়ে "
+                   "দিলাম।', never 'আমি চালাচ্ছি') — then you "
+                   "may end the reply with ONE short follow-up "
+                   "offer that fits what was just done (after "
+                   "playing a song: offer the next one or the "
+                   "volume; after opening YouTube: ask which "
+                   "song or video — or in the owner's shape: "
+                   "'তুমি এখন কি করতে চাও, বলো।'), in the "
+                   "reply's own language — in Bengali, for "
                    "example: 'আর কিছু করতে পারি, স্যার?' The "
                    "offer counts inside your two-sentence "
                    "limit, and you must not add it when your "
-                   "reply already asks a question.")
+                   "reply already asks a question. Never end "
+                   "two replies in a row with the same offer.")
         # v6.1: the LIVE phone state. Field 2026-11-15 16:03:
         # the phone WAS connected through the app, a phone
         # follow-up reached the agent, and the model asked
@@ -7437,7 +7797,33 @@ class Brain:
             candidate = str(candidate)
             if _looks_like_action_request(text) \
                     and _is_capability_claim(candidate):
-                return None
+                # v7.7 (item J): the v7.6 rule returned None
+                # here — "a bare capability narration is the
+                # narrate guard's business, never rescued".
+                # But the narrate guard only ever sees a
+                # reply that SURVIVED the guards; a claim
+                # rejected on LANGUAGE never reaches it, so
+                # the turn fell past this rescue into the
+                # could-not-hear line (field 2026-11-16
+                # 11:58 IST, twice: Groq answered the song
+                # request in English, the guard rejected it,
+                # and the owner heard "ওটা ঠিক ধরতে পারলাম
+                # না" — a false claim about his hearing).
+                # The narration rule itself is unchanged —
+                # the claim TEXT is still never spoken, and
+                # the translator never touches it — but the
+                # turn now ends with the narrate guard's own
+                # honest line instead of the hearing lie:
+                # the job was not done, and Nalox says so.
+                log.info("[brain] language-rejected claim "
+                         "ends the turn honestly (item J)")
+                _lb("BRAIN", "[brain] the only reply was a "
+                             "claim in the wrong language — "
+                             "ending honestly, not with the "
+                             "could-not-hear line")
+                return self._loc(
+                    "Sorry sir, I could not do that just now.",
+                    "দুঃখিত sir, কাজটা এখন করে উঠতে পারলাম না।")
             translated = _translate_to_bengali(candidate)
             if not translated:
                 return None
@@ -8051,11 +8437,33 @@ class Brain:
             return None
         candidates = self._model_candidates("ollama") or [
             self.cfg.get("ollama_model", "llama3.1")]
+        # v7.7 (item I): names already proven unpulled this
+        # session are not retried (see _dead_models); when
+        # every name is known-unpulled the call ends at
+        # once — the failure line fired when they died.
+        try:
+            _dead = self._dead_models
+        except Exception:
+            _dead = ()
+        if _dead:
+            _live = [c for c in candidates
+                     if ("ollama", _model_key(c)) not in _dead]
+            if candidates and not _live:
+                return None
+            candidates = _live or candidates
         last_miss = None
         for idx, cand in enumerate(candidates):
             reply = self._agent_ollama_impl(text, url, cand)
             if reply is _MODEL_MISS:
                 last_miss = cand
+                # v7.7 (item I): this name is dead for the
+                # rest of the session — no later turn pays
+                # for its 404 again.
+                try:
+                    self._dead_models.add(
+                        ("ollama", _model_key(cand)))
+                except Exception:
+                    pass
                 if idx + 1 < len(candidates):
                     _lb("BRAIN",
                         f"[brain] Ollama model {cand} is not "
@@ -8095,6 +8503,8 @@ class Brain:
             messages = ([{"role": "system", "content": self._system_prompt()}]
                         + self.chat_history[-8:]
                         + [{"role": "user", "content": text}])
+            _tools_ran_here = 0
+            _continued = False
             for _round in range(3):
                 resp = requests.post(
                     url + "/api/chat",
@@ -8116,6 +8526,26 @@ class Brain:
                 calls = msg.get("tool_calls") or []
                 if not calls:
                     reply = (msg.get("content") or "").strip()
+                    # v7.7 (item H): partial completion —
+                    # same continuation as the cloud loop
+                    # (see _agent_openai_compatible_impl).
+                    if _tools_ran_here > 0 and not _continued \
+                            and _looks_like_chain_request(
+                            _owner_utterance(text)):
+                        _continued = True
+                        try:
+                            self._turn_partial_after_continuation \
+                                = True
+                        except Exception:
+                            pass
+                        messages.append({
+                            "role": "assistant",
+                            "content": msg.get("content", "")})
+                        messages.append({
+                            "role": "user",
+                            "content":
+                                _CHAIN_CONTINUATION.strip()})
+                        continue
                     reply = self._guard_reply(reply, "Ollama", text)
                     if reply:
                         self._remember_chat(text, reply)
@@ -8132,6 +8562,13 @@ class Brain:
                         except Exception:
                             args = {}
                     result = self._run_tool(fn.get("name", ""), args)
+                    _tools_ran_here += 1
+                    if _continued:
+                        try:
+                            self._turn_partial_after_continuation \
+                                = False
+                        except Exception:
+                            pass
                     messages.append({"role": "tool", "content": result})
             # Tool rounds used up — ask once more, without tools.
             resp = requests.post(
@@ -8189,6 +8626,13 @@ class Brain:
         _t0 = time.time()
         _tools_before = self._tool_run_count
         _lang_trips_before = getattr(self, "_guard_lang_trips", 0)
+        # v7.7 (item H): a fresh call starts with no
+        # partial-completion mark (the impl sets it when
+        # its continuation fires — see below).
+        try:
+            self._turn_partial_after_continuation = False
+        except Exception:
+            pass
         _head = None
         _remember_key = None
         if tier == "power":
@@ -8283,6 +8727,32 @@ class Brain:
                 reply2 = None
             if reply2:
                 reply = reply2
+        # v7.7 (item H): PARTIAL COMPLETION, the endgame.
+        # The impl's continuation fired (a multi-step
+        # request, at least one tool ran, the model stopped
+        # to narrate) and STILL no further tool ran — the
+        # remaining steps were never executed, so a reply
+        # reporting the job as done would be false. Unless
+        # the reply honestly names a blocker (kept
+        # verbatim), it is replaced by the honest partial
+        # line: the first step happened, the rest did not.
+        if reply and self._tool_run_count > _tools_before \
+                and getattr(
+                    self, "_turn_partial_after_continuation",
+                    False) \
+                and _looks_like_chain_request(text) \
+                and not _reply_names_blocker(reply):
+            _lb("BRAIN",
+                "[brain] multi-step job only partly done — "
+                "saying so instead of reporting it finished")
+            log.warning("[brain] partial completion: the "
+                        "continuation produced no further "
+                        "tool — honest partial line")
+            reply = self._loc(
+                "Sorry sir, the first step is done but I "
+                "could not finish the rest.",
+                "দুঃখিত sir, প্রথম ধাপটা হয়েছে — বাকিটা "
+                "করে উঠতে পারলাম না।")
         try:
             import perflevel
             perflevel.record_provider(
@@ -8310,6 +8780,27 @@ class Brain:
                 provider=provider, timeout=timeout)
         candidates = self._model_candidates(
             provider, head_override=head) or [model]
+        # v7.7 (item I): filter out this session's PROVEN
+        # dead models before walking (see _dead_models in
+        # __init__). When every candidate is already known
+        # dead, the provider reports unavailable at once —
+        # zero network, zero serial hop.
+        try:
+            _dead = self._dead_models
+        except Exception:
+            _dead = ()
+        if _dead:
+            _live = [c for c in candidates
+                     if (provider, _model_key(c)) not in _dead]
+            if candidates and not _live:
+                self._brain_fail(
+                    label,
+                    f"every known model is gone this "
+                    f"session — not retrying "
+                    f"{', '.join(candidates)}",
+                    provider=provider)
+                return None
+            candidates = _live or candidates
         last_miss = None
         _walk_start = time.monotonic()
         for idx, cand in enumerate(candidates):
@@ -8336,6 +8827,14 @@ class Brain:
                 model_walk=True)
             if reply is _MODEL_MISS:
                 last_miss = cand
+                # v7.7 (item I): this name is dead for the
+                # rest of the session — no later turn pays
+                # for its 404 again.
+                try:
+                    self._dead_models.add(
+                        (provider, _model_key(cand)))
+                except Exception:
+                    pass
                 if idx + 1 < len(candidates):
                     _lb("BRAIN",
                         f"[brain] {label} model {cand} is gone "
@@ -8388,6 +8887,8 @@ class Brain:
             messages = ([{"role": "system", "content": self._system_prompt()}]
                         + self.chat_history[-8:]
                         + [{"role": "user", "content": text}])
+            _tools_ran_here = 0
+            _continued = False
             for _round in range(3):
                 # v6.13: a 429 retries with jittered backoff
                 # inside this call's own timeout budget.
@@ -8417,6 +8918,38 @@ class Brain:
                 calls = msg.get("tool_calls") or []
                 if not calls:
                     reply = (msg.get("content") or "").strip()
+                    # v7.7 (item H): PARTIAL COMPLETION — the
+                    # model has already run a tool this turn
+                    # and now stops to narrate, but the
+                    # request has more steps. Do not let the
+                    # turn end: hand the conversation back
+                    # ONCE with the continuation note and let
+                    # it call the remaining tools. The flag
+                    # tells the wrapper the continuation was
+                    # spent; a tool executed after it clears
+                    # the flag again (progress resumed).
+                    if _tools_ran_here > 0 and not _continued \
+                            and _looks_like_chain_request(
+                            _owner_utterance(text)):
+                        _continued = True
+                        try:
+                            self._turn_partial_after_continuation \
+                                = True
+                        except Exception:
+                            pass
+                        log.info("[brain] multi-step request "
+                                 "stopped after %d tool(s) — "
+                                 "continuing the turn",
+                                 _tools_ran_here)
+                        _lb("BRAIN", "[brain] the job has "
+                                     "more steps — continuing "
+                                     "instead of narrating")
+                        messages.append(msg)
+                        messages.append({
+                            "role": "user",
+                            "content":
+                                _CHAIN_CONTINUATION.strip()})
+                        continue
                     reply = self._guard_reply(reply, label, text)
                     if reply:
                         self._remember_chat(text, reply)
@@ -8429,6 +8962,15 @@ class Brain:
                     except Exception:
                         args = {}
                     result = self._run_tool(fn.get("name", ""), args)
+                    _tools_ran_here += 1
+                    if _continued:
+                        # Progress after the continuation:
+                        # the partial flag clears (item H).
+                        try:
+                            self._turn_partial_after_continuation \
+                                = False
+                        except Exception:
+                            pass
                     messages.append({"role": "tool",
                                      "tool_call_id": call.get("id", ""),
                                      "content": result})

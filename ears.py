@@ -5160,12 +5160,53 @@ class Ears:
         while not self._stop.is_set():
             job = self._take_priority_job()
             if job is None:
-                try:
-                    job = self._tx_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
+                job = self._take_queue_job()
+            if job is None:
+                continue
             if self._tx_handle_one(job):
                 return  # crash-guard: this thread dies
+
+    def _take_queue_job(self):
+        """Take the next wake job from the queue (v7.7,
+        item B: NEWEST-FIRST UNDER PRESSURE).
+
+        Field 2026-11-16 11:55 IST: the owner spoke loudly
+        (peak 0.26 against a 0.006 gate) into a SATURATED
+        queue (queue=3) and no [heard] ever landed — his
+        segments waited FIFO behind stale room speech while
+        drop-oldest discarded the freshest attempts. So:
+        when two or more jobs are waiting, the consumer
+        takes the NEWEST one and drops the older waiting
+        ones — freshness over completeness; the newest
+        segment is the one most likely to be his wake
+        attempt, and the dropped ones' moment has passed.
+        One aggregate log line names the drop. With zero
+        or one job waiting this is exactly the old FIFO
+        get. The v7.5 priority slot is still taken BEFORE
+        the queue (see _tx_loop), and F3's stale-age drop
+        still applies to the job taken."""
+        try:
+            first = self._tx_queue.get(timeout=0.5)
+        except queue.Empty:
+            return None
+        rest = []
+        while True:
+            try:
+                rest.append(self._tx_queue.get_nowait())
+            except queue.Empty:
+                break
+        if not rest:
+            return first
+        dropped = [first] + rest[:-1]
+        for old in dropped:
+            try:
+                self._partial_woke_ids.discard(old[2])
+                self._partial_cut_ids.discard(old[2])
+            except Exception:
+                pass
+        log.info("[ears] dropped %d stale wake segments "
+                 "(queue pressure)", len(dropped))
+        return rest[-1]
 
     def _tx_handle_one(self, job):
         """Run ONE wake job (v7.5: factored out of _tx_loop
@@ -5678,6 +5719,24 @@ class Ears:
             _waiting = self.transcribe_queue_size()
         except Exception:
             _waiting = 0
+        # v7.7 (item B): QUEUE PRESSURE — while any wake
+        # job is already waiting, NO 'small' escalation is
+        # bought for this segment at all (the garbage /
+        # out-of-set / script-rescue triggers below all
+        # check it). Round 1 (v7.4) only skipped CLEAR
+        # non-matches; the 2026-11-16 11:55 field flood
+        # showed the rest still saturating the lane —
+        # dec=7 with s3: nearly half the wake worker's
+        # time went to small-model escalations of speech
+        # that was never going to wake, while the owner's
+        # own segments queued behind them and drowned.
+        # Under pressure the segment keeps its tiny first
+        # pass (and the cheap base near-miss retry — a
+        # different, resident model, not the escalation);
+        # the NEXT segment gets a fresh chance at an
+        # emptier queue. Zero pressure = v7.6 behaviour
+        # exactly (F1 semantics preserved).
+        _queue_pressure = _waiting >= 1
         clear_non_match = bool(text) and not is_garbage(text) \
             and not looks_like_wake_word(text) \
             and not _wake_near_miss(text)
@@ -5748,7 +5807,16 @@ class Ears:
 
         retried = False
         if not text or is_garbage(text):
-            if can_retry:
+            if can_retry and _queue_pressure:
+                # v7.7 (item B): the escalation is forgone,
+                # visibly — under pressure a garbled segment
+                # is shed at first-pass cost so the fresher
+                # speech behind it gets the worker.
+                log.info("[ears] queue pressure — skipping "
+                         "the small escalation for a garbled "
+                         "segment (%d job(s) waiting)",
+                         _waiting)
+            if can_retry and not _queue_pressure:
                 retried = True
                 path = "small-escalation"
                 log.info("Wake segment garbled by %s (peak %.4f = "
@@ -5769,7 +5837,7 @@ class Ears:
                     path, time.monotonic() - started)
                 return False
         elif lang not in ALLOWED_LANGS and can_retry \
-                and not fast_reject:
+                and not fast_reject and not _queue_pressure:
             retried = True
             path = "small-escalation"
             log.info("Wake model %s labelled a loud segment %r "
@@ -5788,6 +5856,7 @@ class Ears:
         # flood is Bengali room speech, and rescuing every
         # segment of it is what starved the lane.
         if not retried and can_retry and not fast_reject \
+                and not _queue_pressure \
                 and not looks_like_wake_word(text) \
                 and _dominant_script(text) in ("bn", "hi"):
             path = "small-escalation"

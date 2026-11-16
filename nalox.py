@@ -985,6 +985,14 @@ def _restart_process():
         hudlog("Restarting Nalox…")
     except Exception:
         pass
+    # v7.7: no speech may be mid-flight when the process
+    # exits — a SAPI call in another thread (Telegram) was
+    # in the voice layer when the 2026-11-16 self-update
+    # restart died with exit code 1.
+    try:
+        _voice_mod.stop_for_exit()
+    except Exception:
+        pass
     _mark_clean_exit("self-restart (supervisor relaunches)")
     log.info("Restarting Nalox (exit code 1 — supervisor relaunches).")
 
@@ -1796,6 +1804,10 @@ def main():
             pass
         if action == "exit":
             log.info("Clean exit requested by voice.")
+            try:
+                _voice_mod.stop_for_exit()
+            except Exception:
+                pass
             _write_exit_flag()
             sys.exit(CLEAN_EXIT_CODE)
         if action == "standby":
@@ -1855,6 +1867,10 @@ def main():
                     say(reply2)
                 if action2 == "exit":
                     log.info("Clean exit after confirmation.")
+                    try:
+                        _voice_mod.stop_for_exit()
+                    except Exception:
+                        pass
                     _write_exit_flag()
                     sys.exit(CLEAN_EXIT_CODE)
                 if action2 == "restart":

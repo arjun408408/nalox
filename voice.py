@@ -81,6 +81,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -223,6 +224,61 @@ def is_speaking():
 # freeze Nalox (module-level so tests can shorten it).
 PYTTSX3_TIMEOUT = 30.0
 POWERSHELL_TIMEOUT = 60.0
+
+# ------------------------------------------------------------- v7.7
+# PYTTSX3 RUNS IN A CHILD PROCESS NOW. The field evidence
+# (synced fault log, 2026-11-16 11:55 IST): "Windows fatal
+# exception: code 0xe0000002" — the current thread inside
+# pyttsx3/drivers/sapi5.py (say -> _pump -> startLoop ->
+# runAndWait), called from this module, while the main thread
+# waited in say(). A native SAPI5 crash like that does not
+# raise — it takes the WHOLE process down with it (the
+# recurring "process DIED (exit code 1)" family: 2026-11-15
+# x4, 2026-11-16 07:50 and 11:53). A Python thread cannot be
+# insulated from a native fatal exception in its own process,
+# so the engine now lives in a child: the runner below is
+# executed as `python -c <src> speak|render <textfile> <rate>
+# [wavpath]`; the parent polls it with the same stop/timeout
+# discipline the PowerShell path always had. A child crash —
+# native or otherwise — is just an engine failure here: the
+# breaker in _try_engine counts it and the chain moves on.
+# The main process survives ANY child outcome.
+_PYTTSX3_CHILD_SRC = (
+    "import sys\n"
+    "mode = sys.argv[1]\n"
+    "with open(sys.argv[2], encoding='utf-8') as fh:\n"
+    "    text = fh.read()\n"
+    "rate = int(sys.argv[3])\n"
+    "import pyttsx3\n"
+    "engine = pyttsx3.init()\n"
+    "engine.setProperty('rate', rate)\n"
+    "try:\n"
+    "    for v in engine.getProperty('voices'):\n"
+    "        if 'en' in (v.id or '').lower() \\\n"
+    "                or 'english' in (v.name or '').lower():\n"
+    "            engine.setProperty('voice', v.id)\n"
+    "            break\n"
+    "except Exception:\n"
+    "    pass\n"
+    "if mode == 'render':\n"
+    "    engine.save_to_file(text, sys.argv[4])\n"
+    "else:\n"
+    "    engine.say(text)\n"
+    "engine.runAndWait()\n"
+)
+
+
+def _hidden_console_kwargs():
+    """subprocess kwargs that keep a console child INVISIBLE
+    (v7.7, item G): CREATE_NO_WINDOW on Windows, nothing
+    elsewhere. A console child of a windowless parent (the
+    supervisor runs Nalox without a console) otherwise pops
+    a visible console window for its whole lifetime — the
+    owner's "~1 second CMD flash" during tasks."""
+    if os.name == "nt":
+        return {"creationflags": getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
 
 # ------------------------------------------------- v6.6 net engines
 # Google Translate TTS (the public translate_tts endpoint the
@@ -465,6 +521,31 @@ def google_tts_chunks(text, limit=GOOGLE_TTS_MAX_CHARS):
 def stop():
     """Interrupt whatever Nalox is currently saying."""
     _STOP_EVENT.set()
+
+
+def stop_for_exit(grace_s=1.5):
+    """Stop in-flight speech BEFORE a process exit (v7.7).
+
+    Every exit path (self-update restart, supervisor
+    restart, deliberate exit) calls this first: a SAPI call
+    must never be mid-flight while the process tears down —
+    the 2026-11-16 11:53 self-update restart died with exit
+    code 1 while speech threads were inside the voice layer.
+    Sets the stop event, then waits up to grace_s for the
+    speaking flag to clear. Guarded end to end: an exit must
+    never be blocked or broken by its own safety step."""
+    try:
+        stop()
+    except Exception:
+        pass
+    try:
+        deadline = time.monotonic() + max(0.0, float(grace_s))
+        while time.monotonic() < deadline:
+            if not is_speaking():
+                break
+            time.sleep(0.02)
+    except Exception:
+        pass
 
 
 class _ElevenLabsUnavailable(Exception):
@@ -953,75 +1034,115 @@ class Speaker:
             pass
         return engine
 
+    # ---------- pyttsx3 child process (v7.7) ----------
+    def _launch_tts_child(self, argv):
+        """Spawn the pyttsx3 child (v7.7). The ONE launch
+        seam: tests substitute it with a fake process to
+        prove a child crash can never reach this process.
+        The child is console-hidden (item G)."""
+        return subprocess.Popen(
+            argv, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_hidden_console_kwargs())
+
+    def _run_tts_child(self, argv, poll_stop):
+        """Poll a pyttsx3 child to its end. Returns
+        "done" / "interrupted"; raises RuntimeError on a
+        timeout (child killed) or a non-zero exit — a
+        crashed child, INCLUDING a native SAPI5 fatal
+        exception, is an ordinary engine failure here."""
+        proc = self._launch_tts_child(argv)
+        deadline = time.monotonic() + PYTTSX3_TIMEOUT
+        while proc.poll() is None:
+            if poll_stop and _STOP_EVENT.is_set():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return "interrupted"
+            if time.monotonic() > deadline:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"pyttsx3 timed out after "
+                    f"{PYTTSX3_TIMEOUT:.0f}s (child killed)")
+            time.sleep(0.05)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"pyttsx3 child exited with code "
+                f"{proc.returncode}")
+        return "done"
+
+    def _tts_child_argv(self, mode, text, extra=()):
+        """(argv, textfile) for one pyttsx3 child run. The
+        text rides in a UNIQUE temp file per utterance —
+        say() runs concurrently (main loop + Telegram
+        thread; the 2026-11-16 fault dump shows both inside
+        the voice layer at once), so a fixed file would
+        race. The caller deletes the file when done."""
+        fd, path = tempfile.mkstemp(prefix="nalox_tts_",
+                                    suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        rate = int(int(self.cfg.get("tts_rate", 175))
+                   * self.speed())
+        argv = [sys.executable, "-c", _PYTTSX3_CHILD_SRC,
+                mode, path, str(rate)] + list(extra)
+        return argv, path
+
     def _speak_pyttsx3_direct(self, text):
         """Plain pyttsx3 speak (v4.1 default local path).
 
-        The engine lives in a worker thread; this thread polls the
-        stop event and a hard timeout. Returns "done" / "interrupted";
-        raises on engine error or timeout (a timeout abandons the
-        worker thread — it is a daemon, and the failure counter in
-        say() routes the next lines to PowerShell instead).
+        v7.7: the engine lives in a CHILD PROCESS (see
+        _PYTTSX3_CHILD_SRC) — the pre-v7.7 in-process worker
+        thread could be killed by a native SAPI5 fatal
+        exception, taking Nalox with it (fault log
+        2026-11-16: 0xe0000002 inside sapi5.py's runAndWait,
+        process exit code 1). This thread only polls the
+        child: stop event -> kill -> "interrupted"; the
+        PYTTSX3_TIMEOUT cap -> kill -> raise; a non-zero
+        exit (crash) -> raise. The failure counter in
+        _try_engine routes the next lines onward, exactly
+        as it did for thread-era failures.
         """
-        holder = {}
-
-        def _run():
-            engine = None
+        argv, textfile = self._tts_child_argv("speak", text)
+        try:
+            return self._run_tts_child(argv, poll_stop=True)
+        finally:
             try:
-                engine = self._new_engine()
-                holder["engine"] = engine
-                engine.say(text)
-                engine.runAndWait()
-                holder["ok"] = True
-            except Exception as exc:  # engine init/speak failure
-                holder["error"] = exc
-            finally:
-                if engine is not None:
-                    try:
-                        engine.stop()
-                    except Exception:
-                        pass
-
-        worker = threading.Thread(target=_run, daemon=True,
-                                  name="nalox-tts")
-        worker.start()
-        deadline = time.monotonic() + PYTTSX3_TIMEOUT
-        while worker.is_alive():
-            if _STOP_EVENT.is_set():
-                engine = holder.get("engine")
-                if engine is not None:
-                    try:
-                        engine.stop()
-                    except Exception:
-                        pass
-                return "interrupted"
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f"pyttsx3 timed out after {PYTTSX3_TIMEOUT:.0f}s "
-                    "(engine hung; thread abandoned)")
-            worker.join(0.05)
-        if "error" in holder:
-            raise holder["error"]
-        return "done"
+                os.remove(textfile)
+            except Exception:
+                pass
 
     def _speak_pyttsx3(self, text, robot):
         """Speak with pyttsx3. Returns "done"/"interrupted".
 
         Robot OFF (v4.1 default): direct speak, see above.
-        Robot ON (dormant): render to WAV, robotize, play via
-        sounddevice (winsound fallback) — the v3.3–v3.7 path.
+        Robot ON (dormant): the child renders a WAV (v7.7 —
+        the render is a SAPI call too, so it is isolated
+        exactly like the speak path), then the parent
+        robotizes and plays the samples via sounddevice
+        (winsound fallback), as in the v3.3–v3.7 path —
+        sample playback is not SAPI and stays in-process.
         """
         if not robot:
             return self._speak_pyttsx3_direct(text)
-        engine = self._new_engine()
-        tmp = os.path.join(tempfile.gettempdir(), "nalox_tts.wav")
+        fd, tmp = tempfile.mkstemp(prefix="nalox_tts_",
+                                   suffix=".wav")
+        os.close(fd)
         try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            engine.save_to_file(text, tmp)
-            engine.runAndWait()
+            os.remove(tmp)
+        except Exception:
+            pass
+        argv, textfile = self._tts_child_argv("render", text,
+                                              extra=(tmp,))
+        try:
+            self._run_tts_child(argv, poll_stop=False)
         finally:
             try:
-                engine.stop()
+                os.remove(textfile)
             except Exception:
                 pass
         if not os.path.exists(tmp) or os.path.getsize(tmp) < 1000:
@@ -1056,7 +1177,8 @@ class Speaker:
             "$s.Speak($t)")
         proc = subprocess.Popen(
             ["powershell", "-NoProfile", "-Command", script],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **_hidden_console_kwargs())
         deadline = time.monotonic() + POWERSHELL_TIMEOUT
         while proc.poll() is None:
             if _STOP_EVENT.is_set():

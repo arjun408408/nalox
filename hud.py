@@ -496,6 +496,15 @@ class Hud:
             self.post("Restarting Nalox…")
         except Exception:
             pass
+        # v7.7: speech stops before the restart begins —
+        # covers the direct-exit fallback below too (the
+        # callback path lands in nalox.py's restart, which
+        # stops speech again, harmlessly).
+        try:
+            import voice as _voice_mod
+            _voice_mod.stop_for_exit()
+        except Exception:
+            pass
         try:
             import logbook
             logbook.log("SYSTEM", "Restart pressed in the app window.")
@@ -537,6 +546,13 @@ class Hud:
         try:
             import logbook
             logbook.log("SYSTEM", "Exit Nalox pressed in the app window.")
+        except Exception:
+            pass
+        # v7.7: speech stops before the exit begins (no
+        # SAPI call mid-flight during shutdown).
+        try:
+            import voice as _voice_mod
+            _voice_mod.stop_for_exit()
         except Exception:
             pass
         # v4.7 ALWAYS-ON: a deliberate exit also writes the flag

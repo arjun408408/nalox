@@ -99,6 +99,17 @@ def _new_path(prefix, ext):
     return os.path.join(_captures_dir(), f"{prefix}_{stamp}{ext}")
 
 
+def _hidden_console_kwargs():
+    """subprocess kwargs that keep a console child INVISIBLE
+    (v7.7, item G): CREATE_NO_WINDOW on Windows, nothing
+    elsewhere — a PowerShell child of a windowless parent
+    otherwise flashes a console window during screen reads."""
+    if os.name == "nt":
+        return {"creationflags": getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
 def _run_powershell(script, env_extra, timeout=30):
     """Write `script` to a temp .ps1 and run it with extra env vars.
 
@@ -115,7 +126,8 @@ def _run_powershell(script, env_extra, timeout=30):
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", ps_path],
             env=env, timeout=timeout,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **_hidden_console_kwargs())
     finally:
         try:
             os.remove(ps_path)

@@ -127,7 +127,7 @@ PATCH_IF_ABSENT = {
     # the wake default is 4 now (see WAKE_THREADS_OLD_
     # DEFAULT below): an install missing the key gets 4,
     # and one still holding the shipped 2 migrates.
-    "ears_wake_threads": 4,
+    "ears_wake_threads": 6,
     "ears_command_threads": 4,
     "ears_preview_threads": 2,
     # v6.13: big-model device preference (see config.py) —
@@ -211,6 +211,19 @@ COMMAND_MODEL_NEW_DEFAULT = "large-v3-turbo"
 WAKE_THREADS_OLD_DEFAULT = 2
 WAKE_THREADS_NEW_DEFAULT = 4
 
+# v7.7 wake-threads migration, the next step of the same
+# chain: the v7.2 patch migrated the shipped default to 4
+# (above), so an existing 4 is likewise a shipped default,
+# never a deliberate choice (still no Settings control for
+# this key). The 2026-11-16 wake flood (queue saturated
+# while the owner spoke) buys the wake lane two more
+# threads — the owner's standing order is that CPU is not
+# a constraint. The migration runs AFTER the v7.2 step, so
+# a stored 2 lands on 6 via 4; ANY other existing value is
+# user-set and is preserved untouched.
+WAKE_THREADS_V77_OLD_DEFAULT = 4
+WAKE_THREADS_V77_NEW_DEFAULT = 6
+
 # v7.3 Groq-model migration, same shape as the ones above —
 # with one difference: the value being migrated was not
 # written by a patch, it was REMEMBERED by the brain's model
@@ -293,6 +306,13 @@ def main():
             "owner lifted the CPU constraint, so the wake lane "
             "gets more headroom; a user-set value would have "
             "been kept)")
+    if cfg.get("ears_wake_threads") == WAKE_THREADS_V77_OLD_DEFAULT:
+        cfg["ears_wake_threads"] = WAKE_THREADS_V77_NEW_DEFAULT
+        changed.append(
+            f"ears_wake_threads={WAKE_THREADS_V77_NEW_DEFAULT} "
+            "(v7.7: the shipped v7.2 default migrated — the "
+            "wake flood bought the wake lane more threads; a "
+            "user-set value would have been kept)")
     if cfg.get("groq_model") == GROQ_MODEL_STALE_REMEMBERED:
         cfg["groq_model"] = GROQ_MODEL_NEW_DEFAULT
         changed.append(

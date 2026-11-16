@@ -59,6 +59,18 @@ import zipfile
 
 log = logging.getLogger("nalox.updater")
 
+
+def _hidden_console_kwargs():
+    """subprocess kwargs that keep a console child INVISIBLE
+    (v7.7, item G): CREATE_NO_WINDOW on Windows, nothing
+    elsewhere — the update path's pip / adb / patch children
+    are console tools and must never flash a window."""
+    if os.name == "nt":
+        return {"creationflags": getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION_PATH = os.path.join(BASE_DIR, "version.txt")
 MARKER_NAME = "updated_to.txt"
@@ -294,7 +306,8 @@ def _pip_install(stage_root, base_dir):
             [venv_py, "-m", "pip", "install", "--prefer-binary",
              "-r", os.path.join(stage_root, "requirements.txt")],
             timeout=600, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, check=True)
+            stderr=subprocess.DEVNULL, check=True,
+            **_hidden_console_kwargs())
         return True
     except Exception as exc:
         log.warning("update: pip install failed: %s", exc)
@@ -318,7 +331,8 @@ def _kill_adb_server(base_dir):
         if os.path.exists(adb):
             subprocess.run([adb, "kill-server"], timeout=10,
                            stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
+                           stderr=subprocess.DEVNULL,
+                           **_hidden_console_kwargs())
     except Exception:
         pass
 
@@ -393,7 +407,8 @@ def apply_update(zip_bytes, base_dir=BASE_DIR):
                     [venv_py if os.path.exists(venv_py)
                      else sys.executable, patch],
                     timeout=60, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL)
+                    stderr=subprocess.DEVNULL,
+                    **_hidden_console_kwargs())
             except Exception:
                 pass  # patching is best-effort, never fatal
         return applied
@@ -497,6 +512,14 @@ def check_and_update(cfg, base_dir=BASE_DIR, http=None,
     write_updated_marker(remote, base_dir)
     _lb(f"[sys] exiting (restart): self-update to v{remote} "
         f"({len(applied)} files applied)")
+    # v7.7: stop in-flight speech BEFORE the restart begins
+    # — the 2026-11-16 11:53 self-update restart exited
+    # code 1 with speech threads inside the voice layer.
+    try:
+        import voice as _voice_mod
+        _voice_mod.stop_for_exit()
+    except Exception:
+        pass
     try:
         (restart_fn or _default_restart)()
     except Exception:

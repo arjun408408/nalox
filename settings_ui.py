@@ -175,11 +175,16 @@ def _set_autostart(on):
             f"$lnk.TargetPath = '{target}'; "
             f"$lnk.WorkingDirectory = '{BASE_DIR}'; "
             "$lnk.Description = 'Nalox voice assistant'; $lnk.Save()")
+        # v7.7 (item G): the PowerShell child stays hidden.
+        _nw = {"creationflags": getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000)} \
+            if os.name == "nt" else {}
         subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-Command", script],
             timeout=30, check=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **_nw)
         return os.path.exists(link)
     except Exception as exc:
         log.warning("Autostart toggle failed: %s", exc)
@@ -1293,6 +1298,12 @@ def _build(tk, parent, cfg):
                 pass
             log.info("Settings: Save & Restart — exiting "
                      "(code 0, supervisor relaunches).")
+            # v7.7: speech stops before the exit begins.
+            try:
+                import voice as _voice_mod
+                _voice_mod.stop_for_exit()
+            except Exception:
+                pass
 
             def _exit():
                 try:

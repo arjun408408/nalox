@@ -477,10 +477,16 @@ def gpu_percent():
     pct = None
     try:
         import subprocess
+        # v7.7 (item G): nvidia-smi is a console tool — its
+        # probe must never flash a console window while the
+        # Command Center is up.
+        _nw = {"creationflags": getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000)} \
+            if os.name == "nt" else {}
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu",
              "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=3)
+            capture_output=True, text=True, timeout=3, **_nw)
         lines = (out.stdout or "").strip().splitlines()
         if lines:
             pct = max(0, min(100,
@@ -513,8 +519,10 @@ def running_version(base_dir=None):
 _NOTICE_HEADLINES = {
     "7.1": ("শোনা আর আটকাবে না, "
             "greeting সঙ্গে সঙ্গে বলবে"),
+    "7.6": "উত্তর এবার বাংলাতেই আসবে",
+    "7.7": "শোনার লাইন এবার ডুববে না",
 }
-_NOTICE_HEADLINE_NOW = "উত্তর এবার বাংলাতেই আসবে"
+_NOTICE_HEADLINE_NOW = "শোনার লাইন এবার ডুববে না"
 
 
 def update_notice_text(version):

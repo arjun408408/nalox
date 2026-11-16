@@ -79,8 +79,18 @@ def run_tray(on_exit=None, on_show_console=None, on_hide_console=None,
         log.warning("pystray unavailable (%s); tray icon skipped.", exc)
         return None
 
+    def _stop_speech_for_exit():
+        # v7.7: no SAPI call may be mid-flight when the
+        # process exits (see voice.stop_for_exit).
+        try:
+            import voice as _voice_mod
+            _voice_mod.stop_for_exit()
+        except Exception:
+            pass
+
     def _exit(icon, _item):
         log.info("Exit chosen from tray.")
+        _stop_speech_for_exit()
         _write_exit_flag()
         icon.stop()
         if on_exit:
@@ -89,6 +99,7 @@ def run_tray(on_exit=None, on_show_console=None, on_hide_console=None,
 
     def _restart(icon, _item):
         log.info("Restart chosen from tray.")
+        _stop_speech_for_exit()
         icon.stop()
         os._exit(1)  # supervisor will relaunch; NO exit flag
 
