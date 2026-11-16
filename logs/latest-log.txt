@@ -1,69 +1,10 @@
 Nalox log sync
 Version: 7.8
-Synced: 2026-11-16 13:33:28 (laptop local time)
+Synced: 2026-11-16 13:36:36 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-20:30:00 [MIC] [heard] আমি বলতি যা চালু করতে বলি নিকিন্তো চালু করতে আলো করাছে কিটা মাই উকো সুন্যে না একাজ করো
-20:30:00 [YOU] [mic] heard: আমি বলতি যা চালু করতে বলি নিকিন্তো চালু করতে আলো করাছে কিটা মাই উকো সুন্যে না একাজ করো
-20:30:01 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-20:30:02 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-20:30:03 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-20:30:04 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0
-20:30:12 [ERROR] [BRAIN] Gemini FAILED: ReadTimeout: HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=9.359000000000378)
-20:30:15 [BRAIN] Groq answered
-20:30:15 [NALOX] NALOX: আপনি কোন অ্যাপ্লিকেশনটি চালু করতে চান, স্যার?
-20:30:22 [VOICE] via google-tts: আপনি কোন অ্যাপ্লিকেশনটি চালু করতে চান, স্যার?
-20:30:22 [SYSTEM] [timing] wake→record 9.6s, transcribe 2.9s, brain 14.7s, speak 6.8s
-20:30:22 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-20:30:28 [SYSTEM] [ears] heard via cloud:groq
-20:30:28 [MIC] [heard] আমি এই ক্রোম ব্রাউজাটা বন্দ কোত্ত যায়
-20:30:28 [YOU] [mic] heard: আমি এই ক্রোম ব্রাউজাটা বন্দ কোত্ত যায়
-20:30:28 [NALOX] NALOX: Opening chrome.
-20:30:31 [VOICE] via google-tts: Opening chrome.
-20:30:31 [SYSTEM] [timing] wake→record 4.0s, transcribe 2.0s, brain 0.0s, speak 3.5s
-20:30:31 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-20:30:38 [SYSTEM] [ears] heard via cloud:groq
-20:30:38 [MIC] [heard] तैको बंदो करा कथा बोलिची, इस्ते ओपेन कराच्छे, की बोलो दाछिने की।
-20:30:38 [YOU] [mic] heard: तैको बंदो करा कथा बोलिची, इस्ते ओपेन कराच्छे, की बोलो दाछिने की।
-20:30:48 [ERROR] [BRAIN] FreeLLMAPI FAILED: ReadTimeout: HTTPConnectionPool(host='127.0.0.1', port=31415): Read timed out. (read timeout=10.0)
-20:30:48 [ERROR] [BRAIN] FreeLLMAPI is not answering — giving the direct providers a turn for a while.
-20:30:49 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-20:30:50 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-20:30:51 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-20:31:00 [ERROR] [BRAIN] Gemini FAILED: ReadTimeout: HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=9.406000000002678)
-20:31:02 [BRAIN] [tool] press_key {'key': 'alt+f4'}
-20:31:03 [BRAIN] Groq answered
-20:31:03 [NALOX] NALOX: Chrome বন্ধ করা হল, স্যার। আর কিছু করতে পারি?
-20:31:04 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-20:31:08 [VOICE] via google-tts: Chrome বন্ধ করা হল, স্যার।
-20:31:13 [VOICE] via google-tts: আর কিছু করতে পারি?
-20:31:13 [SYSTEM] [timing] wake→record 4.7s, transcribe 2.1s, brain 24.9s, speak 10.3s
-20:31:13 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-20:31:21 [SYSTEM] [ears] heard via cloud:groq
-20:31:21 [MIC] [heard] এবার দেখার কিছো থিক করে আর এখন
-20:31:21 [YOU] [mic] heard: এবার দেখার কিছো থিক করে আর এখন
-20:31:22 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-20:31:23 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-20:31:23 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-20:31:33 [ERROR] [BRAIN] Gemini FAILED: ReadTimeout: HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Read timed out. (read timeout=9.640999999999622)
-20:31:35 [BRAIN] Groq answered
-20:31:35 [NALOX] NALOX: আপনি কী দেখতে চান, স্যার?
-20:31:40 [VOICE] via google-tts: আপনি কী দেখতে চান, স্যার?
-20:31:40 [SYSTEM] [timing] wake→record 5.8s, transcribe 2.1s, brain 13.7s, speak 5.5s
-20:31:40 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-20:31:48 [SYSTEM] [ears] heard via cloud:groq
-20:31:48 [MIC] [heard] आँची यो आँची यो क्योला ऐतो होन्दो बालो छिली
-20:31:48 [YOU] [mic] heard: आँची यो आँची यो क्योला ऐतो होन्दो बालो छिली
-20:31:49 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-20:31:50 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-20:31:52 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-20:31:56 [ERROR] [BRAIN] Gemini FAILED: HTTP 503 — [{'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temp
-20:31:58 [BRAIN] Groq answered
-20:31:58 [NALOX] NALOX: আপনি কী বিষয়বস্তু দেখতে চান, স্যার?
-20:32:04 [VOICE] via google-tts: আপনি কী বিষয়বস্তু দেখতে চান, স্যার?
-20:32:04 [SYSTEM] [timing] wake→record 5.2s, transcribe 2.5s, brain 9.6s, speak 6.2s
 20:32:04 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
 20:32:04 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0
 20:32:15 [SYSTEM] [ears] heard via cloud:groq
@@ -1529,6 +1470,57 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 13:33:22 [BRAIN] [brain] chat race: Groq answered first (1016 ms)
 13:33:22 [NALOX] NALOX: আপনি কি কীপার মানে বলতে চাইছেন, নাকি অন্য কিছু? আরেকটু স্পষ্ট করে বলবেন, আমি শুনছি।
 13:33:27 [VOICE] via google-tts: আপনি কি কীপার মানে বলতে চাইছেন, নাকি অন্য কিছু?
+13:33:31 [VOICE] via google-tts: আরেকটু স্পষ্ট করে বলবেন, আমি শুনছি।
+13:33:32 [SYSTEM] [logsync] log sent
+13:33:33 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
+13:33:35 [SYSTEM] [timing] wake→record 8.6s, transcribe 2.5s, brain 1.0s, speak 12.9s
+13:33:35 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:33:47 [SYSTEM] [ears] heard via cloud:groq
+13:33:47 [MIC] [heard] তুমি নোট্পেট ওপেন করো যা নোট্পেটা আমান নামে ভারলিনিস লেখো তোকনে একটারা বললেম, তোকনে নোটপেট ওপেন হলো তারাকে কিন্তে হলো চুলছে নাতে
+13:33:47 [YOU] [mic] heard: তুমি নোট্পেট ওপেন করো যা নোট্পেটা আমান নামে ভারলিনিস লেখো তোকনে একটারা বললেম, তোকনে নোটপেট ওপেন হলো তারাকে কিন্তে হলো চুলছে নাতে
+13:33:48 [BRAIN] [tool] open_app {'name': 'notepad'}
+13:33:52 [ERROR] [BRAIN] Groq FAILED: HTTP 429 — rate_limit_exceeded — Rate limit reached for model `qwen/qwen3.8-27b` in organization `org_01m7et8kg1eskv4a4k8cqmyzdz` s
+13:33:55 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:34:04 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:34:04 [SYSTEM] [timing] wake→record 8.4s, transcribe 3.6s, brain 8.2s, speak 9.3s
+13:34:04 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:34:16 [SYSTEM] [ears] heard via cloud:groq
+13:34:16 [MIC] [heard] তুমি এই যে নোডু পেড ওপেন করছে সেখানে কিছু লেখু, কিছু লেখু
+13:34:16 [YOU] [mic] heard: তুমি এই যে নোডু পেড ওপেন করছে সেখানে কিছু লেখু, কিছু লেখু
+13:34:17 [BRAIN] [tool] type_text {'text': 'Nalox'}
+13:34:23 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:34:32 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:34:32 [SYSTEM] [timing] wake→record 8.5s, transcribe 3.0s, brain 7.5s, speak 9.1s
+13:34:32 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:34:33 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
+13:34:43 [SYSTEM] [ears] heard via cloud:groq
+13:34:43 [MIC] [heard] hello everyone! i'm going to show you a beautiful beautiful beautiful
+13:34:43 [YOU] [mic] heard: hello everyone! i'm going to show you a beautiful beautiful beautiful
+13:34:47 [BRAIN] [brain] chat race: Groq answered first (4077 ms)
+13:34:47 [NALOX] NALOX: জি স্যার, আপনার কণ্ঠস্বর পরিষ্কার শুনতে পাচ্ছি। বলুন, আপনি যা দেখাতে চান, তার বিবরণ জানাচ্ছেন।
+13:34:54 [VOICE] via google-tts: জি স্যার, আপনার কণ্ঠস্বর পরিষ্কার শুনতে পাচ্ছি।
+13:34:59 [VOICE] via google-tts: বলুন, আপনি যা দেখাতে চান, তার বিবরণ জানাচ্ছেন।
+13:35:01 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.6s, brain 4.1s, speak 13.8s
+13:35:01 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:35:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+13:35:13 [SYSTEM] [ears] heard via cloud:groq
+13:35:13 [MIC] [heard] এটিউ বোপেনি করে এটা ভালো হিন্দি সংচালা হয় যেটা ফাংক টাইপের হয় মিক্সিংগ হয় ভাল লাগে যেটা ছুনে
+13:35:13 [YOU] [mic] heard: এটিউ বোপেনি করে এটা ভালো হিন্দি সংচালা হয় যেটা ফাংক টাইপের হয় মিক্সিংগ হয় ভাল লাগে যেটা ছুনে
+13:35:20 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:35:28 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+13:35:29 [SYSTEM] [timing] wake→record 8.6s, transcribe 3.2s, brain 6.5s, speak 9.0s
+13:35:29 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:35:33 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
+13:35:39 [SYSTEM] [ears] heard via cloud:groq
+13:35:39 [MIC] [heard] the
+13:35:39 [YOU] [mic] heard: the
+13:35:40 [BRAIN] [brain] chat race: Groq answered first (875 ms)
+13:35:40 [NALOX] NALOX: জি স্যার, বলুন।
+13:35:43 [VOICE] via google-tts: জি স্যার, বলুন।
+13:35:44 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.2s, brain 0.9s, speak 3.8s
+13:35:44 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+13:36:23 [SYSTEM] [ears] heard via local
+13:36:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=0 short=0 peak=0.1384
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
