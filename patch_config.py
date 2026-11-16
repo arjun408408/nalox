@@ -102,6 +102,11 @@ PATCH_IF_ABSENT = {
                     "llama-3.3-70b-versatile",
                     "openai/gpt-oss-120b",
                     "qwen/qwen3-32b"],
+    # v7.4: smart-routing keys — added when absent; a value
+    # he sets by hand (a different power model, routing off)
+    # is his and is preserved.
+    "groq_power_model": "llama-3.3-70b-versatile",
+    "brain_smart_routing": True,
     "openrouter_models": [],
     # v6.7: an install missing the command-model key gets the
     # new big default (an existing "small" is migrated below;

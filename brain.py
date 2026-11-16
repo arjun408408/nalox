@@ -2059,6 +2059,30 @@ class Brain:
         # until the first answer, where the line falls back
         # to the plain validated form.
         self._working_models = {}
+        # v7.4 (Defect 1): the model that actually ANSWERED,
+        # per provider — REAL answers only. Boot validation
+        # also calls _remember_working_model (the v6.5
+        # /models repair), and in the field (2026-11-16
+        # 08:24:57) that validation remember re-crowned the
+        # stale openai/gpt-oss-120b and the header then
+        # showed it as the talking brain although it had
+        # answered nothing. brain_status_line reads THIS
+        # dict; validation records into _working_models
+        # only (answered=False), never here.
+        self._last_answered = {}
+        # v7.4: SMART ROUTING state — the tier of the last
+        # ANSWER ("power" / "instant" / None before the
+        # first routed answer); brain_status_line marks a
+        # power answer 💪 and an instant one ⚡ so the owner
+        # can see which brain did the work. Recorded by
+        # _remember_working_model when the walk passes its
+        # tier through. _guard_lang_trips counts language-
+        # guard rejections this process — the routing
+        # escalation in _agent_openai_compatible snapshots
+        # it around a call to spot an instant answer that
+        # failed the owner's language rule.
+        self._last_answer_tier = None
+        self._guard_lang_trips = 0
         # v6.8: tools executed so far in this process — the
         # ACT-DON'T-NARRATE guard snapshots it around a
         # provider call (see _agent_openai_compatible).
@@ -5637,14 +5661,60 @@ class Brain:
         return check.get("state") == "rejected"
 
     # ------------------------------------------------ v6.5 models
-    def _model_candidates(self, provider):
+    # ------------------------------------------------ v7.4
+    # SMART BRAIN ROUTING (the owner's orders, 2026-11-16:
+    # 07:58 "instant answers", 08:17 "most powerful" —
+    # simple talk uses the instant model, hard work the
+    # strongest brain, AUTOMATICALLY). The decision is
+    # deterministic and free: the same _looks_like_action_
+    # request signal the act-don't-narrate guard already
+    # computes — no classifier call, so routing adds zero
+    # latency. brain_smart_routing OFF (or a pre-v7.4
+    # config that never heard of it defaults ON via the
+    # shipped default) — OFF means _tier_for returns None
+    # and every call below behaves exactly as v7.3.
+    def _smart_routing_on(self):
+        try:
+            return bool(self.cfg.get("brain_smart_routing",
+                                     True))
+        except Exception:
+            return True
+
+    def _power_model(self):
+        """The POWER tier's head model (config
+        groq_power_model; the shipped default when the key
+        is missing or blank)."""
+        try:
+            name = str(self.cfg.get("groq_power_model")
+                       or "").strip()
+        except Exception:
+            name = ""
+        return name or "llama-3.3-70b-versatile"
+
+    def _tier_for(self, text):
+        """The routing tier for one utterance: "power" for
+        an action request, "instant" for plain chat, None
+        when smart routing is off (v7.3 behaviour)."""
+        if not self._smart_routing_on():
+            return None
+        return ("power" if _looks_like_action_request(text)
+                else "instant")
+
+    def _model_candidates(self, provider, head_override=None):
         """The ordered model candidates for a walk provider
         (v6.5): the configured single model FIRST (his Settings
         choice always gets the first try), then the configured
         candidate list, de-duplicated, empties dropped. The
         list may live in config as a JSON list or a comma
         string — both are accepted. Non-walk providers get
-        just their configured model."""
+        just their configured model.
+
+        v7.4: head_override= forces one model to the front
+        of the walk (the smart-routing tier head) — the rest
+        of the order is untouched, so a dead tier head simply
+        walks on to the usual candidates. (Named _override:
+        this function's own local `head` below is the
+        configured single model.)"""
         keys = _MODEL_WALK_PROVIDERS.get(provider)
         if keys is None:
             return []
@@ -5700,14 +5770,37 @@ class Brain:
             reordered += [m for m in out if m not in reordered]
             if reordered:
                 out = reordered
+        if head_override:
+            head_override = str(head_override).strip()
+            if head_override:
+                out = [head_override] + [
+                    m for m in out if m != head_override]
         return out
 
-    def _remember_working_model(self, provider, model, label):
+    def _remember_working_model(self, provider, model, label,
+                                single_key=None, tier=None,
+                                answered=True):
         """Persist the model that actually answered (v6.5):
         the live cfg AND config.json on disk (read-modify-
         write of ONLY that key, patch_config style — his keys
         and choices are never touched). After this, the first
-        candidate tried is the one that works."""
+        candidate tried is the one that works.
+
+        v7.4: single_key= remembers under a DIFFERENT key —
+        the smart-routing power tier remembers its winner
+        under groq_power_model, so a power answer never
+        rewrites the instant tier's groq_model head (and
+        vice versa). tier= records which tier answered, for
+        the Command Center's tier-aware brain line.
+
+        v7.4 (Defect 1): answered=False marks a BOOT-
+        VALIDATION remember (the v6.5 /models repair in
+        _check_one_key). Validation may repair the walk's
+        remembered head, but it has answered NOTHING, so it
+        must never pose as the talking brain: it records
+        into _working_models only — _last_answered (which
+        brain_status_line reads) and the tier mark are for
+        real answers exclusively."""
         keys = _MODEL_WALK_PROVIDERS.get(provider)
         if keys is None or not model:
             return
@@ -5716,7 +5809,12 @@ class Brain:
         # and nothing needs persisting) — the Command Center's
         # brain line reads it.
         self._working_models[provider] = model
-        single_key = keys[0]
+        if answered:
+            self._last_answered[provider] = model
+            if tier is not None:
+                self._last_answer_tier = tier
+        if single_key is None:
+            single_key = keys[0]
         if str(self.cfg.get(single_key) or "").strip() == model:
             return
         self.cfg[single_key] = model
@@ -5756,10 +5854,22 @@ class Brain:
             # the instant brain is the one talking ("Brain:
             # Groq · llama-3.1-8b-instant ⚡"). Before the
             # first answer the plain validated form stands.
-            _wm = (getattr(self, "_working_models", None)
+            # v7.4: the mark follows the tier of the last
+            # answer — 💪 when the POWER model did the work,
+            # ⚡ for an instant-tier answer.
+            # v7.4 (Defect 1): the named model comes from
+            # _last_answered — REAL answers only. Boot
+            # validation's repair remember (answered=False)
+            # never lands here, so before the first real
+            # answer the plain "Brain: Groq ✓" form stands
+            # even when validation just repaired the head.
+            _wm = (getattr(self, "_last_answered", None)
                    or {}).get(mode)
             if _wm:
-                return f"Brain: {label} · {_wm} ⚡"
+                _mark = ("💪" if getattr(
+                    self, "_last_answer_tier", None) == "power"
+                    else "⚡")
+                return f"Brain: {label} · {_wm} {_mark}"
             return f"Brain: {label} ✓"
         if state == "rejected":
             m = re.search(r"HTTP (\d{3})", detail)
@@ -5930,10 +6040,32 @@ class Brain:
                             if mid.startswith("models/"):
                                 ids.add(mid[len("models/"):])
                     for cand in self._model_candidates(prov):
-                        if cand in ids:
-                            self._remember_working_model(
-                                prov, cand, label)
-                            break
+                        if cand not in ids:
+                            continue
+                        # v7.4 (Defect 1): the probe walks the
+                        # SAME order the answering walk uses
+                        # (_model_candidates — stale rule
+                        # included, instant first), but it
+                        # NEVER re-crowns the stale remembered
+                        # model: in the field (2026-11-16
+                        # 08:24:57) Groq's /models list lacked
+                        # the instant + 70b names, the probe
+                        # reached openai/gpt-oss-120b, and its
+                        # remember persisted the stale name
+                        # over the migrated groq_model AND
+                        # posed as the answering brain in the
+                        # header. The stale candidate is
+                        # skipped here (the live walk keeps
+                        # it as a fallback candidate, as
+                        # always), and the remember is
+                        # answered=False — validation repairs
+                        # the head, it does not answer.
+                        if prov == "groq" and cand == \
+                                _GROQ_STALE_REMEMBERED:
+                            continue
+                        self._remember_working_model(
+                            prov, cand, label, answered=False)
+                        break
                 except Exception:
                     pass
         elif resp.status_code in (401, 403):
@@ -6327,6 +6459,14 @@ class Brain:
         if reply and not writing \
                 and _reply_wrong_language(reply,
                                           self._pref_lang()):
+            # v7.4: counted — the smart-routing escalation
+            # reads the delta around a provider call (see
+            # _agent_openai_compatible).
+            try:
+                self._guard_lang_trips = getattr(
+                    self, "_guard_lang_trips", 0) + 1
+            except Exception:
+                pass
             log.warning("[lang-guard] %s reply rejected "
                         "(not in the owner's reply language): "
                         "%r", label, reply[:90])
@@ -6932,11 +7072,17 @@ class Brain:
             self._last_agent_fail = None
         groq_key = (self.cfg.get("groq_api_key") or "").strip()
         if groq_key and not self._provider_rejected("groq"):
+            # v7.4: the smart-routing tier for this utterance
+            # (None = routing off = v7.3 exactly).
+            _tier = self._tier_for(text)
+            if _tier is not None:
+                log.info("[brain] smart routing: tier=%s",
+                         _tier)
             reply = self._agent_openai_compatible(
                 text, "https://api.groq.com/openai/v1", groq_key,
                 self.cfg.get("groq_model",
                              "llama-3.1-8b-instant"),
-                label="Groq", provider="groq")
+                label="Groq", provider="groq", tier=_tier)
             if reply:
                 _lb("BRAIN", "Groq answered")
                 return reply
@@ -7390,7 +7536,8 @@ class Brain:
 
     def _agent_openai_compatible(self, text, base_url, key, model,
                                  label="OpenAI-compatible",
-                                 provider=None, timeout=PROVIDER_TIMEOUT_S):
+                                 provider=None, timeout=PROVIDER_TIMEOUT_S,
+                                 tier=None):
         """v6.0 timing wrapper: record the attempt's latency
         + outcome in perflevel under the provider's name
         (the ⚡ Level and the adaptive provider order read
@@ -7402,13 +7549,32 @@ class Brain:
         candidate inside THIS call; the candidate that answers
         is remembered as the provider's default. Any other
         failure stops the walk at once (it is a provider
-        failure, already logged by the impl)."""
+        failure, already logged by the impl).
+
+        v7.4: tier= is the smart-routing tier ("power" /
+        "instant" / None — see _tier_for). A power call heads
+        its walk with the power model and remembers its
+        winner under groq_power_model. An INSTANT-tier answer
+        to an ACTION request that trips the act-don't-narrate
+        guard — or fails the language guard outright — gets
+        its ONE retry from the POWER model instead of the
+        same model (exactly one retry either way; the honest
+        fallback after it is unchanged). tier=None (routing
+        off) reproduces v7.3 exactly."""
         _t0 = time.time()
         _tools_before = self._tool_run_count
+        _lang_trips_before = getattr(self, "_guard_lang_trips", 0)
+        _head = None
+        _remember_key = None
+        if tier == "power":
+            _head = self._power_model()
+            _remember_key = "groq_power_model"
+        _can_escalate = tier is not None and tier != "power"
         try:
             reply = self._agent_openai_walk(
                 text, base_url, key, model, label=label,
-                provider=provider, timeout=timeout)
+                provider=provider, timeout=timeout, head=_head,
+                remember_key=_remember_key, tier=tier)
         except Exception:
             reply = None
         # v6.8 ACT, DON'T NARRATE: the turn ended with ZERO
@@ -7431,11 +7597,26 @@ class Brain:
                 "instruction")
             log.warning("[brain] capability claim with no "
                         "action — one stern retry")
+            # v7.4: an instant-tier first attempt escalates
+            # — the ONE stern retry goes to the POWER model;
+            # a power attempt (or routing off) retries with
+            # its own head, exactly as v7.3.
+            _r_head, _r_key, _r_tier = _head, _remember_key, tier
+            if _can_escalate:
+                _r_head = self._power_model()
+                _r_key = "groq_power_model"
+                _r_tier = "power"
+                _lb("BRAIN",
+                    "[brain] escalating the retry to the "
+                    f"power model ({_r_head})")
+                log.warning("[brain] narrate retry escalated "
+                            "to the power model %s", _r_head)
             try:
                 reply2 = self._agent_openai_walk(
                     text + _NARRATE_STERN, base_url, key, model,
                     label=label, provider=provider,
-                    timeout=timeout)
+                    timeout=timeout, head=_r_head,
+                    remember_key=_r_key, tier=_r_tier)
             except Exception:
                 reply2 = None
             if reply2 and self._tool_run_count != _tools_before:
@@ -7446,6 +7627,37 @@ class Brain:
                 reply = self._loc(
                     "Sorry sir, I could not do that just now.",
                     "দুঃখিত sir, কাজটা এখন করে উঠতে পারলাম না।")
+        elif not reply and _can_escalate \
+                and self._tool_run_count == _tools_before \
+                and getattr(self, "_guard_lang_trips", 0) \
+                > _lang_trips_before \
+                and _looks_like_action_request(text):
+            # v7.4 LANGUAGE ESCALATION: the instant model's
+            # answer to an ACTION request was rejected by the
+            # language guard (a provider failure — no reply,
+            # and no tool ran, so a retry cannot double-
+            # execute anything). The ONE retry goes to the
+            # POWER model; if it also fails, the normal
+            # cascade (Ollama → the honest Bengali fallback)
+            # follows, exactly as before.
+            _p_head = self._power_model()
+            _lb("BRAIN",
+                "[brain] the instant model's reply failed "
+                "the language guard — escalating to the "
+                f"power model ({_p_head})")
+            log.warning("[brain] language-guard escalation "
+                        "to the power model %s", _p_head)
+            try:
+                reply2 = self._agent_openai_walk(
+                    text, base_url, key, model, label=label,
+                    provider=provider, timeout=timeout,
+                    head=_p_head,
+                    remember_key="groq_power_model",
+                    tier="power")
+            except Exception:
+                reply2 = None
+            if reply2:
+                reply = reply2
         try:
             import perflevel
             perflevel.record_provider(
@@ -7457,15 +7669,22 @@ class Brain:
 
     def _agent_openai_walk(self, text, base_url, key, model,
                            label="OpenAI-compatible",
-                           provider=None, timeout=PROVIDER_TIMEOUT_S):
+                           provider=None, timeout=PROVIDER_TIMEOUT_S,
+                           head=None, remember_key=None, tier=None):
         """One provider call, with the v6.5 candidate walk for
         walk providers. Non-walk providers (FreeLLMAPI, OpenAI)
-        keep the exact single-model behaviour."""
+        keep the exact single-model behaviour.
+
+        v7.4: head= heads the walk with the smart-routing
+        tier's model; remember_key= is where the winner is
+        remembered (the power tier's own key); tier= rides
+        along to the remember for the status line."""
         if provider not in _MODEL_WALK_PROVIDERS:
             return self._agent_openai_compatible_impl(
                 text, base_url, key, model, label=label,
                 provider=provider, timeout=timeout)
-        candidates = self._model_candidates(provider) or [model]
+        candidates = self._model_candidates(
+            provider, head_override=head) or [model]
         last_miss = None
         _walk_start = time.monotonic()
         for idx, cand in enumerate(candidates):
@@ -7504,8 +7723,11 @@ class Brain:
                 # v7.3: unconditional — a head answer records
                 # the working model in memory too (the persist
                 # inside still only happens on a change).
+                # v7.4: the tier's own remember key + tier
+                # ride along (both None on the v7.3 paths).
                 self._remember_working_model(
-                    provider, cand, label)
+                    provider, cand, label,
+                    single_key=remember_key, tier=tier)
                 return reply
             return None  # a real provider failure — impl logged it
         # Every candidate was a dead name: ONE failure line.

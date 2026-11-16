@@ -688,6 +688,80 @@ def _build(tk, parent, cfg):
             "weather_city": ow_city.get().strip() or "Kolkata",
         }
 
+    # ---------------- Brain (v7.4) ----------------
+    # Smart routing + the Brain Test. Routing itself has
+    # no controls here (it follows config: brain_smart_
+    # routing + groq_power_model); this section is the
+    # MEASURING instrument the owner ordered — one button
+    # runs brainbench against every candidate (Groq walk,
+    # OpenRouter incl. GLM when a key is saved, Ollama)
+    # with fixed Bengali prompts and shows the table.
+    fr = section("🧠  Brain")
+    tk.Label(fr, text="Smart routing: simple talk → instant "
+                      "model · action + hard work → power "
+                      "model (automatic). Brain Test মাপে কোন "
+                      "brain সবচেয়ে fast + বাংলা ঠিক বলে।",
+             bg=CARD, fg=MUTED, font=("Segoe UI", 8),
+             wraplength=430, justify="left").pack(
+                 anchor="w", padx=10)
+    bench_status = tk.StringVar(value="")
+    bench_lines = tk.StringVar(value="")
+    row = tk.Frame(fr, bg=CARD)
+    row.pack(fill="x", padx=10, pady=(4, 2))
+    tk.Label(row, textvariable=bench_status, bg=CARD,
+             fg=MUTED, font=("Segoe UI", 8)).pack(side="right")
+    _bench_poll = {"live": False}
+
+    def _bench_show():
+        try:
+            import brainbench
+            state = brainbench.last_results()
+            if state.get("lines"):
+                bench_lines.set("\n".join(state["lines"]))
+            if state.get("error"):
+                bench_status.set("Failed — see the log")
+            elif state.get("running"):
+                bench_status.set("Running…")
+            elif state.get("at"):
+                bench_status.set("Done ✓")
+        except Exception:
+            pass
+
+    def _bench_poll():
+        _bench_show()
+        try:
+            import brainbench
+            if brainbench.is_running():
+                win.after(1200, _bench_poll)
+            else:
+                _bench_poll["live"] = False
+        except Exception:
+            _bench_poll["live"] = False
+
+    def _brain_test():
+        try:
+            import brainbench
+        except Exception as exc:
+            bench_status.set(f"Unavailable: {exc}")
+            return
+        if brainbench.is_running():
+            bench_status.set("Already running…")
+            return
+        bench_status.set("Running…")
+        if not brainbench.start_benchmark(dict(cfg)):
+            bench_status.set("Already running…")
+            return
+        if not _bench_poll["live"]:
+            _bench_poll["live"] = True
+            win.after(600, _bench_poll)
+
+    button(row, "🧪 Brain Test", _brain_test).pack(side="left")
+    tk.Label(fr, textvariable=bench_lines, bg=CARD, fg=FG,
+             font=("Consolas", 8), wraplength=430,
+             justify="left").pack(anchor="w", padx=10,
+                                  pady=(2, 6))
+    _bench_show()
+
     # ---------------- Microphone ----------------
     fr = section("🎤  Microphone")
     options = _input_devices()

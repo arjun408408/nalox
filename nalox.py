@@ -1454,13 +1454,29 @@ def main():
                     # "the gate dropped it" (healthy peak,
                     # seg=0). See ears.wake_listen_stats.
                     _gs = ears.wake_listen_stats()
+                    # v7.4 (Defect 2): the wake-decode
+                    # aggregate rides the same line when any
+                    # decode happened this window — count by
+                    # path (t=tiny only, b=base retry,
+                    # s=small escalation, r=fast-reject) and
+                    # the slowest decode, so a flood window
+                    # shows its real milliseconds.
+                    _dec_tail = ""
+                    if _gs.get("dec"):
+                        _dec_tail = (
+                            f" dec={_gs['dec']} "
+                            f"(t{_gs.get('dec_tiny', 0)} "
+                            f"b{_gs.get('dec_base', 0)} "
+                            f"s{_gs.get('dec_small', 0)} "
+                            f"r{_gs.get('dec_rej', 0)}) "
+                            f"dmax={_gs.get('dec_max_ms', 0) / 1000.0:.1f}s")
                     logbook.log_file_only(
                         f"[heartbeat] state={_ui_state} "
                         f"mic={ears.current_mic_name()} "
                         f"queue={ears.transcribe_queue_size()} "
                         f"seg={_gs['seg']} blip={_gs['blip']} "
                         f"short={_gs['short']} "
-                        f"peak={_gs['peak']:.4f}")
+                        f"peak={_gs['peak']:.4f}{_dec_tail}")
                 except Exception:
                     pass
 

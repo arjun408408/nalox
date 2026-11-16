@@ -4487,7 +4487,18 @@ class Ears:
         # dropped (healthy peak, seg=0, blip/short > 0).
         # wake_listen_stats() snapshots + resets.
         self._listen_stats = {"seg": 0, "blip": 0, "short": 0,
-                              "peak": 0.0}
+                              "peak": 0.0,
+                              # v7.4 (Defect 2): wake-decode
+                              # observability — decodes counted
+                              # by path taken (tiny first pass
+                              # only / base retry / small
+                              # escalation / fast-reject) plus
+                              # the slowest decode, aggregated
+                              # into the heartbeat by
+                              # wake_listen_stats().
+                              "dec": 0, "dec_tiny": 0,
+                              "dec_base": 0, "dec_small": 0,
+                              "dec_rej": 0, "dec_max_ms": 0}
         self._listen_stats_lock = threading.Lock()
         # Ears 2.0: a one-breath command remainder waiting for
         # nalox.py ("Nalox কেমন আছো" -> ("কেমন আছো", "bn")).
@@ -4890,7 +4901,12 @@ class Ears:
             with self._listen_stats_lock:
                 snap = dict(self._listen_stats)
                 self._listen_stats = {"seg": 0, "blip": 0,
-                                      "short": 0, "peak": 0.0}
+                                      "short": 0, "peak": 0.0,
+                                      "dec": 0, "dec_tiny": 0,
+                                      "dec_base": 0,
+                                      "dec_small": 0,
+                                      "dec_rej": 0,
+                                      "dec_max_ms": 0}
             return snap
         except Exception:
             return {"seg": 0, "blip": 0, "short": 0, "peak": 0.0}
@@ -4907,6 +4923,31 @@ class Ears:
                 else:
                     self._listen_stats[key] = \
                         self._listen_stats.get(key, 0) + 1
+        except Exception:
+            pass
+
+    def _note_decode_stat(self, path, seconds):
+        """One wake-decode outcome (v7.4, Defect 2): the
+        path the segment took — "tiny" (first pass only),
+        "base-retry", "small-escalation" or "fast-reject" —
+        and how long the wake decode took. Aggregated into
+        the heartbeat via wake_listen_stats(), so the next
+        field sync shows real decode milliseconds and path
+        counts instead of another undecidable window.
+        Guarded — statistics must never break listening."""
+        try:
+            key = {"tiny": "dec_tiny", "base-retry": "dec_base",
+                   "small-escalation": "dec_small",
+                   "fast-reject": "dec_rej"}.get(path,
+                                                 "dec_tiny")
+            ms = int(max(0.0, seconds) * 1000)
+            with self._listen_stats_lock:
+                self._listen_stats["dec"] = \
+                    self._listen_stats.get("dec", 0) + 1
+                self._listen_stats[key] = \
+                    self._listen_stats.get(key, 0) + 1
+                if ms > self._listen_stats.get("dec_max_ms", 0):
+                    self._listen_stats["dec_max_ms"] = ms
         except Exception:
             pass
 
@@ -5064,6 +5105,20 @@ class Ears:
         is also skipped when the first pass never actually
         ran (F4: the wake client fail-fasted on cooldown /
         backoff, so there is no hearing to improve on).
+
+        v7.4 (Defect 2) — FAST-REJECT UNDER PRESSURE +
+        DECODE OBSERVABILITY: while at least one wake job
+        is already waiting in the queue, a segment whose
+        tiny first pass is a CLEAR non-match (clean text,
+        no wake word, no _wake_near_miss — the existing
+        criteria) skips the (b)/(c) small escalation (and
+        could never earn the (d) base retry): the flood
+        that tripped the worker-slow cooldown 3x on
+        2026-11-16 08:25–08:27 IST is shed at first-pass
+        cost so the queue drains and a real attempt meets
+        an empty queue and full effort. Every decode also
+        records its path + duration into the listen stats
+        (_note_decode_stat), aggregated by the heartbeat.
         """
         kwargs = dict(beam_size=1, language=None, word_timestamps=False)
         kwargs.update(_DECODE_GUARDS)
@@ -5121,6 +5176,48 @@ class Ears:
         # than going straight to the command model.
         can_retry_base = (WAKE_RETRY_MODEL != model_name and loud)
 
+        # v7.4 (Defect 2) — FAST-REJECT UNDER PRESSURE.
+        # Field 2026-11-16 08:25–08:27 IST: a loud room
+        # (seg=16 in 53 s, the owner shouting over it) —
+        # nearly every flood segment earned a small-model
+        # escalation (triggers (b)/(c) below), the serial
+        # tx thread fell behind, wake decodes missed their
+        # deadlines and the worker-slow cooldown tripped
+        # 3x; no [heard] ever landed. The queue never
+        # exceeded 1 — this is decode throughput under
+        # flood, not the v7.1 queue-pin collapse. So:
+        # while at least one wake job is already WAITING,
+        # a segment whose tiny first pass is a CLEAR
+        # non-match — clean text that is neither the wake
+        # word (looks_like_wake_word) nor close to it
+        # (_wake_near_miss, the existing criteria, no new
+        # thresholds) — is rejected WITHOUT the base retry
+        # and WITHOUT the small escalation: the flood is
+        # shed at tiny-pass cost, the queue drains, and
+        # the owner's own segment reaches an empty queue,
+        # where it gets the full existing effort. Near-
+        # misses keep everything; garbage/empty first
+        # passes are NOT clear non-matches (an unclear
+        # hearing keeps its escalation, as today); with
+        # an empty queue nothing changes at all. F1–F4
+        # semantics untouched.
+        try:
+            _waiting = self.transcribe_queue_size()
+        except Exception:
+            _waiting = 0
+        clear_non_match = bool(text) and not is_garbage(text) \
+            and not looks_like_wake_word(text) \
+            and not _wake_near_miss(text)
+        fast_reject = bool(_waiting >= 1 and clear_non_match)
+        # The decode path taken, for the heartbeat stats
+        # (v7.4 observability — see _note_decode_stat).
+        path = "fast-reject" if fast_reject else "tiny"
+        if fast_reject:
+            log.info("[ears] fast-reject under queue pressure "
+                     "(%d job(s) waiting): %r is a clear "
+                     "non-match — no retry spent",
+                     _waiting, text)
+
         def _retry_with_escalation_model():
             """The one escalation-model retry (v7.1 F1: the
             resident "small" by default, NOT the big command
@@ -5149,6 +5246,7 @@ class Ears:
         if not text or is_garbage(text):
             if can_retry:
                 retried = True
+                path = "small-escalation"
                 log.info("Wake segment garbled by %s (peak %.4f = "
                          "%.1fx the gate) — retrying once with %s",
                          model_name, peak,
@@ -5163,9 +5261,13 @@ class Ears:
                     log.info("Wake segment dropped as garbage: %r "
                              "(no_speech %.2f — info only, never "
                              "the reason)", text, no_speech)
+                self._note_decode_stat(
+                    path, time.monotonic() - started)
                 return False
-        elif lang not in ALLOWED_LANGS and can_retry:
+        elif lang not in ALLOWED_LANGS and can_retry \
+                and not fast_reject:
             retried = True
+            path = "small-escalation"
             log.info("Wake model %s labelled a loud segment %r "
                      "(lang %s, outside en/bn/hi) — retrying once "
                      "with %s", model_name, text, lang,
@@ -5177,9 +5279,14 @@ class Ears:
         # v4.6 trigger (c): clean, loud, no wake match, dominant
         # script Bengali/Devanagari — the base pass may have
         # mangled the NAME itself; one small retry may find it.
-        if not retried and can_retry \
+        # v7.4 (Defect 2): under queue pressure a CLEAR
+        # non-match skips this rescue too (fast_reject) — the
+        # flood is Bengali room speech, and rescuing every
+        # segment of it is what starved the lane.
+        if not retried and can_retry and not fast_reject \
                 and not looks_like_wake_word(text) \
                 and _dominant_script(text) in ("bn", "hi"):
+            path = "small-escalation"
             log.info("Wake segment in %s script with no wake "
                      "match (loud, peak %.4f) — retrying once "
                      "with %s (Bengali wake rescue)",
@@ -5194,10 +5301,14 @@ class Ears:
         # (_wake_near_miss): the tiny first pass ALMOST heard
         # him. One retry with WAKE_RETRY_MODEL ("base"), whose
         # sharper ears usually resolve the name outright.
+        # (A near-miss is by definition NOT a clear non-match,
+        # so fast_reject can never gate this trigger — under
+        # pressure it keeps the full existing effort.)
         if not retried and can_retry_base \
                 and not looks_like_wake_word(text) \
                 and _wake_near_miss(text):
             retried = True
+            path = "base-retry"
             log.info("Wake segment near-miss by %s (%r — close "
                      "to the name, no match) — retrying once "
                      "with %s", model_name, text, WAKE_RETRY_MODEL)
@@ -5205,6 +5316,9 @@ class Ears:
             took = time.monotonic() - started
             if got is not None:
                 text, lang, no_speech = got
+        # v7.4 (Defect 2) observability: the decode's path +
+        # duration join the heartbeat aggregate.
+        self._note_decode_stat(path, time.monotonic() - started)
         log.info("Heard segment: %r (lang %s, no_speech %.2f, %.1fs)",
                  text, lang, no_speech, took)
         _post_heard(text)

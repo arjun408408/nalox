@@ -202,6 +202,21 @@ DEFAULTS = {
                     "llama-3.3-70b-versatile",
                     "openai/gpt-oss-120b",
                     "qwen/qwen3-32b"],
+    # --- v7.4: SMART BRAIN ROUTING (the owner's "most
+    # powerful" order, 2026-11-16 08:17 IST — simple talk
+    # instant, hard work strongest, automatically). With
+    # brain_smart_routing ON, an ACTION request (the same
+    # deterministic detection the act-don't-narrate guard
+    # uses — no extra classifier call, so routing itself
+    # costs no latency) heads the Groq walk with the POWER
+    # model below; plain chat keeps the instant head above.
+    # A guard-tripped instant answer to an action request
+    # escalates its ONE retry to this model too. The model
+    # that answers a power call is remembered under THIS
+    # key, so the chat head is never contaminated. OFF =
+    # v7.3 behaviour exactly. ---
+    "groq_power_model": "llama-3.3-70b-versatile",
+    "brain_smart_routing": True,
     # --- v4.8: GEMINI brain (Google AI Studio) — one FREE key,
     # reached through Gemini's OpenAI-compatible endpoint with
     # the same tool loop as Groq/OpenAI. Priority: Claude →

@@ -535,3 +535,124 @@ pinned in test_v73 instead) and the functional version-
 needle sweep 7.2 -> 7.3 in every suite. Frozen as ever:
 providers (Groq-only), Bengali-only replies, phone app,
 Telegram, exit codes, wake lane.
+
+## v7.4 "Power Tier" — smart routing + the Brain Test (2026-11-16)
+
+The owner's orders behind this release: 07:58 IST
+instant answers (v7.3), 08:05 IST "after v7.3, add/test
+GLM and show results — GLM becomes primary only if it
+truly wins on speed + Bengali", and 08:17 IST "make
+Nalox the MOST POWERFUL" — smart routing so simple talk
+uses the instant model and hard work uses the strongest
+brain automatically.
+
+- SMART ROUTING (brain.py + config.py + patch_config.py):
+  config brain_smart_routing (default ON; OFF = v7.3
+  exactly) + groq_power_model (default
+  llama-3.3-70b-versatile), both patch-if-absent.
+  Brain._tier_for decides deterministically from the
+  SAME _looks_like_action_request signal the
+  act-don't-narrate guard uses — no classifier call, so
+  routing costs zero latency. _agent_reply passes the
+  tier to _agent_openai_compatible: a power call heads
+  its walk with the power model (_model_candidates'
+  new head_override — named to avoid the function's own
+  local `head`) and remembers its winner under
+  groq_power_model via _remember_working_model's new
+  single_key, so tiers never contaminate each other's
+  remembered head; plain chat rides the v7.3 instant
+  walk unchanged. Deep-reasoning fallback stays in the
+  walk behind the power model (openai/gpt-oss-120b).
+  ESCALATION: when an instant-tier answer to an ACTION
+  request trips the act-don't-narrate guard, the ONE
+  stern retry goes to the power model; when it fails
+  the language guard outright (no reply, and — checked
+  — no tool ran, so nothing can double-execute), the
+  ONE retry likewise goes to the power model
+  (_guard_reply counts trips in _guard_lang_trips; the
+  wrapper snapshots it). Exactly one retry either way;
+  a power-tier attempt never escalates (it is already
+  the top), and the honest Bengali fallback after a
+  failed retry is unchanged. The answering chain stays
+  Groq-only with Ollama the silent offline last resort.
+- BRAIN TEST (new module brainbench.py + Settings):
+  measurement ONLY — it never touches the answering
+  chain. A fixed Bengali-first prompt set (chat /
+  action / reasoning) runs against the Groq walk set,
+  the Ollama models when the local server answers, and
+  OpenRouter — the dormant provider's ONE sanctioned
+  use, only when the owner presses the button with a
+  key configured; its list always includes
+  z-ai/glm-5.2 and z-ai/glm-5.2:free, and with no key
+  those rows report "skipped — no OpenRouter key".
+  Per candidate: answered count, median time-to-first-
+  token (streamed), mean reply time, Bengali-script
+  ratio, and the live guards' pass/fail. Bounds: 15 s
+  per candidate across its prompts, 170 s for the whole
+  test; a daemon thread refuses concurrent runs and is
+  crash-guarded. The table is written to the logbook as
+  [brainbench] lines (so it rides the log sync home)
+  and shown in Settings → 🧠 Brain ("🧪 Brain Test").
+  GLM joins the answering chain ONLY if a future
+  benchmark + the owner's word say so — not here.
+- VISIBLE CHANGE: the Settings Brain Test button +
+  results table, and the tier-aware Command Center
+  brain line — "Brain: Groq · llama-3.3-70b-versatile
+  💪" after a power answer, ⚡ after an instant one
+  (_remember_working_model records the tier in
+  _last_answer_tier; brain_status_line picks the mark).
+  The one-time "✅ Updated to v7.4" banner is the
+  standard v7.1 mechanism (headline text unchanged —
+  test_v71 pins it).
+Tests: test_v74 (new) + the full battery. Frozen as
+ever: providers (Groq-only answering), Bengali-only
+replies, phone app, Telegram, exit codes, wake lane,
+ears, voice. NOT fixed here: the 2026-11-16 07:50:14
+exit-code-1 crash — still no traceback evidence; do
+not invent one.
+
+- SCOPE ADDITION (2026-11-16, from the synced v7.3
+  session, sync 08:26:18 sha 8465c9b7) — two field-proven
+  defects fixed in this same release:
+  DEFECT 1 — boot validation re-crowned the stale model.
+  At 08:24:57 the logbook recorded "[brain] Groq: model
+  openai/gpt-oss-120b works — remembered as the default"
+  and the header showed gpt-oss-120b ⚡ as the talking
+  brain. Cause: _check_one_key's /models repair called
+  _remember_working_model, which (a) persisted the first
+  listed candidate — Groq's list that morning lacked the
+  instant + 70b names, so the walk reached the stale
+  candidate and overwrote the migrated groq_model — and
+  (b) filled _working_models, which brain_status_line
+  read as "the model that answered". Fix: validation
+  probes in _model_candidates order (stale rule
+  included) but SKIPS the stale candidate outright, and
+  remembers with answered=False — a new _last_answered
+  dict records REAL answers only and is what
+  brain_status_line names; before the first real answer
+  the line is the plain "Brain: Groq ✓". The v6.5 repair
+  itself is unchanged for non-stale candidates (pinned
+  by test_v65 A7 / test_v613 D1). brain_state.json needs
+  no treatment: nothing has read it since v6.8 (it is
+  updater deny-list only) — test_v74 pins that a stale
+  brain_state.json on disk changes nothing.
+  DEFECT 2 — wake-lane worker-slow under segment flood.
+  08:25:29/08:26:04/08:27:09 "worker slow", heartbeat
+  queue=1 seg=16 blip=2 peak=0.0846: a loud room's
+  segments each earned a (b)/(c) small escalation, the
+  serial tx thread fell behind, decodes missed
+  deadlines, the cooldown tripped — throughput, not
+  the v7.1 queue-pin. Fix (ears.py): while >=1 wake job
+  is waiting, a segment whose tiny first pass is a
+  CLEAR non-match (clean text, no wake word, no
+  _wake_near_miss — the existing criteria, no new
+  thresholds) skips the small escalation and is
+  rejected at first-pass cost ("fast-reject"); near-
+  misses keep the base retry, garbage keeps its
+  escalation, an empty queue changes nothing, F1–F4
+  untouched. Observability: every wake decode records
+  path (tiny / base-retry / small-escalation /
+  fast-reject) + duration into the listen stats; the
+  heartbeat appends "dec=N (t.. b.. s.. r..) dmax=..s"
+  when any decode ran, so the next sync shows real
+  milliseconds instead of an undecidable window.
