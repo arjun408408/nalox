@@ -1,28 +1,10 @@
 Nalox log sync
 Version: 7.9
-Synced: 2026-11-16 14:30:18 (laptop local time)
+Synced: 2026-11-16 14:31:26 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-21:22:17 [SYSTEM] [sys] Command Center opened at start
-21:22:17 [NALOX] NALOX: শুভ সন্ধ্যা, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-21:22:18 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
-21:22:18 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-21:22:18 [ERROR] [voice] ElevenLabs unavailable (402 — payment/credits). Using the local voice for this session.
-21:22:26 [VOICE] via google-tts: শুভ সন্ধ্যা, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-21:22:26 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-21:22:26 [SYSTEM] [ready] Say 'Nalox' to wake me
-21:22:26 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-21:22:27 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-21:22:36 [SYSTEM] [ears] big local model unavailable (ValueError: Invalid model size 'large-v3-turbo', expected one of: tiny.en, tiny, base.en, base, small.en, small, medium.en, medium, large-v1) — using small for now
-21:22:49 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-21:22:54 [SYSTEM] [dashboard] Command Center closed.
-21:23:17 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-21:23:38 [SYSTEM] [logsync] token cannot write — log not sent; the Updates token needs Contents: Read and write
-21:24:08 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-21:24:17 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-21:24:40 [MIC] [heard] aloks, genîmi yarmı
 21:24:55 [BRAIN] Groq answered
 21:25:03 [VOICE] via google-tts: শুনছি, স্যার। আর কিছুতে সাহায্য করতে পারি?
 21:25:07 [BRAIN] Groq answered
@@ -1548,6 +1530,26 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 14:30:07 [BRAIN] [brainbench] Ollama · qwen2.5:7b — skipped — Ollama not running
 14:30:07 [BRAIN] [brainbench] Ollama · llama3.1:8b — skipped — Ollama not running
 14:30:07 [BRAIN] [brainbench] Brain Test done in 21s — fastest full pass: groq · qwen/qwen3.8-27b (first token 0.62s)
+14:30:21 [SYSTEM] [logsync] log sent
+14:30:53 [MIC] [heard] nalox, que anunía al mismo
+14:30:56 [MIC] [mic] wake word heard
+14:30:57 [WAKE] [wake] wake word heard
+14:30:57 [NALOX] NALOX: Yes Sir,
+14:30:59 [VOICE] via google-tts: Yes Sir,
+14:30:59 [YOU] [mic] heard: dan alas kainu yang ini
+14:31:00 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
+14:31:00 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
+14:31:00 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=0 short=0 peak=0.1060 dec=10 (t9 b0 s1 r0) dmax=13.7s
+14:31:01 [BRAIN] [brain] Muse Wonder: billing required (HTTP 402) — parked for this session; the other brains keep answering
+14:31:01 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
+14:31:02 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
+14:31:05 [BRAIN] [brain] chat fallback: Ollama failed: not reachable at http://localhost:11434
+14:31:06 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+14:31:13 [ERROR] Voice path edge-tts failed:
+14:31:22 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
+14:31:22 [VOICE] [voice] male voice unavailable — female fallback for this reply
+14:31:24 [SYSTEM] [timing] wake→record 7.3s, transcribe 16.6s, brain 6.6s, speak 18.6s
+14:31:24 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
