@@ -327,9 +327,12 @@ def _edge_failure_retryable(exc):
 # its last working engine, and keeps parked engines parked
 # until their time is up. ElevenLabs is the one exception:
 # its persisted 401/402 block is restored WITH an armed
-# one-time re-probe — the first utterance of the boot tries
-# it once (a 402 is fast) in case he bought credits; a
-# success clears the block and reclaims first place.
+# one-time re-probe in case he bought credits; a success
+# clears the block and reclaims first place. v7.3: the
+# re-probe runs in the BACKGROUND (start_boot_probe) — it
+# used to run inside the boot's first uncached say() and,
+# on a slow hotspot, taxed exactly the line he was waiting
+# to hear (field 2026-11-16 07:51 IST).
 VOICE_STATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "voice_state.json")
 _VOICE_ENGINES = ("elevenlabs", "edge-tts", "google-cloud-tts",
@@ -511,7 +514,7 @@ class Speaker:
         # engines survive the restart, so a fresh boot starts
         # where the last session learned to start. The
         # ElevenLabs persisted block restores with an armed
-        # one-time re-probe (see _say_impl step 0).
+        # one-time re-probe (see start_boot_probe, v7.3).
         self._vstate = _load_voice_state()
         self._el_persisted = None
         self._el_probe_armed = False
@@ -566,6 +569,80 @@ class Speaker:
                     log.info(line)
                     _lb("VOICE", line)
                     break
+
+    # ------------------------------------------------ v7.3 probe
+    def start_boot_probe(self):
+        """Start the once-per-boot ElevenLabs re-probe IN THE
+        BACKGROUND (v7.3) and return at once.
+
+        Until v7.2 the re-probe ran INSIDE the first say() of
+        the boot that missed the fixed-line cache: the block
+        lifted for one real network attempt on the speech
+        path itself. On the owner's hotspot a 402 round-trip
+        takes seconds, and in the field (2026-11-16 07:51
+        IST) it landed on the wake ack — say() overran its
+        budget 13 s > 11 s before google-tts could speak.
+        The probe now runs on a daemon thread: speech NEVER
+        waits for it. While the block stands, say() skips
+        ElevenLabs at zero cost and the sticky engine speaks;
+        if the probe finds the account alive (he bought
+        credits), it clears the block and ElevenLabs returns
+        from the NEXT reply. Called once by nalox.py at boot;
+        a no-op unless a persisted block armed it."""
+        if not self._el_probe_armed:
+            return
+        self._el_probe_armed = False
+        try:
+            threading.Thread(target=self._run_boot_probe,
+                             daemon=True,
+                             name="nalox-el-probe").start()
+        except Exception:
+            pass
+
+    def _run_boot_probe(self):
+        """The probe itself: ONE tiny synthesis (a single
+        character — the cheapest call that exercises the
+        exact TTS path the breaker guards), never played
+        aloud. A 401/402 keeps the block (the account is
+        still dead; the boot already logged that line once,
+        so this stays quiet). A success clears the block +
+        the persisted copy, so the custom voice reclaims
+        first place from the next reply. Any other failure
+        (network down, timeout) keeps the block too — the
+        probe only ever PROVES life, it never punishes."""
+        key = (self.cfg.get("elevenlabs_api_key") or "").strip()
+        if not key or self._el_persisted is None:
+            return
+        if self._el_persisted[1] != _key_fingerprint(key):
+            return  # a different key — the block is not its
+        try:
+            self._synth_elevenlabs(".", False)
+        except _ElevenLabsUnavailable:
+            log.info("[voice] ElevenLabs still unavailable "
+                     "(boot probe) — staying on the working "
+                     "voice")
+            return
+        except Exception:
+            return
+        self._eleven_down = None
+        self._el_persisted = None
+        # ElevenLabs RECLAIMS first place (the pre-v7.3
+        # in-say probe did this by speaking the line itself
+        # and being recorded good): without this, the sticky
+        # engine would keep winning step 1 of every reply
+        # and the custom voice would never be tried again.
+        # His voice speaks every language class, so it
+        # becomes the remembered starter for all of them.
+        _lg = self._vstate.setdefault("last_good", {})
+        for _cls in _VOICE_CLASSES:
+            _lg[_cls] = "elevenlabs"
+        if "eleven_down" in self._vstate:
+            del self._vstate["eleven_down"]
+        self._persist_vstate()
+        line = ("[voice] ElevenLabs is back — your custom "
+                "voice returns from the next reply")
+        log.info(line)
+        _lb("VOICE", line)
 
     def _persist_vstate(self):
         _save_voice_state(self._vstate)
@@ -1032,18 +1109,13 @@ class Speaker:
             winmm.mciSendStringW("close nalox", None, 0, None)
 
     # ---------- ElevenLabs (online, top priority when key is set) ----------
-    def _speak_elevenlabs(self, text, robot):
-        """Arjun's own voice. Returns "done"/"interrupted".
+    def _synth_elevenlabs(self, text, robot):
+        """Synthesize with ElevenLabs -> (pcm, play_rate).
 
-        The audio is requested as raw PCM (pcm_22050) and played via
-        sounddevice — with robot OFF (the v4.1 default) the samples
-        are played EXACTLY as generated: his voice, untouched. (PCM
-        rather than mp3 because no mp3 decoder ships with the
-        installed packages, and PCM playback is interruptible via
-        sd.stop().) With robot ON, the dormant _robotize applies its
-        subtle 0.30 layer first. If sounddevice playback fails, the
-        samples are written to a WAV and played with winsound.
-        """
+        v7.3: split out of _speak_elevenlabs so the boot
+        re-probe can test the account WITHOUT playing
+        anything aloud. Raises _ElevenLabsUnavailable on a
+        401/402, exactly as the speaking path always did."""
         import requests
         key = (self.cfg.get("elevenlabs_api_key") or "").strip()
         voice_id = (self.cfg.get("elevenlabs_voice_id") or "").strip()
@@ -1081,6 +1153,21 @@ class Speaker:
         self._cache_store_fixed(
             "elevenlabs", text, voice_id,
             wav_samples=pcm, wav_rate=play_rate)
+        return pcm, play_rate
+
+    def _speak_elevenlabs(self, text, robot):
+        """Arjun's own voice. Returns "done"/"interrupted".
+
+        The audio is requested as raw PCM (pcm_22050) and played via
+        sounddevice — with robot OFF (the v4.1 default) the samples
+        are played EXACTLY as generated: his voice, untouched. (PCM
+        rather than mp3 because no mp3 decoder ships with the
+        installed packages, and PCM playback is interruptible via
+        sd.stop().) With robot ON, the dormant _robotize applies its
+        subtle 0.30 layer first. If sounddevice playback fails, the
+        samples are written to a WAV and played with winsound.
+        """
+        pcm, play_rate = self._synth_elevenlabs(text, robot)
         try:
             return self._play_samples_interruptible(pcm, play_rate)
         except Exception as exc:
@@ -1634,9 +1721,11 @@ class Speaker:
         ineligible (no key, parked, robot-gated, already
         failed this reply) or it failed — with exactly the
         bookkeeping the linear chain always did (spoken
-        lines, breaker notes, failure lines). force=True is
-        the ElevenLabs boot re-probe: it bypasses the
-        persisted/session block for this one attempt."""
+        lines, breaker notes, failure lines). force=True
+        bypasses the ElevenLabs block for one attempt (the
+        pre-v7.3 in-say() re-probe used it; the background
+        probe now works through _synth_elevenlabs instead,
+        and no production caller passes force anymore)."""
         if engine == "elevenlabs":
             # 1) ElevenLabs — Arjun's own voice, English +
             # Bengali. v4.8: skipped entirely once the breaker
@@ -1770,14 +1859,18 @@ class Speaker:
         """The say() body: engines in canonical order —
         except where v6.7 D's persisted health says otherwise:
 
-          step 0 — the armed ElevenLabs boot re-probe (once
-          per boot, only when a persisted block exists for
-          THIS key): the block lifts for one attempt; a 402
-          re-trips it, a success clears it for good.
           step 1 — this language class's remembered engine
           (the one that worked last session) goes first.
           step 2 — the canonical chain, skipping anything
           already tried above.
+
+        v7.3: there is NO step 0 anymore. The ElevenLabs boot
+        re-probe left the speech path (see start_boot_probe):
+        while the 401/402 block stands — tripped this session
+        or restored from the persisted state — _try_engine
+        skips ElevenLabs instantly (zero network, zero wait)
+        and the sticky engine speaks. The background probe is
+        the only thing that can clear the block mid-session.
 
         Every success is recorded into the persisted state;
         barge-in/budget semantics are say()'s, unchanged."""
@@ -1790,12 +1883,12 @@ class Speaker:
         tried = set()
         with self._lock:
             # v7.1: a FIXED line with a cached rendering
-            # plays from disk — before the re-probe and the
-            # whole chain, so a cached greeting never pays a
-            # doomed ElevenLabs 402 round-trip to rediscover
-            # what it already knows. Breaker-neutral (no
-            # _record_good, no breaker notes); a playback
-            # failure falls through to the live chain.
+            # plays from disk — before the whole chain, so a
+            # cached greeting never pays a doomed ElevenLabs
+            # 402 round-trip to rediscover what it already
+            # knows. Breaker-neutral (no _record_good, no
+            # breaker notes); a playback failure falls through
+            # to the live chain.
             if self._fixed_active and not robot:
                 _hit = self._fixed_cache_lookup(
                     text, lang, lclass, is_bengali)
@@ -1805,21 +1898,6 @@ class Speaker:
                             _hit[0], _hit[1], text)
                     except Exception:
                         pass
-            if self._el_probe_armed:
-                self._el_probe_armed = False
-                _el_key = (self.cfg.get("elevenlabs_api_key")
-                           or "").strip()
-                if _el_key and self._el_persisted is not None \
-                        and self._el_persisted[1] == \
-                        _key_fingerprint(_el_key):
-                    self._eleven_down = None
-                    result = self._try_engine(
-                        "elevenlabs", text, lang, robot,
-                        is_bengali, force=True)
-                    tried.add("elevenlabs")
-                    if result is not None:
-                        self._record_good("elevenlabs", lclass)
-                        return result
             pref = (self._vstate.get("last_good")
                     or {}).get(lclass)
             if pref and pref not in tried:

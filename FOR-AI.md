@@ -462,3 +462,76 @@ suite (test_v71's self-contained fixtures — fake zips,
 formatter samples — untouched). Frozen as ever:
 brain/providers, Bengali-only replies, phone app,
 Telegram, exit codes, wake models + fuzzy matching.
+
+## v7.3 "Instant Answers" — fast brain model, command race, no 402 tax (2026-11-16)
+
+The owner's direct order (2026-11-16 07:58 IST): change
+the brain so Nalox answers INSTANTLY — he dislikes the
+current brain's slowness. The morning's synced log
+(07:51:46, sha fb96904d) showed v7.2's first full voice
+round-trip (heard "nalox, open the chrome", Chrome
+opened, Bengali reply) with timing wake→record 15.4 s,
+transcribe 23.6 s, brain 0.1 s, speak 3.5 s — plus the
+wake ack's say() overrunning its budget (13 s > 11 s).
+Three of those four numbers are this release; the
+07:50:14 exit-code-1 crash is NOT (no traceback in the
+sync yet — do not invent a fix for it).
+
+- BRAIN SPEED (brain.py + config.py + patch_config.py):
+  the brain stays Groq-only, but the PRIMARY model is
+  now llama-3.1-8b-instant. The walk had remembered
+  openai/gpt-oss-120b (a reasoning model, slow first
+  token); the shipped order is instant -> llama-3.3-70b-
+  versatile -> gpt-oss-120b -> qwen/qwen3-32b, in config
+  DEFAULTS and patch-if-absent. A remembered gpt-oss-120b
+  is STALE for this release: patch_config migrates the
+  persisted groq_model (and the groq_models list when it
+  is exactly the old shipped list), and brain.py's
+  _model_candidates re-orders the walk to the shipped
+  order whenever the stale model would head it (the
+  shipped primary leads even if a hand-edited list lacks
+  it; other remembered models keep winning). Both the
+  agent path (_agent_openai_walk) and plain chat
+  (_plain_chat) ride _model_candidates, so both changed.
+  Ollama remains the silent offline last resort.
+- COMMAND RACE (ears.py transcribe_command_best): the
+  old path walked cloud ears SERIALLY (Gemini up to 6 s,
+  then Groq Whisper up to 6 s) and only then started the
+  local decode (12 s worker deadline) — worst case ~24 s
+  ≈ the field's 23.6 s. Now the local decode and the
+  cloud walk run on parallel daemon threads and the
+  FIRST VALID result wins; the loser is abandoned, never
+  awaited. All guards unchanged (cloud garbage/script/
+  echo checks inside _cloud_transcribe, the local policy
+  as-is, both deadlines as-is). cloud_ears="off" or no
+  cloud key keeps the exact old local-only path. The
+  wake path never comes here (F1–F4 untouched).
+- NO 402 TAX (voice.py + nalox.py): the ElevenLabs boot
+  re-probe left say(). It used to run inside the boot's
+  first uncached utterance — on his hotspot the doomed
+  402 round-trip cost seconds on the wake ack itself.
+  _speak_elevenlabs is split into _synth_elevenlabs +
+  playback; nalox.py calls speaker.start_boot_probe() at
+  boot, which runs ONE tiny background synthesis ("."):
+  a 402 keeps the block quietly, a success clears the
+  block + persisted state so the custom voice returns
+  from the next reply. While the block stands, say()
+  makes ZERO ElevenLabs calls — _try_engine skips it
+  instantly and the sticky engine speaks.
+- VISIBLE CHANGE (brain.py brain_status_line): once a
+  model has answered this session, the Command Center
+  brain line names it — "Brain: Groq · llama-3.1-8b-
+  instant ⚡" — fed by _working_models, recorded in
+  _remember_working_model on EVERY success (head answers
+  included; the persist still only happens on change).
+  Before the first answer the line is the plain
+  "Brain: Groq ✓". The one-time "✅ Updated to v7.3"
+  banner is the standard v7.1 mechanism (its Bengali
+  headline text is unchanged — test_v71 pins it).
+Tests: test_v73 (new) + the full battery. Intentional
+re-pins: test_v67 D1 (the re-probe is background now —
+say() pays nothing; the probe's keep/clear behaviour is
+pinned in test_v73 instead) and the functional version-
+needle sweep 7.2 -> 7.3 in every suite. Frozen as ever:
+providers (Groq-only), Bengali-only replies, phone app,
+Telegram, exit codes, wake lane.

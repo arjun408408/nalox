@@ -3809,39 +3809,120 @@ def _cloud_transcribe(audio_f32, cfg):
     return None
 
 
+# ------------------------------------------------------------- v7.3
+# THE COMMAND RACE. Diagnosis (from the code + the field log
+# of 2026-11-16 07:51 IST, transcribe = 23.6 s): the old
+# transcribe_command_best walked its ears SERIALLY — the
+# Gemini audio attempt could burn its whole 6 s cap (from the
+# owner's hotspot Gemini is effectively dead: ReadTimeout),
+# then the Groq Whisper attempt up to 6 s more (429 retries
+# included), and only THEN did the local decode start, under
+# its 12 s worker deadline. Worst case 6 + 6 + 12 = 24 s ≈
+# the 23.6 s he lived. The ears were never slow one by one;
+# they were QUEUED behind each other's timeouts.
+#
+# The fix races them: the local decode (worker process via
+# local_fn, or the in-process policy) starts IMMEDIATELY on
+# its own thread, the cloud walk runs on a second thread, and
+# the FIRST VALID result wins — a valid cloud transcript
+# returns the moment it lands, a finished local decode is
+# never left waiting behind a dying cloud attempt. Total time
+# is ≈ the winner's time, never the sum. The loser is
+# abandoned, not awaited: the cloud thread is a daemon whose
+# HTTP calls end inside their own caps and drop their result
+# into a queue nobody reads; an abandoned local job simply
+# finishes inside the worker, whose next command is a full
+# conversation turn away. EVERY guard is unchanged — the
+# cloud transcript still passes _cloud_transcribe's garbage /
+# script / echo checks, the local text still comes from the
+# guarded local policy, and both sides keep their existing
+# deadlines (cloud caps, COMMAND_TX_DEADLINE). The wake path
+# does not come here at all (F1–F4 untouched).
+_COMMAND_RACE_CAP_S = 30.0  # both ears together, worst case
+
+
 def transcribe_command_best(audio_f32, model_name, cfg,
                             initial_prompt=None, local_fn=None):
     """THE command transcription entry point (v5.1).
 
     Returns (text, language, source) — source says which ear
     produced the final text: "cloud:gemini" / "cloud:groq" /
-    "local". Cloud ears are tried first when config cloud_ears
-    is not "off"; ANY cloud failure lands on the local policy,
-    so a command that local hearing can read is never lost.
+    "local". Cloud ears join when config cloud_ears is not
+    "off" and a cloud key exists; ANY cloud failure lands on
+    the local policy, so a command that local hearing can
+    read is never lost.
 
     v6.2: the local policy itself runs in the worker PROCESS
     — callers with an Ears instance pass local_fn (Ears
     ._local_command, hard 12 s deadline); without one, the
-    policy runs in-process (the worker's own "command" job
-    lands here, and so do direct test calls)."""
+    policy runs in-process (direct test calls land here; the
+    worker's own "command" job calls transcribe_command
+    directly and never races itself).
+
+    v7.3: cloud and local RACE (see the block above) — the
+    first valid transcript wins instead of the serial walk."""
     cfg = cfg or {}
     mode = str(cfg.get("cloud_ears") or "auto").strip().lower()
-    if mode != "off":
+
+    def _local():
+        if local_fn is not None:
+            return local_fn(audio_f32, model_name,
+                            initial_prompt)
+        return transcribe_command(audio_f32, model_name,
+                                  initial_prompt)
+
+    if mode == "off" or cloud_ear_provider(cfg) is None:
+        # No cloud ear can run (switched off, or no key):
+        # exactly the old local-only path, no threads.
+        text, lang = _local()
+        return text, lang, "local"
+
+    outcomes = queue.Queue()
+
+    def _cloud_job():
         try:
             got = _cloud_transcribe(audio_f32, cfg)
         except Exception as exc:  # _cloud_transcribe is guarded
             log.warning("Cloud ears failed (%s) — local "
                         "Whisper takes over", exc)
             got = None
-        if got:
-            return got
-    if local_fn is not None:
-        text, lang = local_fn(audio_f32, model_name,
-                              initial_prompt)
-    else:
-        text, lang = transcribe_command(audio_f32, model_name,
-                                        initial_prompt)
-    return text, lang, "local"
+        outcomes.put(("cloud", got))
+
+    def _local_job():
+        try:
+            outcomes.put(("local", _local()))
+        except Exception as exc:
+            log.warning("Local command transcription failed "
+                        "in the race: %s: %s",
+                        type(exc).__name__, exc)
+            outcomes.put(("local", ("", "en")))
+
+    threading.Thread(target=_cloud_job, daemon=True,
+                     name="nalox-cloud-ear").start()
+    threading.Thread(target=_local_job, daemon=True,
+                     name="nalox-local-ear").start()
+    _deadline = time.monotonic() + _COMMAND_RACE_CAP_S
+    _local_done = None
+    _pending = 2
+    while _pending > 0:
+        _left = _deadline - time.monotonic()
+        if _left <= 0:
+            break
+        try:
+            _kind, _got = outcomes.get(timeout=_left)
+        except queue.Empty:
+            break
+        _pending -= 1
+        if _kind == "cloud":
+            if _got:
+                return _got
+        else:
+            if _got and _got[0]:
+                return _got[0], _got[1], "local"
+            _local_done = _got
+    if _local_done:
+        return _local_done[0], _local_done[1], "local"
+    return "", "en", "local"
 
 
 def _nalox_is_speaking():

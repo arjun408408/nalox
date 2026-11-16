@@ -176,7 +176,16 @@ DEFAULTS = {
     "briefing_on_startup": False,
     # --- v3 expansion: agent brain (Groq) + news in the briefing ---
     "groq_api_key": "",
-    "groq_model": "llama-3.3-70b-versatile",
+    # --- v7.3: the PRIMARY Groq model is llama-3.1-8b-instant
+    # — the owner's order (2026-11-16 07:58 IST): the brain
+    # must answer INSTANTLY. The model the walk had remembered
+    # in the field, openai/gpt-oss-120b, is a reasoning model
+    # whose first token is slow; the 8b-instant replies at
+    # once. The bigger models stay as walk fallbacks behind
+    # it. A remembered gpt-oss-120b is treated as STALE by
+    # this release (see brain._GROQ_STALE_REMEMBERED and the
+    # patch_config migration): the shipped order rules. ---
+    "groq_model": "llama-3.1-8b-instant",
     # --- v6.5: MODEL CANDIDATE LISTS — providers retire model
     # names without asking (field log 2026-11-15 18:44 IST:
     # Gemini answered a VALID key with 404 "gemini-2.5-flash is
@@ -189,9 +198,9 @@ DEFAULTS = {
     # provider call, and REMEMBERS the model that worked
     # (written back to the single *_model key) so later calls
     # go straight to it. ---
-    "groq_models": ["llama-3.3-70b-versatile",
+    "groq_models": ["llama-3.1-8b-instant",
+                    "llama-3.3-70b-versatile",
                     "openai/gpt-oss-120b",
-                    "llama-3.1-8b-instant",
                     "qwen/qwen3-32b"],
     # --- v4.8: GEMINI brain (Google AI Studio) — one FREE key,
     # reached through Gemini's OpenAI-compatible endpoint with

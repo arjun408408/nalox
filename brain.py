@@ -846,6 +846,23 @@ _MODEL_WALK_PROVIDERS = {
     "ollama": ("ollama_model", "ollama_models"),
 }
 
+# ------------------------------------------------------------- v7.3
+# THE STALE REMEMBERED MODEL. The walk remembered
+# openai/gpt-oss-120b in the field (2026-11-15 19:23 IST) and
+# has headed every Groq call with it since — but gpt-oss-120b
+# is a REASONING model: its first token is slow, and the owner
+# ordered instant answers (2026-11-16 07:58 IST: "brain-টা
+# ভালো লাগছে না… এমন করো যে time না নেয়, সঙ্গে সঙ্গে answer
+# দেয়"). For this release a remembered gpt-oss-120b is STALE:
+# _model_candidates re-orders the walk to the shipped
+# instant-first order instead of letting the memory head it
+# (the model itself stays a walk candidate, at its shipped
+# position). patch_config migrates the persisted value on
+# update; this rule covers any config that reaches the brain
+# unpatched. The first successful answer re-remembers the
+# winner, so the memory self-heals.
+_GROQ_STALE_REMEMBERED = "openai/gpt-oss-120b"
+
 
 def _model_error_snippet(status, resp):
     """The error snippet when this HTTP failure is a DEAD
@@ -2033,6 +2050,15 @@ class Brain:
         # two runs can never interleave.
         self._validate_lock = threading.Lock()
         self._last_agent_fail = None
+        # v7.3: the model that actually ANSWERED, per walk
+        # provider, this session — recorded by
+        # _remember_working_model on every success (head
+        # answers included). brain_status_line shows it in
+        # the Command Center ("Brain: Groq · <model> ⚡") so
+        # the owner can SEE which brain is talking; empty
+        # until the first answer, where the line falls back
+        # to the plain validated form.
+        self._working_models = {}
         # v6.8: tools executed so far in this process — the
         # ACT-DON'T-NARRATE guard snapshots it around a
         # provider call (see _agent_openai_compatible).
@@ -5644,6 +5670,36 @@ class Brain:
                 name = str(item or "").strip()
                 if name and name not in out:
                     out.append(name)
+        if provider == "groq" and out \
+                and out[0] == _GROQ_STALE_REMEMBERED:
+            # v7.3: the remembered reasoning model never heads
+            # the walk again — the shipped instant-first order
+            # rules; every configured candidate (the stale one
+            # included, at its shipped position) stays in the
+            # walk, and hand-added names keep their order after
+            # the shipped ones.
+            shipped = []
+            for item in (_defaults.get(list_key) or []):
+                name = str(item or "").strip()
+                if name and name not in shipped:
+                    shipped.append(name)
+            reordered = []
+            # The shipped primary heads the walk even when a
+            # hand-edited list never contained it — the stale
+            # memory is the only reason we are here, and the
+            # shipped order rules means the instant model
+            # leads, full stop. (If the name is dead for his
+            # key, the walk's model-not-found step moves on,
+            # as it always has.)
+            primary = str(_defaults.get(single_key)
+                          or "").strip()
+            if primary:
+                reordered.append(primary)
+            reordered += [m for m in shipped
+                          if m in out and m not in reordered]
+            reordered += [m for m in out if m not in reordered]
+            if reordered:
+                out = reordered
         return out
 
     def _remember_working_model(self, provider, model, label):
@@ -5655,6 +5711,11 @@ class Brain:
         keys = _MODEL_WALK_PROVIDERS.get(provider)
         if keys is None or not model:
             return
+        # v7.3: the in-memory record happens for EVERY answer
+        # (even when the model is already the remembered one
+        # and nothing needs persisting) — the Command Center's
+        # brain line reads it.
+        self._working_models[provider] = model
         single_key = keys[0]
         if str(self.cfg.get(single_key) or "").strip() == model:
             return
@@ -5690,6 +5751,15 @@ class Brain:
         if mode == "ollama":
             return "Brain: Ollama (local)"
         if state == "ok":
+            # v7.3: once a model has actually ANSWERED this
+            # session, the line names it — the owner can see
+            # the instant brain is the one talking ("Brain:
+            # Groq · llama-3.1-8b-instant ⚡"). Before the
+            # first answer the plain validated form stands.
+            _wm = (getattr(self, "_working_models", None)
+                   or {}).get(mode)
+            if _wm:
+                return f"Brain: {label} · {_wm} ⚡"
             return f"Brain: {label} ✓"
         if state == "rejected":
             m = re.search(r"HTTP (\d{3})", detail)
@@ -6865,7 +6935,7 @@ class Brain:
             reply = self._agent_openai_compatible(
                 text, "https://api.groq.com/openai/v1", groq_key,
                 self.cfg.get("groq_model",
-                             "llama-3.3-70b-versatile"),
+                             "llama-3.1-8b-instant"),
                 label="Groq", provider="groq")
             if reply:
                 _lb("BRAIN", "Groq answered")
@@ -7024,7 +7094,7 @@ class Brain:
         # v6.5/v6.6 machinery, unchanged.
         for cfg_key, base_url, model_key, model_default, label, prov in (
                 ("groq_api_key", "https://api.groq.com/openai/v1",
-                 "groq_model", "llama-3.3-70b-versatile", "Groq", "groq"),):
+                 "groq_model", "llama-3.1-8b-instant", "Groq", "groq"),):
             api_key = (self.cfg.get(cfg_key) or "").strip()
             if not api_key or self._provider_rejected(prov):
                 continue
@@ -7089,9 +7159,13 @@ class Brain:
                         reply = self._guard_reply(reply, label,
                                                   writing=writing)
                         if reply:
-                            if _cand != _candidates[0]:
-                                self._remember_working_model(
-                                    prov, _cand, label)
+                            # v7.3: unconditional — the call
+                            # records the answering model in
+                            # memory even when it is already
+                            # the remembered head (nothing is
+                            # persisted then; see the method).
+                            self._remember_working_model(
+                                prov, _cand, label)
                             _lb("BRAIN", f"{label} answered (plain chat)")
                             return reply
                         break
@@ -7156,9 +7230,10 @@ class Brain:
                     reply = self._guard_reply(reply, "Ollama",
                                               writing=writing)
                     if reply:
-                        if _cand != _candidates[0]:
-                            self._remember_working_model(
-                                "ollama", _cand, "Ollama")
+                        # v7.3: unconditional (see the Groq
+                        # site above).
+                        self._remember_working_model(
+                            "ollama", _cand, "Ollama")
                         _lb("BRAIN", "Ollama answered (plain chat)")
                         return reply
                     break  # guard rejected it — provider failure
@@ -7219,9 +7294,9 @@ class Brain:
                              cand, candidates[idx + 1])
                 continue
             if reply:
-                if cand != candidates[0]:
-                    self._remember_working_model(
-                        "ollama", cand, "Ollama")
+                # v7.3: unconditional (see _plain_chat).
+                self._remember_working_model(
+                    "ollama", cand, "Ollama")
                 return reply
             return None  # a real failure — the impl logged it
         # Every candidate was a name Ollama has not pulled:
@@ -7426,9 +7501,11 @@ class Brain:
                              candidates[idx + 1])
                 continue
             if reply:
-                if cand != candidates[0]:
-                    self._remember_working_model(
-                        provider, cand, label)
+                # v7.3: unconditional — a head answer records
+                # the working model in memory too (the persist
+                # inside still only happens on a change).
+                self._remember_working_model(
+                    provider, cand, label)
                 return reply
             return None  # a real provider failure — impl logged it
         # Every candidate was a dead name: ONE failure line.

@@ -1153,6 +1153,15 @@ def main():
     log.info("=== Nalox starting for %s ===", cfg["user_name"])
 
     speaker = Speaker(cfg)
+    # v7.3: the ElevenLabs boot re-probe runs in the
+    # BACKGROUND (voice.start_boot_probe) — if last session's
+    # 402 block persisted, one tiny background synthesis
+    # checks whether he bought credits, while speech goes
+    # straight to the working voice and never waits for it.
+    try:
+        speaker.start_boot_probe()
+    except Exception:
+        pass
     ears = Ears(cfg)
     brain = Brain(cfg, speaker)
 

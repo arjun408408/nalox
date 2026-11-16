@@ -95,9 +95,12 @@ PATCH_IF_ABSENT = {
                       "gemini-2.0-flash",
                       "gemini-2.5-flash-lite",
                       "gemini-flash-latest"],
-    "groq_models": ["llama-3.3-70b-versatile",
+    # v7.3: the candidate order is instant-first now (see
+    # GROQ_MODEL_STALE_REMEMBERED below) — an install missing
+    # the key gets the new order.
+    "groq_models": ["llama-3.1-8b-instant",
+                    "llama-3.3-70b-versatile",
                     "openai/gpt-oss-120b",
-                    "llama-3.1-8b-instant",
                     "qwen/qwen3-32b"],
     "openrouter_models": [],
     # v6.7: an install missing the command-model key gets the
@@ -203,6 +206,32 @@ COMMAND_MODEL_NEW_DEFAULT = "large-v3-turbo"
 WAKE_THREADS_OLD_DEFAULT = 2
 WAKE_THREADS_NEW_DEFAULT = 4
 
+# v7.3 Groq-model migration, same shape as the ones above —
+# with one difference: the value being migrated was not
+# written by a patch, it was REMEMBERED by the brain's model
+# walk (v6.5) after openai/gpt-oss-120b answered in the field
+# (2026-11-15 19:23 IST) and has headed every call since.
+# gpt-oss-120b is a reasoning model — its first token is
+# slow — and the owner ordered instant answers (2026-11-16
+# 07:58 IST), so a config still holding it as groq_model
+# holds a stale walk memory, not a deliberate pick (no
+# Settings control ever offered it), and it migrates to the
+# instant model. The candidate LIST migrates too, but only
+# when it is exactly the old shipped list — a list he edited
+# by hand is his and is preserved (brain.py's stale-head
+# rule still re-orders the walk at runtime in that case).
+# ANY other groq_model value is preserved untouched.
+GROQ_MODEL_STALE_REMEMBERED = "openai/gpt-oss-120b"
+GROQ_MODEL_NEW_DEFAULT = "llama-3.1-8b-instant"
+GROQ_MODELS_OLD_SHIPPED = ["llama-3.3-70b-versatile",
+                           "openai/gpt-oss-120b",
+                           "llama-3.1-8b-instant",
+                           "qwen/qwen3-32b"]
+GROQ_MODELS_NEW_SHIPPED = ["llama-3.1-8b-instant",
+                           "llama-3.3-70b-versatile",
+                           "openai/gpt-oss-120b",
+                           "qwen/qwen3-32b"]
+
 
 def main():
     if not os.path.exists(CONFIG_PATH):
@@ -259,6 +288,20 @@ def main():
             "owner lifted the CPU constraint, so the wake lane "
             "gets more headroom; a user-set value would have "
             "been kept)")
+    if cfg.get("groq_model") == GROQ_MODEL_STALE_REMEMBERED:
+        cfg["groq_model"] = GROQ_MODEL_NEW_DEFAULT
+        changed.append(
+            f"groq_model={GROQ_MODEL_NEW_DEFAULT} "
+            "(v7.3: the walk-remembered reasoning model "
+            "migrated to the instant one — the owner ordered "
+            "instant answers; a user-set value would have "
+            "been kept)")
+    if cfg.get("groq_models") == GROQ_MODELS_OLD_SHIPPED:
+        cfg["groq_models"] = GROQ_MODELS_NEW_SHIPPED
+        changed.append(
+            "groq_models=instant-first "
+            "(v7.3: the shipped candidate order migrated; a "
+            "hand-edited list would have been kept)")
     if not changed:
         print("[patch] config.json already up to date.")
         return
