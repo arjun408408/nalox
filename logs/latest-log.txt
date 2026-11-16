@@ -1,36 +1,10 @@
 Nalox log sync
 Version: 8.0
-Synced: 2026-11-16 18:21:56 (laptop local time)
+Synced: 2026-11-16 18:32:06 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-09:10:29 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-09:10:29 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-09:10:29 [SYSTEM] [ready] Say 'Nalox' to wake me
-09:10:29 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-09:10:29 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-09:10:41 [SYSTEM] [dashboard] Command Center closed.
-09:10:54 [BRAIN] [brainbench] Brain Test started — 11 candidates, 3 Bengali prompts each
-09:10:55 [BRAIN] [brainbench] Groq · llama-3.1-8b-instant — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"The model `llama-3.1-8b-instant` doe
-09:10:56 [BRAIN] [brainbench] Groq · llama-3.3-70b-versatile — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"The model `llama-3.3-70b-versatile`
-09:11:02 [BRAIN] [brainbench] Groq · openai/gpt-oss-120b — ok 3/3 · first token 2.11s · reply 2.09s · Bengali 0% · guards ✗
-09:11:04 [BRAIN] [brainbench] Groq · qwen/qwen3-32b — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"The model `qwen/qwen3-32b` does not
-09:11:10 [BRAIN] [brainbench] OpenRouter · anthropic/claude-sonnet-4.5 — failed 0/3 · RuntimeError: HTTP 401 {"error":{"message":"Missing Authentication header","code
-09:11:10 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:11:15 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2 — failed 0/3 · RuntimeError: HTTP 401 {"error":{"message":"Missing Authentication header","code
-09:11:16 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2:free — failed 0/3 · RuntimeError: HTTP 401 {"error":{"message":"Missing Authentication header","code
-09:11:18 [BRAIN] [brainbench] Ollama · llama3.1 — failed 0/3 · RuntimeError: HTTP 404
-09:11:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=2 short=0 peak=0.1843 dec=10 (t4 b0 s6 r0) dmax=16.0s
-09:11:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:11:35 [BRAIN] [brainbench] Ollama · qwen3:8b — failed 0/3 · ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (
-09:11:37 [BRAIN] [brainbench] Ollama · qwen2.5:7b — failed 0/3 · RuntimeError: HTTP 404
-09:11:39 [BRAIN] [brainbench] Ollama · llama3.1:8b — failed 0/3 · RuntimeError: HTTP 404
-09:11:39 [BRAIN] [brainbench] Brain Test done in 48s — fastest full pass: groq · openai/gpt-oss-120b (first token 2.11s)
-09:12:01 [SYSTEM] [logsync] log sent
-09:12:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=3 short=0 peak=0.0997 dec=14 (t12 b0 s2 r0) dmax=13.0s
-09:12:32 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-09:12:51 [SYSTEM] [dashboard] Command Center closed.
 09:12:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 09:13:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=0 short=0 peak=0.1941 dec=13 (t8 b0 s5 r0) dmax=10.0s
 09:14:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
@@ -1497,6 +1471,32 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 18:20:52 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 18:20:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 18:21:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=19 blip=1 short=0 peak=0.1585 dec=17 (t16 b0 s1 r0) dmax=8.0s
+18:22:01 [SYSTEM] [logsync] log sent
+18:22:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=12 blip=4 short=0 peak=0.0523 dec=10 (t10 b0 s0 r0) dmax=0.3s
+18:22:17 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:22:18 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:23:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=0 short=0 peak=0.0438 dec=15 (t15 b0 s0 r0) dmax=8.0s
+18:23:28 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:23:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:24:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=0 short=0 peak=0.2424 dec=13 (t13 b0 s0 r0) dmax=8.0s
+18:24:50 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:25:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=0 short=0 peak=0.1562 dec=10 (t10 b0 s0 r0) dmax=12.6s
+18:25:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:25:59 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:26:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=0 short=0 peak=0.0912 dec=13 (t13 b0 s0 r0) dmax=9.1s
+18:27:00 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:27:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=16 blip=2 short=0 peak=0.1512 dec=14 (t13 b0 s1 r0) dmax=5.3s
+18:27:44 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:28:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=2 short=0 peak=0.0509 dec=11 (t11 b0 s0 r0) dmax=8.0s
+18:28:24 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:28:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:29:11 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:29:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=1 short=0 peak=0.0542 dec=12 (t11 b0 s1 r0) dmax=10.0s
+18:29:42 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:30:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=17 blip=1 short=0 peak=0.0322 dec=17 (t17 b0 s0 r0) dmax=0.0s
+18:30:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:31:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=13 blip=3 short=0 peak=0.0827 dec=9 (t9 b0 s0 r0) dmax=8.0s
+18:31:48 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
