@@ -1,67 +1,10 @@
 Nalox log sync
-Version: 7.3
-Synced: 2026-11-16 08:36:30 (laptop local time)
+Version: 7.4
+Synced: 2026-11-16 09:11:56 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:43:04 [WAKE] [wake] wake word heard
-14:43:04 [NALOX] NALOX: Yes Sir, I'm coming for you.
-14:43:04 [BRAIN] [tool] open_app {'name': 'settings'}
-14:43:07 [VOICE] via pyttsx3: Yes Sir, I'm coming for you.
-14:43:07 [YOU] [mic] heard: open tax manager
-14:43:07 [NALOX] NALOX: Sorry, I could not find tax manager on this laptop.
-14:43:08 [BRAIN] [tool] open_app {'name': 'control panel'}
-14:43:10 [BRAIN] [tool] press_key {'key': 'win'}
-14:43:14 [BRAIN] FreeLLMAPI answered
-14:43:16 [VOICE] via edge-tts: Sorry, I could not find tax manager on this laptop.
-14:43:16 [SYSTEM] [timing] wake→record 5.1s, transcribe 0.6s, brain 0.0s, speak 9.4s
-14:43:16 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:43:19 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-14:43:21 [VOICE] via pyttsx3: <dots_function_call> <invoke name="type_text"> <parameter name="text">power options </parameter> </invoke> </dots_function_call>
-14:43:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-14:44:07 [MIC] [heard] अपें तेकस नोथ, तेकस ताकस ताकस वानेजर
-14:44:08 [MIC] [heard] nalox, opentax manager
-14:44:08 [MIC] [mic] wake word heard
-14:44:08 [WAKE] [wake] wake word heard
-14:44:08 [NALOX] NALOX: Yes Sir, I'm coming for you.
-14:44:11 [VOICE] via pyttsx3: Yes Sir, I'm coming for you.
-14:44:11 [YOU] [mic] heard: opentax manager
-14:44:17 [BRAIN] [tool] open_app {'name': 'task manager'}
-14:44:19 [BRAIN] FreeLLMAPI answered
-14:44:19 [NALOX] NALOX: Task Manager is open, sir. What would you like me to do with it?
-14:44:33 [VOICE] via edge-tts: Task Manager is open, sir. What would you like me to do with it?
-14:44:33 [SYSTEM] [timing] wake→record 5.7s, transcribe 0.7s, brain 7.7s, speak 13.8s
-14:44:33 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:44:39 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:44:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-14:45:15 [VOICE] via edge-tts: Standing by, sir. Call me anytime.
-14:45:19 [SYSTEM] [ears] transcription stuck — listening continues
-14:45:36 [VOICE] via edge-tts: Opening task manager.
-14:45:41 [MIC] [heard] nalox, close, dinalox
-14:45:41 [MIC] [mic] wake word heard
-14:45:41 [WAKE] [wake] wake word heard
-14:45:41 [NALOX] NALOX: Yes Sir, I'm coming for you.
-14:45:44 [VOICE] via pyttsx3: Yes Sir, I'm coming for you.
-14:45:44 [YOU] [mic] heard: close, dinalox
-14:45:49 [BRAIN] [tool] press_key {'key': 'alt'}
-14:45:51 [BRAIN] [tool] press_key {'key': 'f4'}
-14:45:54 [BRAIN] [tool] read_my_screen
-14:45:55 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0
-14:45:58 [BRAIN] FreeLLMAPI answered
-14:45:58 [NALOX] NALOX: I see the Nalox Command Center is still open. Let me close it using the window close shortcut. <dots_function_call> <invoke name="press_key"> <parameter name="key"> alt </parameter> </invoke> </dots_function_call>
-14:46:36 [VOICE] via edge-tts: I see the Nalox Command Center is still open. Let me close it using the window close shortcut. <dots_function_call> <invoke name="press_key"> <parameter name="key"> alt </parameter> </invoke> </dots_function_call>
-14:46:36 [SYSTEM] [timing] wake→record 5.8s, transcribe 51.6s, brain 13.6s, speak 38.2s
-14:46:36 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:46:41 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:46:47 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-14:46:47 [VOICE] via pyttsx3: ড্যাশবোর্ড বন্ধ করে দিলাম।
-14:46:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
-14:47:19 [BRAIN] [tool] press_key {'key': 'f4'}
-14:47:21 [BRAIN] FreeLLMAPI answered
-14:47:25 [ERROR] Voice path edge-tts failed: No audio was received. Please verify that your parameters are correct.
-14:47:29 [VOICE] via pyttsx3: Nalox Command Center is closed, sir.
-14:47:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
 14:48:05 [MIC] [heard] ইওেলেরে, কেলের, কের, ঃনরোরর, কেননরেলে, আদেলেলে, ঵োলরর, কেল਋, লেইনর максим provincial নেনরেরনর rewards কেনরর, কেনররনররেনেলর, নেনররেনরে�
 14:48:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
 14:49:15 [MIC] [heard] थाना बुवूवूवूवूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूूू
@@ -1676,11 +1619,49 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 08:34:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=7 short=0 peak=0.0670
 08:35:17 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 08:35:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=1 short=0 peak=0.0700
+08:36:33 [SYSTEM] [logsync] log sent
+08:36:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=9 blip=4 short=0 peak=0.0792
+08:37:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=2 blip=2 short=0 peak=0.0193
+08:38:55 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=5 blip=0 short=0 peak=0.0430
+08:39:11 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
+09:10:21 [VOICE] [voice] starting with google-tts (worked last time)
+09:10:21 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+09:10:21 [SYSTEM] > user: Arjun | lang: en
+09:10:21 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+09:10:21 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+09:10:21 [BRAIN] [brain] Brain: checking…
+09:10:21 [SYSTEM] [prefs] call me: sir | language: bn
+09:10:21 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+09:10:22 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+09:10:22 [SYSTEM] Nalox v7.4 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
+09:10:22 [SYSTEM] [sys] Command Center opened at start
+09:10:22 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+09:10:23 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+09:10:29 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+09:10:29 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+09:10:29 [SYSTEM] [ready] Say 'Nalox' to wake me
+09:10:29 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
+09:10:29 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
+09:10:41 [SYSTEM] [dashboard] Command Center closed.
+09:10:54 [BRAIN] [brainbench] Brain Test started — 11 candidates, 3 Bengali prompts each
+09:10:55 [BRAIN] [brainbench] Groq · llama-3.1-8b-instant — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"The model `llama-3.1-8b-instant` doe
+09:10:56 [BRAIN] [brainbench] Groq · llama-3.3-70b-versatile — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"The model `llama-3.3-70b-versatile`
+09:11:02 [BRAIN] [brainbench] Groq · openai/gpt-oss-120b — ok 3/3 · first token 2.11s · reply 2.09s · Bengali 0% · guards ✗
+09:11:04 [BRAIN] [brainbench] Groq · qwen/qwen3-32b — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"The model `qwen/qwen3-32b` does not
+09:11:10 [BRAIN] [brainbench] OpenRouter · anthropic/claude-sonnet-4.5 — failed 0/3 · RuntimeError: HTTP 401 {"error":{"message":"Missing Authentication header","code
+09:11:10 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+09:11:15 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2 — failed 0/3 · RuntimeError: HTTP 401 {"error":{"message":"Missing Authentication header","code
+09:11:16 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2:free — failed 0/3 · RuntimeError: HTTP 401 {"error":{"message":"Missing Authentication header","code
+09:11:18 [BRAIN] [brainbench] Ollama · llama3.1 — failed 0/3 · RuntimeError: HTTP 404
+09:11:22 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=2 short=0 peak=0.1843 dec=10 (t4 b0 s6 r0) dmax=16.0s
+09:11:25 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+09:11:35 [BRAIN] [brainbench] Ollama · qwen3:8b — failed 0/3 · ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (
+09:11:37 [BRAIN] [brainbench] Ollama · qwen2.5:7b — failed 0/3 · RuntimeError: HTTP 404
+09:11:39 [BRAIN] [brainbench] Ollama · llama3.1:8b — failed 0/3 · RuntimeError: HTTP 404
+09:11:39 [BRAIN] [brainbench] Brain Test done in 48s — fastest full pass: groq · openai/gpt-oss-120b (first token 2.11s)
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
-  File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
-  File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
 
 Thread 0x000067a4 (most recent call first):
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 359 in wait
@@ -1972,3 +1953,6 @@ Thread 0x000065a0 (most recent call first):
 ===== CLEAN EXIT 2026-11-16 07:54:30 — supervisor saw code 42 =====
 
 ===== Nalox boot 2026-11-16 08:24:54 — faulthandler armed =====
+===== CLEAN EXIT 2026-11-16 08:39:11 — supervisor saw code 42 =====
+
+===== Nalox boot 2026-11-16 09:10:21 — faulthandler armed =====
