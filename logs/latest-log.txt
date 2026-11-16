@@ -1,77 +1,10 @@
 Nalox log sync
-Version: 8.0
-Synced: 2026-11-16 18:42:15 (laptop local time)
+Version: 8.1
+Synced: 2026-11-16 18:52:01 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-09:18:40 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-09:18:40 [BRAIN] [brain] Brain: checking…
-09:18:40 [SYSTEM] [prefs] call me: sir | language: bn
-09:18:41 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
-09:18:42 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-09:18:42 [SYSTEM] Nalox v7.4 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-09:18:42 [SYSTEM] [sys] Command Center opened at start
-09:18:42 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-09:18:43 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-09:18:49 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-09:18:49 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-09:18:49 [SYSTEM] [ready] Say 'Nalox' to wake me
-09:18:49 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-09:18:50 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-09:18:59 [SYSTEM] [dashboard] Command Center closed.
-09:19:10 [SYSTEM] [dashboard] Command Center closed.
-09:19:35 [SYSTEM] [dashboard] Command Center closed.
-09:19:37 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-10:19:45 [VOICE] [voice] starting with google-tts (worked last time)
-10:19:45 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-10:19:45 [SYSTEM] > user: Arjun | lang: en
-10:19:45 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-10:19:45 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-10:19:45 [BRAIN] [brain] Brain: checking…
-10:19:45 [SYSTEM] [prefs] call me: sir | language: bn
-10:19:45 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
-10:19:46 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-10:19:46 [SYSTEM] Nalox v7.5 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-10:19:46 [SYSTEM] [sys] Command Center opened at start
-10:19:46 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-10:19:46 [BRAIN] [brain] Groq: models on this account (11): meta-llama/llama-prompt-guard-2-86m, whisper-large-v3-turbo, whisper-large-v3, openai/gpt-oss-safeguard-20b, qwen/qwen3.8-27b, allam-2-7b, openai/gpt-oss-20b, canopylabs/orpheus-arabic-saudi, canopylabs/orpheus-v1-english, openai/gpt-oss-120b, meta-llama/llama-prompt-guard-2-22m
-10:19:46 [BRAIN] [brain] Groq: effective walk: openai/gpt-oss-120b -> qwen/qwen3.8-27b -> allam-2-7b -> openai/gpt-oss-20b
-10:19:46 [BRAIN] [brain] Groq: model qwen/qwen3.8-27b works — remembered as the default
-10:19:53 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-10:19:53 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-10:19:53 [SYSTEM] [ready] Say 'Nalox' to wake me
-10:19:53 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-10:19:53 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-10:19:57 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-10:20:01 [SYSTEM] [dashboard] Command Center closed.
-10:20:12 [BRAIN] [brainbench] Brain Test started — 14 candidates, 3 Bengali prompts each
-10:20:14 [BRAIN] [brainbench] Groq · qwen/qwen3.8-27b — ok 3/3 · first token 0.59s · reply 0.83s · Bengali 0% · guards ✗
-10:20:14 [BRAIN] [brainbench] Groq · llama-3.1-8b-instant — skipped — not on this account
-10:20:14 [BRAIN] [brainbench] Groq · llama-3.3-70b-versatile — skipped — not on this account
-10:20:18 [BRAIN] [brainbench] Groq · openai/gpt-oss-120b — ok 3/3 · first token 1.06s · reply 1.14s · Bengali 0% · guards ✗
-10:20:18 [BRAIN] [brainbench] Groq · qwen/qwen3-32b — skipped — not on this account
-10:20:21 [BRAIN] [brainbench] Groq · allam-2-7b — ok 3/3 · first token 0.66s · reply 0.95s · Bengali 0% · guards ✗
-10:20:24 [BRAIN] [brainbench] Groq · openai/gpt-oss-20b — ok 3/3 · first token 1.05s · reply 1.08s · Bengali 0% · guards ✗
-10:20:25 [BRAIN] [brainbench] OpenRouter · anthropic/claude-sonnet-4.5 — failed 0/3 · RuntimeError: HTTP 402 {"error":{"message":"Insufficient credits. This account n
-10:20:26 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2 — failed 0/3 · RuntimeError: HTTP 402 {"error":{"message":"Insufficient credits. This account n
-10:20:27 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2:free — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"This model is unavailable for free.
-10:20:29 [BRAIN] [brainbench] Ollama · llama3.1 — failed 0/3 · RuntimeError: HTTP 404
-10:20:31 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:20:36 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:20:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0464 dec=7 (t6 b0 s1 r0) dmax=23.7s
-10:20:55 [BRAIN] [brainbench] Ollama · qwen3:8b — failed 0/3 · RuntimeError: HTTP 500
-10:20:57 [BRAIN] [brainbench] Ollama · qwen2.5:7b — failed 0/3 · RuntimeError: HTTP 404
-10:20:59 [BRAIN] [brainbench] Ollama · llama3.1:8b — failed 0/3 · RuntimeError: HTTP 404
-10:20:59 [BRAIN] [brainbench] Brain Test done in 50s — fastest full pass: groq · qwen/qwen3.8-27b (first token 0.59s)
-10:21:06 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:21:09 [SYSTEM] [logsync] log sent
-10:21:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=2 seg=17 blip=0 short=0 peak=0.0636 dec=12 (t10 b0 s2 r0) dmax=13.0s
-10:21:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:22:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:22:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=0 short=0 peak=0.3239 dec=16 (t15 b0 s1 r0) dmax=16.6s
-10:23:10 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-10:23:13 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 10:23:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 10:23:46 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=1 short=0 peak=0.0468 dec=12 (t10 b0 s2 r0) dmax=10.0s
 10:24:13 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
@@ -1491,11 +1424,69 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 18:42:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=4 short=0 peak=0.0807 dec=10 (t10 b0 s0 r0) dmax=8.0s
 18:42:14 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 18:42:15 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:42:19 [SYSTEM] [logsync] log sent
+18:43:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=1 short=0 peak=0.1120 dec=12 (t12 b0 s0 r0) dmax=10.0s
+18:43:21 [MIC] [heard] ha, ha, dit is ook
+18:43:26 [MIC] [heard] kodatis!
+18:43:35 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:43:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:44:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=2 short=0 peak=0.2194 dec=11 (t8 b0 s1 r2) dmax=9.4s
+18:45:00 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:45:07 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:45:07 [MIC] [heard] 我以前都覺得是有些有些有些有些有些有些的
+18:45:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=2 seg=14 blip=1 short=0 peak=0.0952 dec=10 (t8 b0 s2 r0) dmax=9.8s
+18:45:27 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:46:01 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:46:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=16 blip=0 short=0 peak=0.0868 dec=15 (t15 b0 s0 r0) dmax=12.1s
+18:46:41 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:47:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=15 blip=2 short=0 peak=0.1490 dec=13 (t13 b0 s0 r0) dmax=8.0s
+18:47:18 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:48:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=1 short=0 peak=0.1730 dec=12 (t11 b0 s1 r0) dmax=8.0s
+18:48:26 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:48:28 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:48:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+18:49:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2355 dec=11 (t9 b0 s2 r0) dmax=12.7s
+18:50:11 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=8 short=0 peak=0.0590 dec=7 (t3 b0 s4 r0) dmax=8.0s
+18:50:35 [SYSTEM] [sys] exiting (restart): self-update to v8.1 (56 files applied)
+18:50:35 [SYSTEM] Restarting Nalox…
+18:50:36 [ERROR] [supervisor] Nalox process DIED (exit code 1) — relaunching in 5 seconds. A traceback in nalox_fault.log, if present, names the native fault.
+18:50:42 [VOICE] [voice] starting with google-tts (worked last time)
+18:50:42 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+18:50:42 [BRAIN] [brain] remembered 1 dead models from last sessions
+18:50:42 [SYSTEM] > user: Arjun | lang: en
+18:50:42 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+18:50:42 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+18:50:42 [BRAIN] [brain] Brain: checking…
+18:50:42 [SYSTEM] [prefs] call me: sir | language: bn
+18:50:42 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+18:50:42 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+18:50:42 [SYSTEM] Nalox v8.1 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: FreeLLMAPI ✓ | robot: off | briefing_news: False | full_control: True
+18:50:43 [BRAIN] [brain] Gemini boot check: 1 configured model(s) not on this account — marked dead before the first turn: gemini-2.0-flash
+18:50:43 [BRAIN] [brain] Groq: models on this account (11): meta-llama/llama-prompt-guard-2-22m, whisper-large-v3, openai/gpt-oss-safeguard-20b, allam-2-7b, meta-llama/llama-prompt-guard-2-86m, canopylabs/orpheus-v1-english, canopylabs/orpheus-arabic-saudi, openai/gpt-oss-20b, qwen/qwen3.8-27b, openai/gpt-oss-120b, whisper-large-v3-turbo
+18:50:43 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
+18:50:43 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+18:50:43 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+18:50:50 [BRAIN] [brain] boot answer test: FreeLLMAPI answered in 8015 ms
+18:50:52 [SYSTEM] [ears] big local model unavailable (RuntimeError: mkl_malloc: failed to allocate memory) — using small for now
+18:50:52 [SYSTEM] [ears] GPU decode unavailable (RuntimeError: mkl_malloc: failed to allocate memory) — big model on CPU
+18:50:52 [SYSTEM] [ears] big local model loading…
+18:50:54 [SYSTEM] [sys] boot probe complete — everything checked (13/14 ok; FAILED: Full transcription model)
+18:50:54 [SYSTEM] [sys] boot probe detail: Microphone ✓ Microphone Array (Realtek(R) Au; Wake-word ears ✓ ready; Command ears ✓ ready; Full transcription model ✗ big model unavailable (RuntimeError: mkl_malloc: failed to allocate memory) — small model serves; Ears running test ✓ decode pipeline completed; Groq brain ✓ key OK · 11 models · head allam-2-7b; Brain answer test ✓ FreeLLMAPI answered in 8015 ms; Voice ✓ ElevenLabs — unavailable (402), local voice; Gemini ✓ 3 model(s) ready · 1 dead skipped; FreeLLMAPI ✓ gateway up; Ollama (offline brain) ✓ ready: qwen3-vl:8b, qwen3:8b; Muse Wonder ✓ key accepted — billing checked at first use; Phone link ✓ link server on — waiting for the phone app; Telegram ✓ bridge on
+18:50:54 [SYSTEM] [sys] Command Center opened at start
+18:50:54 [NALOX] NALOX: শুভ সন্ধ্যা, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+18:51:02 [VOICE] via tts-cache: শুভ সন্ধ্যা, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+18:51:02 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+18:51:02 [SYSTEM] [sys] self-updated to v8.1
+18:51:08 [VOICE] via google-tts: I have updated myself to version 8.1, sir.
+18:51:08 [SYSTEM] [ready] Say 'Nalox' to wake me
+18:51:08 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
+18:51:08 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
+18:51:10 [SYSTEM] [ears] worker restarted (crashed)
+18:51:42 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=2 short=0 peak=0.0079
+18:51:47 [SYSTEM] [ears] transcription worker restarting too often — pausing
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
-  File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\socket.py", line 720 in readinto
-  File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\http\client.py", line 292 in _read_status
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\http\client.py", line 331 in begin
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\http\client.py", line 1430 in getresponse
   File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\.venv\Lib\site-packages\urllib3\connection.py", line 638 in getresponse
@@ -1804,3 +1795,6 @@ Thread 0x000065a0 (most recent call first):
 ===== Nalox boot 2026-11-16 17:58:47 — faulthandler armed =====
 
 ===== Nalox boot 2026-11-16 18:04:10 — faulthandler armed =====
+===== CLEAN EXIT 2026-11-16 18:50:35 — self-restart (supervisor relaunches) =====
+
+===== Nalox boot 2026-11-16 18:50:42 — faulthandler armed =====
