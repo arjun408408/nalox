@@ -1,20 +1,10 @@
 Nalox log sync
 Version: 8.1
-Synced: 2026-11-16 19:18:59 (laptop local time)
+Synced: 2026-11-16 19:22:06 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-12:01:57 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-12:02:02 [NALOX] NALOX: ওটা ঠিক ধরতে পারলাম না, sir।
-12:02:06 [VOICE] via google-tts: ওটা ঠিক ধরতে পারলাম না, sir।
-12:02:09 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=3 short=0 peak=0.1682 dec=1 (t0 b0 s1 r0) dmax=5.8s
-12:02:13 [SYSTEM] [timing] wake→record 11.3s, transcribe 3.9s, brain 7.5s, speak 11.2s
-12:02:13 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:02:26 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:02:26 [SYSTEM] [ears] heard via cloud:groq
-12:02:26 [MIC] [heard] কোলো সাহান চালাছে একন সবকিছে মাদেযানয়ানয়ে করছে কাছিছা কিন্তু কি একন কি হোলো কি আমি যখন সাহান চালাছে বোললাম ওস মাধে হয়ে জেনা মাধে হয়ে জেনা
-12:02:26 [YOU] [mic] heard: কোলো সাহান চালাছে একন সবকিছে মাদেযানয়ানয়ে করছে কাছিছা কিন্তু কি একন কি হোলো কি আমি যখন সাহান চালাছে বোললাম ওস মাধে হয়ে জেনা মাধে হয়ে জেনা
 12:02:27 [BRAIN] [tool] read_my_screen
 12:02:27 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
 12:02:28 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
@@ -1471,6 +1461,20 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 19:18:36 [VOICE] via google-tts: Sorry, I could not find koro jake ami reply di ni tate reply diye bolo i am nalox talk me on this laptop.
 19:18:36 [VOICE] [voice] male voice unavailable — female fallback for this reply
 19:18:54 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:19:00 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:19:02 [SYSTEM] [logsync] log sent
+19:19:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=10 blip=3 short=0 peak=0.1106 dec=8 (t8 b0 s0 r0) dmax=8.0s
+19:20:14 [ERROR] Voice path edge-tts failed:
+19:20:14 [ERROR] [voice] edge-tts unavailable — skipping it for a while
+19:20:18 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:20:25 [VOICE] via google-tts: গুগলে the person whose message i haven't replied to yet, and send them this message: ‘i am nalox. talk to me.’” খুঁজছি।
+19:20:25 [VOICE] [voice] male voice unavailable — female fallback for this reply
+19:20:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=7 blip=1 short=0 peak=0.0227 dec=9 (t8 b0 s1 r0) dmax=10.0s
+19:21:01 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:21:25 [VOICE] via google-tts: ক্রোম খুলছি।
+19:21:25 [VOICE] [voice] male voice unavailable — female fallback for this reply
+19:21:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=1 short=0 peak=0.0839 dec=10 (t10 b0 s0 r0) dmax=0.0s
+19:21:48 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
