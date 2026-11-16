@@ -54,6 +54,10 @@ PATCH_IF_ABSENT = {
     "freellm_api_key": "",
     "freellm_base_url": "http://127.0.0.1:31415/v1",
     "freellm_model": "auto",
+    # v8.0: FreeLLMAPI leads the brain by default (see
+    # config.py) — added only when absent; a value the owner
+    # sets by hand ("groq") is preserved.
+    "brain_primary": "freellmapi",
     # v5.1: cloud ears on ("auto") by default — Gemini/Groq
     # hear commands when a key exists; Settings can turn it off.
     "cloud_ears": "auto",

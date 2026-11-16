@@ -525,8 +525,17 @@ _NOTICE_HEADLINES = {
     "7.9": "brain-এর limit লাগলেও অন্য brain উত্তর দেবে",
     "7.10": "free brain pool এবার নিজে নিজে চলবে",
     "7.11": "Loading screen: সব ready হয়ে তবেই খুলবে",
+    "8.0": "FreeLLMAPI brain, আসল loading",
 }
-_NOTICE_HEADLINE_NOW = "Loading screen: সব ready হয়ে তবেই খুলবে"
+_NOTICE_HEADLINE_NOW = "FreeLLMAPI brain, আসল loading"
+
+# v8.0: a version may own its WHOLE banner line when the
+# standard "v<version> — <headline>" shape cannot carry
+# it (the FINAL marker sits inside the version part).
+_NOTICE_FULL = {
+    "8.0": ("✅ Updated to v8.0 (FINAL) — "
+            "FreeLLMAPI brain, আসল loading"),
+}
 
 
 def update_notice_text(version):
@@ -534,6 +543,8 @@ def update_notice_text(version):
     version from the updater's marker + that release's
     headline in the owner's words. Pure."""
     version = str(version or "?").strip() or "?"
+    if version in _NOTICE_FULL:
+        return _NOTICE_FULL[version]
     tail = _NOTICE_HEADLINES.get(version,
                                  _NOTICE_HEADLINE_NOW)
     return f"✅ Updated to v{version} — {tail}"

@@ -1747,3 +1747,201 @@ original intent. UPDATE.bat's CRLF endings were
 verified byte-wise during this build (143 CRLF,
 0 bare LF) — edit it only with CRLF-preserving
 tools.
+
+## v8.0 — "FINAL: FreeLLMAPI brain, আসল loading" (2026-11-16)
+
+OWNER ORDERS (2026-11-16 15:54 IST, from his v7.11 field
+session, sync 94313a63 + his screenshots): (1) FreeLLMAPI
+becomes the PRIMARY brain — he hit the v7.9 truthful
+line "brain-এর limit শেষ হয়ে গেছে" (Groq qwen3.8-27b
++ gpt-oss-120b both 429, free daily quotas) and did not
+know WHICH limit it was; with FreeLLMAPI "কোনো limit
+শেষ হচ্ছিল না" because the gateway rotates ~80 upstream
+models behind one endpoint. (2) The boot loading must
+wait for REAL readiness — v7.11's probe declared 11/11
+in ~6 s while large-v3-turbo only finished loading at
+15:31:20, and his first hello (~15:30:55) died on an
+empty transcription. The gate must include actual
+RUNNING TESTS. (3) This is the LAST FINAL version.
+
+ITEM 1 — FREELLMAPI LEADS (order + lead only; the
+existing provider machinery is untouched — same base
+URL resolution, unified key, model selection):
+
+- Master switch: cfg `brain_primary`, default
+  "freellmapi" (config.py DEFAULTS + patch_config
+  PATCH_IF_ABSENT + the Brain hot-reload key list).
+  "groq" restores the v7.11 lead order byte-for-byte.
+- Brain._freellm_leads() is the single gate: primary
+  is exactly "freellmapi" AND freellm_api_key non-empty
+  AND _freellm_available() (the existing probe/cache).
+  An ABSENT brain_primary means the lead is OFF —
+  deliberate: hand-built configs in the older suites
+  carry no such key and keep v7.11 behaviour untouched;
+  production load_config() merges DEFAULTS, so a real
+  install always carries it. Any exception → no lead.
+- CHAT: _freellm_lead_chat makes ONE serial attempt
+  through _agent_openai_compatible with
+  timeout=FREELLM_LEAD_BUDGET_S (8.0 s). Every guard
+  and the translate-rescue apply exactly as on the
+  serial path today (they live inside that machinery).
+  Success logs "[brain] primary FreeLLMAPI answered
+  (X ms)" and sets _last_answer_provider="freellm";
+  failure logs "[brain] primary FreeLLMAPI failed:
+  <why> — falling back" (why = the recorded
+  _last_agent_fail reason when it is the gateway's)
+  and _agent_reply proceeds to the v7.6 chat race —
+  called with exclude=("freellm",) so the just-failed
+  gateway is never retried inside its own fallback
+  race (_chat_racers/_chat_race grew a defaulted
+  exclude kwarg; default () = v7.11 field) — then the
+  v7.9 Ollama chat net, the rescue, the honest line.
+- AGENT: _freellm_lead_agent calls the same machinery
+  WITH TOOLS under the turn's v7.9 call budgets.
+  Success requires tools_ran > 0 (the Brain's
+  _tool_run_count delta). A completed turn with zero
+  tool executions — the shape the machinery's
+  narrate-guard retry already had its say on — logs
+  "finished without running any tool — advancing",
+  DISCARDS the reply and advances. An HTTP 400 whose
+  recorded reason mentions tools/functions logs
+  "cannot use tools (HTTP 400 — …) — advancing". Any
+  other failure advances with its reason. The chain
+  after the lead is the exact v7.11 one: Groq power
+  walk → Muse Wonder WITH TOOLS (dormant, unchanged)
+  → Ollama → honest line.
+- NO new parking for FreeLLMAPI: a per-turn failure
+  simply advances (the gateway rotates its own
+  upstreams); _freellm_note_failure stays dormant.
+  The v6.13 jittered 429 retry inside a provider call
+  remains an existing retry rule — the lead advances
+  after it, like every provider.
+- Brain line: brain_status_line() returns "Brain:
+  FreeLLMAPI ✓" when _freellm_leads() holds (checked
+  first, exception-guarded); otherwise every v7.11
+  form stands byte-identical. Boot validation /
+  Groq discovery / walk composition UNCHANGED
+  (fallback integrity). No freellm key at all →
+  everything is v7.11.
+
+ITEM 2 — REAL READINESS GATE (bootprobe.py /
+loadscreen.py stay; three new BLOCKING stages, 14
+total; GATE_CAP_S 45.0 → 180.0):
+
+- "Full transcription model" (bigmodel, nalox.py
+  _boot_probe_big_model, stage timeout 175 s): submits
+  ONE command-lane decode job naming the configured
+  whisper_command_model on a synthesized ~1 s test clip
+  — the very job the lazy path submits on first need,
+  so the v6.10 ladder load starts at boot, not at the
+  first command. The verdict is the lane client's own
+  big-model state, polled via pings (whose pumps absorb
+  the worker notices): "done" → ✓ "<resolved name>
+  loaded"; "latched"/"armed" (ladder exhausted /
+  preload failed, background retry pending) → ✗ "big
+  model unavailable (<reason>) — small model serves";
+  still loading at BOOT_BIG_MODEL_WAIT_S (150 s) → ⚠
+  still-loading. A small-family configured model
+  resolves ✓ at once (no big model exists to load).
+  Ears internals untouched.
+- "Brain answer test" (braintest, Brain.
+  probe_brain_answer_boot, stage timeout 30 s): ONE
+  real minimal completion (production system prompt +
+  "Hello", max_tokens 16) through the session's lead —
+  FreeLLMAPI when it is the configured lead and a FRESH
+  _probe_freellm_once says up (the verdict is written
+  into the reachability cache), else the Groq
+  validation head (_validation_model["groq"], else the
+  walk head, joining the validation thread ≤10 s).
+  Pass = HTTP 200 + non-empty text + the SCRIPT guard
+  (the language guard is deliberately NOT applied — a
+  plumbing test). A FreeLLMAPI failure marks the
+  gateway cache DOWN, so Groq becomes the effective
+  session lead through the existing availability
+  machinery; the stage resolves ✗ "FreeLLMAPI did not
+  answer — Groq leads". No key anywhere → ⚠. The probe
+  never calls _brain_fail and never touches the
+  conversation memory; it logs "[brain] boot answer
+  test: <provider> answered in X ms" (or the failure
+  variant).
+- "Ears running test" (earstest, nalox.py
+  _boot_probe_ears_test, stage timeout 175 s): waits
+  for the bigmodel stage to resolve (via the probe
+  published into _boot_ctx["probe"]), then submits ONE
+  real decode job on the same synthesized clip and
+  requires it to COMPLETE within COMMAND_TX_DEADLINE.
+  Any result (incl. empty text) = ✓ — pipeline
+  completion, not accuracy; timeout/crash = ✗.
+- The test clip (_boot_test_audio) is synthesized in
+  code at runtime (numpy sine stack, deterministic,
+  ~1 s, nothing shipped). It must stay ≥0.2 s: ears'
+  transcribe() returns before the model load below
+  that length.
+- Cap rationale: the v7.11 45 s cap fit presence
+  checks; a real big-model load + running tests
+  legitimately take longer, and the owner ordered the
+  wait ("loading যেন অনেকক্ষণ হয়"). Per-stage
+  deadlines still resolve a hung stage as ⚠ under the
+  cap, and any probe/UI exception still degrades to
+  the pre-v7.11 boot. loadscreen.py renders the 14
+  rows dynamically (no logic change); its window grew
+  600×700 → 600×800 for the three new rows. The v7.10
+  P4 boot diet, updater and logsync timings are
+  unchanged.
+
+DISCLOSURES. There is NO real FreeLLMAPI gateway on
+the build VM: every FreeLLMAPI call in every suite is
+stubbed at the requests layer, and the gateway's real
+first run as lead (including whether its upstream
+chain honours tool calls) happens on the owner's PC.
+The loading screen's VISUAL render with 14 rows is
+likewise first proven on his PC. Watch the first
+field sync for: "[brain] primary FreeLLMAPI answered"
+lines, the braintest line, the gate line counting
+14 stages, and the big-model ready line landing
+BEFORE the Command Center opens.
+
+TESTS. Full battery: 3,503 checks, 0 failures, across
+35 suites run sequentially in pristine tree copies
+(v7.11's 3,424 + the new test_v80's 79). test_v80 pins:
+the release surface (version, (FINAL) banner, README
+lead, cap, the 14-stage set); the chat lead (wins when
+healthy; advances on unreachable / 500 / 429 /
+guard-rejection; never retried inside its own fallback
+race; the translate-rescue applies to its replies);
+the agent lead (a stubbed tool call executes; an
+HTTP 400 naming tools advances; a zero-tool completion
+advances); lead-off equivalence (brain_primary="groq",
+an absent brain_primary, a missing gateway key and a
+down gateway each keep v7.11 behaviour — the gate
+method _freellm_leads is pinned directly); the gate
+(the big-model stage triggers the load through the
+command-lane job and blocks until the lane reports it
+loaded; a latched ladder resolves ✗ with its reason;
+the brain answer test performs a real completion
+against a stub transport and requires text back; the
+ears running test requires a decode job to complete;
+the cap flips pending stages to capped warns; a probe
+exception degrades the boot). The real-audio
+standalone Bengali proof passes (WOKE: True,
+COMMAND: 'open chrome').
+
+Intentional test changes (disclosed): (1) the
+per-release needle sweep 7.11 → 8.0 in 31 suites —
+the version.txt current-version pin and the
+UPDATE.bat banner needle, one each; historical
+labels/references untouched. (2) test_v711: S6's cap
+pin 45.0 → 180.0 (the owner's order changed the
+cap); A1's stage count 11 → 14; A1b's blocking set
+gains bigmodel/earstest/braintest; A2's progress
+denominator 3/11 → 3/14; C1's screen stage count
+11 → 14; section D's simulated boot also registers
+the three new stages with trivial resolvers (their
+real stage functions are pinned in test_v80); the
+header comment updated. (3) README scan windows grew
+where the prepended v8.0 block pushed older text
+down: test_v571 G4 48000 → 52000, test_v710 S5b
+2500 → 3500, test_v78 S7 6000 → 7000, test_v79 S5b
+4500 → 5500. No production-behaviour pin was
+weakened: test_v711's v7.11 banner / README / FOR-AI
+history checks pass unchanged.

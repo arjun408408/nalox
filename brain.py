@@ -712,6 +712,20 @@ _JARVIS_CHARACTER = (
 PROVIDER_TIMEOUT_S = 10.0
 FREELLM_TIMEOUT_S = 10.0
 
+# ------------------------------------------------------------- v8.0
+# FREELLMAPI LEAD BUDGET (the owner's LAST-FINAL order,
+# 2026-11-16 15:54 IST): FreeLLMAPI is the PRIMARY brain —
+# when cfg brain_primary == "freellmapi" and the gateway
+# answers the availability probe, it answers FIRST, as a
+# serial lead, before the v7.6 chat race / the Groq power
+# walk run as the fallback chain. The lead gets ONE bounded
+# attempt: the gateway rotates ~80 upstream models behind
+# its endpoint, so a slow lead must hand over to the
+# fallback chain fast, never stack. FREELLM_LEAD_BUDGET_S
+# caps the chat lead's HTTP time; the agent lead rides the
+# v7.9 per-call budgets like every other agent provider.
+FREELLM_LEAD_BUDGET_S = 8.0
+
 # ------------------------------------------------------------- v6.6
 # FreeLLMAPI TIMEOUT DEMOTION + WALK BUDGET (field 2026-11-15
 # 19:24 IST: one command paid 10 s to a FreeLLMAPI ReadTimeout,
@@ -6399,6 +6413,9 @@ class Brain:
     )
     _HOT_RELOAD_KEYS = ("freellm_api_key", "freellm_base_url",
                         "freellm_model",
+                        # v8.0: the brain lead-order switch
+                        # hot-reloads like the keys it orders.
+                        "brain_primary",
                         "anthropic_api_key", "openrouter_api_key",
                         "gemini_api_key",
                         "groq_api_key", "openai_api_key",
@@ -6840,6 +6857,19 @@ class Brain:
 
     def brain_status_line(self):
         """The one short line the HUD header + boot log show."""
+        # v8.0: when FreeLLMAPI is the session's lead and
+        # the gateway is reachable, the line names it —
+        # the owner can see his primary brain is the one
+        # talking. The check is the turn machinery's own
+        # lead gate (probe-cached, so this costs nothing);
+        # when the gateway is down or Groq is configured
+        # to lead, every form below stands byte-identical
+        # to v7.11.
+        try:
+            if self._freellm_leads():
+                return "Brain: FreeLLMAPI ✓"
+        except Exception:
+            pass
         s = getattr(self, "brain_status", None) or {}
         mode = s.get("mode", "local")
         label = self._PROVIDER_LABELS.get(mode, "Local")
@@ -7570,6 +7600,282 @@ class Brain:
                 return ("ok", "gateway up")
             return ("fail", "app not running — open "
                             "FreeLLMAPI")
+        except Exception as exc:
+            return ("warn", f"check failed "
+                            f"({type(exc).__name__})")
+
+    # ------------------------------------------------ v8.0 lead
+    def _freellm_leads(self):
+        """True when FreeLLMAPI is this turn's LEAD brain
+        (v8.0 — the owner's LAST-FINAL order, 2026-11-16
+        15:54 IST: "FreeLLMAPI দিয়ে করে দাও... কোনো limit
+        শেষ হচ্ছিল না"). The lead exists only when ALL of
+        these hold: cfg brain_primary is exactly
+        "freellmapi" (an ABSENT key means the lead is OFF —
+        deliberate: hand-built configs in the older suites
+        carry no brain_primary and must keep v7.11 behaviour
+        untouched; production load_config() merges the
+        DEFAULTS, so a real install always carries the key),
+        a unified key is configured, and the gateway answers
+        the existing availability probe. Any exception means
+        no lead — the v7.11 chain runs exactly as before."""
+        try:
+            if (self.cfg.get("brain_primary")
+                    != "freellmapi"):
+                return False
+            if not (self.cfg.get("freellm_api_key")
+                    or "").strip():
+                return False
+            return bool(self._freellm_available())
+        except Exception:
+            return False
+
+    def _freellm_lead_chat(self, text):
+        """The FreeLLMAPI chat lead (v8.0): ONE bounded
+        serial attempt through the existing compatible
+        machinery — every guard and the translate-rescue
+        apply to its replies exactly as they do on the
+        serial path today. Returns the reply, or None after
+        logging the failure so the caller falls through to
+        the v7.6 race → Ollama net → rescue → honest line.
+        No parking: a per-turn failure simply advances (the
+        gateway rotates its own upstreams)."""
+        t0 = time.monotonic()
+        reply = None
+        try:
+            reply = self._agent_openai_compatible(
+                text, self._freellm_base(),
+                (self.cfg.get("freellm_api_key")
+                 or "").strip(),
+                self.cfg.get("freellm_model") or "auto",
+                label="FreeLLMAPI", provider="freellm",
+                timeout=FREELLM_LEAD_BUDGET_S, tier=None)
+        except Exception:
+            reply = None
+        ms = int((time.monotonic() - t0) * 1000)
+        if reply:
+            self._last_answer_provider = "freellm"
+            line = (f"[brain] primary FreeLLMAPI answered "
+                    f"({ms} ms)")
+            _lb("BRAIN", line)
+            log.info(line)
+            return reply
+        why = "no usable answer"
+        fail = getattr(self, "_last_agent_fail", None)
+        if fail and fail[0] == "FreeLLMAPI":
+            why = str(fail[1])
+        line = (f"[brain] primary FreeLLMAPI failed: {why} "
+                f"— falling back")
+        _lb("BRAIN", line)
+        log.info(line)
+        return None
+
+    def _freellm_lead_agent(self, text, call_budgets=None):
+        """The FreeLLMAPI agent lead (v8.0): the gateway
+        answers WITH TOOLS through the same compatible
+        machinery the Groq walk uses, under the v7.9
+        per-call budgets. Success requires real tool work
+        on an action turn: a completed turn with ZERO tool
+        executions means this route cannot drive the PC for
+        the request (the machinery's narrate-guard retry
+        has already had its say inside the call), so the
+        reply is discarded and the chain advances to the
+        Groq power walk. An HTTP 400 whose body mentions
+        tools/functions is the same verdict, named as such.
+        Any other failure advances with its reason. One log
+        line per outcome, v7.9 item C style."""
+        tools_before = self._tool_run_count
+        t0 = time.monotonic()
+        reply = None
+        try:
+            reply = self._agent_openai_compatible(
+                text, self._freellm_base(),
+                (self.cfg.get("freellm_api_key")
+                 or "").strip(),
+                self.cfg.get("freellm_model") or "auto",
+                label="FreeLLMAPI", provider="freellm",
+                tier=None, call_budgets=call_budgets)
+        except Exception:
+            reply = None
+        ms = int((time.monotonic() - t0) * 1000)
+        tools_ran = self._tool_run_count - tools_before
+        if reply and tools_ran > 0:
+            self._last_answer_provider = "freellm"
+            line = (f"[brain] primary FreeLLMAPI answered "
+                    f"({ms} ms)")
+            _lb("BRAIN", line)
+            log.info(line)
+            return reply
+        if reply:
+            line = ("[brain] primary FreeLLMAPI finished "
+                    "without running any tool — advancing")
+            _lb("BRAIN", line)
+            log.info(line)
+            return None
+        why = "no usable answer"
+        fail = getattr(self, "_last_agent_fail", None)
+        if fail and fail[0] == "FreeLLMAPI":
+            why = str(fail[1])
+        low = why.lower()
+        if why.startswith("HTTP 400") and (
+                "tool" in low or "function" in low):
+            line = ("[brain] primary FreeLLMAPI cannot use "
+                    f"tools ({why}) — advancing")
+        else:
+            line = (f"[brain] primary FreeLLMAPI failed: "
+                    f"{why} — falling back")
+        _lb("BRAIN", line)
+        log.info(line)
+        return None
+
+    def probe_brain_answer_boot(self, timeout_s=25.0):
+        """The Brain answer test stage (v8.0): ONE real
+        minimal completion through the session's LEAD
+        provider — FreeLLMAPI when it is the configured
+        lead and a FRESH probe says the gateway is up, else
+        the Groq validation head — using the production
+        system prompt and a trivial user prompt. Pass =
+        response text came back and passes the SCRIPT guard
+        (the language guard is deliberately NOT applied:
+        this is a plumbing test, and Bengali-ness is the
+        turn machinery's business). Never raises, never
+        touches _brain_fail or the conversation memory. A
+        FreeLLMAPI failure marks the gateway cache down, so
+        Groq becomes the effective session lead through the
+        existing availability machinery."""
+        try:
+            import requests
+            t0 = time.monotonic()
+            body_text = None
+            provider_name = None
+            freellm_key = (self.cfg.get("freellm_api_key")
+                           or "").strip()
+            if (self.cfg.get("brain_primary")
+                    == "freellmapi") and freellm_key:
+                up = self._probe_freellm_once()
+                try:
+                    with self._prov_lock:
+                        self._freellm = {
+                            "at": time.monotonic(), "up": up}
+                except Exception:
+                    pass
+                if up:
+                    provider_name = "FreeLLMAPI"
+                    try:
+                        resp = requests.post(
+                            self._freellm_base()
+                            + "/chat/completions",
+                            headers={
+                                "Authorization":
+                                    f"Bearer {freellm_key}",
+                                "Content-Type":
+                                    "application/json"},
+                            json={
+                                "model": self.cfg.get(
+                                    "freellm_model")
+                                or "auto",
+                                "messages": [
+                                    {"role": "system",
+                                     "content":
+                                         self._system_prompt()},
+                                    {"role": "user",
+                                     "content": "Hello"}],
+                                "max_tokens": 16},
+                            timeout=min(15.0,
+                                        max(3.0, timeout_s)))
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            body_text = (
+                                ((data.get("choices")
+                                  or [{}])[0].get("message")
+                                 or {}).get("content"))
+                    except Exception:
+                        body_text = None
+                    if isinstance(body_text, str) \
+                            and body_text.strip() \
+                            and _reply_script_ok(body_text):
+                        ms = int((time.monotonic() - t0)
+                                 * 1000)
+                        line = (f"[brain] boot answer test: "
+                                f"FreeLLMAPI answered in "
+                                f"{ms} ms")
+                        _lb("BRAIN", line)
+                        log.info(line)
+                        return ("ok", f"FreeLLMAPI answered "
+                                      f"in {ms} ms")
+                    try:
+                        with self._prov_lock:
+                            self._freellm = {
+                                "at": time.monotonic(),
+                                "up": False}
+                    except Exception:
+                        pass
+                    line = ("[brain] boot answer test: "
+                            "FreeLLMAPI did not answer — "
+                            "Groq leads")
+                    _lb("BRAIN", line)
+                    log.info(line)
+                    return ("fail", "FreeLLMAPI did not "
+                                    "answer — Groq leads")
+            groq_key = (self.cfg.get("groq_api_key")
+                        or "").strip()
+            if not groq_key:
+                return ("warn", "no lead brain configured")
+            thread = getattr(self, "_validate_thread", None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=min(10.0, timeout_s))
+            head = None
+            try:
+                head = (getattr(self, "_validation_model",
+                                None) or {}).get("groq")
+            except Exception:
+                head = None
+            if not head:
+                try:
+                    cands = self._model_candidates("groq")
+                    head = cands[0] if cands else None
+                except Exception:
+                    head = None
+            if not head:
+                return ("warn", "no Groq model available")
+            try:
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1"
+                    "/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {groq_key}",
+                        "Content-Type": "application/json"},
+                    json={
+                        "model": head,
+                        "messages": [
+                            {"role": "system",
+                             "content": self._system_prompt()},
+                            {"role": "user",
+                             "content": "Hello"}],
+                        "max_tokens": 16},
+                    timeout=min(12.0, max(3.0, timeout_s)))
+                if resp.status_code == 200:
+                    data = resp.json()
+                    body_text = (
+                        ((data.get("choices") or [{}])[0]
+                         .get("message")
+                         or {}).get("content"))
+            except Exception:
+                body_text = None
+            if isinstance(body_text, str) \
+                    and body_text.strip() \
+                    and _reply_script_ok(body_text):
+                ms = int((time.monotonic() - t0) * 1000)
+                line = (f"[brain] boot answer test: Groq "
+                        f"answered in {ms} ms")
+                _lb("BRAIN", line)
+                log.info(line)
+                return ("ok", f"Groq answered in {ms} ms")
+            line = ("[brain] boot answer test: Groq did "
+                    "not answer")
+            _lb("BRAIN", line)
+            log.info(line)
+            return ("fail", "Groq did not answer")
         except Exception as exc:
             return ("warn", f"check failed "
                             f"({type(exc).__name__})")
@@ -8785,7 +9091,8 @@ class Brain:
             return None
 
     # ------------------------------------------------ v7.6 chat race
-    def _chat_racers(self, text, tier, groq_key):
+    def _chat_racers(self, text, tier, groq_key,
+                     exclude=()):
         """The chat race's field (v7.6, item E): one
         callable per provider that is ACTUALLY configured
         and available — Groq (key pasted, not rejected;
@@ -8796,6 +9103,13 @@ class Brain:
         that provider's candidate walk with the race's
         per-call cap; the walk's guards apply unchanged.
         Returns [(name, provider, callable)].
+
+        v8.0: exclude names providers to leave out of the
+        field — the caller passes ("freellm",) when the
+        FreeLLMAPI lead already had this turn's attempt,
+        so a just-failed gateway is never retried inside
+        its own fallback race. The default () keeps the
+        v7.6 field byte-identical.
 
         v7.8: Muse Wonder (Meta Model API) joins the
         field under the same discipline — only when its
@@ -8829,7 +9143,7 @@ class Brain:
             fl_up = self._freellm_available()
         except Exception:
             fl_up = False
-        if fl_up:
+        if fl_up and "freellm" not in exclude:
             fl_key = (self.cfg.get("freellm_api_key")
                       or "").strip()
             racers.append((
@@ -8859,13 +9173,15 @@ class Brain:
                     timeout=CHAT_RACE_BUDGET_S, tier=tier)))
         return racers
 
-    def _chat_race(self, text, tier, groq_key):
+    def _chat_race(self, text, tier, groq_key,
+                   exclude=()):
         """Race the configured chat providers (v7.6, item
         E). Returns (ran, reply): ran=False when fewer
         than two providers are configured (the caller then
         takes the serial path, byte-identical to v7.5);
         ran=True with reply=None when the race ran and
-        nobody passed the guards in time.
+        nobody passed the guards in time. (v8.0: exclude is
+        forwarded to _chat_racers — see there.)
 
         The first reply passing ALL guards wins at once;
         losers are abandoned daemon threads whose late
@@ -8880,7 +9196,8 @@ class Brain:
         Provider failures inside the race are silent (the
         quiet flag) — ONE [brain] line names the winner
         and its milliseconds."""
-        racers = self._chat_racers(text, tier, groq_key)
+        racers = self._chat_racers(text, tier, groq_key,
+                                   exclude=exclude)
         if len(racers) < 2:
             return False, None
         import queue as _queue_mod
@@ -9160,6 +9477,23 @@ class Brain:
         line (one cached Bengali line if the turn passes
         ~4 s), and one step's independent tool calls run
         concurrently. Chat turns get none of this.
+
+        v8.0: FreeLLMAPI LEADS (the owner's LAST-FINAL
+        order, 2026-11-16 15:54 IST — Groq's free daily
+        quotas ended conversations mid-chain, while the
+        gateway "কোনো limit শেষ হচ্ছিল না" because it
+        rotates ~80 upstreams behind one endpoint). With
+        cfg brain_primary == "freellmapi" (the default)
+        and the gateway answering its availability probe,
+        FreeLLMAPI takes every turn FIRST — chat as one
+        bounded serial lead, agent with tools — and any
+        failure advances into the chain described above,
+        unchanged (the fallback race then excludes the
+        gateway, so it is never retried inside its own
+        fallback). brain_primary="groq" — or no gateway
+        key, or the gateway down — restores the v7.11
+        order exactly. See _freellm_leads,
+        _freellm_lead_chat, _freellm_lead_agent.
         """
         self._doc_context = ""
         try:
@@ -9204,29 +9538,48 @@ class Brain:
         if _tier is not None:
             log.info("[brain] smart routing: tier=%s",
                      _tier)
-        # v7.6 (item E): a plain-CHAT turn races the
-        # configured providers (see _chat_race); an ACTION
-        # turn never races — the agent path keeps the v7.4
-        # power walk exactly. When the race doesn't run
-        # (fewer than two providers configured), the serial
-        # Groq call below is v7.5 behaviour, untouched.
         _is_action = _looks_like_action_request(text)
-        _race_ran = False
-        if not _is_action:
-            _race_ran, reply = self._chat_race(
-                text, _tier, groq_key)
-            if reply:
-                return reply
         # v7.9 (item I): an ACTION turn arms the
         # no-silent-work progress line and the agent
         # per-call budgets; a CHAT turn gets neither
-        # (chat/race budgets are unchanged).
+        # (chat/race budgets are unchanged). (v8.0: armed
+        # before the lead attempt below — the lead is part
+        # of the same turn, so its work gets the same
+        # progress line and the same budgets.)
         _budgets = (AGENT_FIRST_CALL_BUDGET_S,
                     AGENT_CALL_BUDGET_S) \
             if _is_action else None
         _progress = self._arm_progress_line() \
             if _is_action else None
         try:
+            # v8.0: the FreeLLMAPI LEAD (see the docstring).
+            # One attempt; any failure advances into the
+            # exact v7.11 chain below.
+            _lead_tried = False
+            if self._freellm_leads():
+                _lead_tried = True
+                if _is_action:
+                    reply = self._freellm_lead_agent(
+                        text, _budgets)
+                else:
+                    reply = self._freellm_lead_chat(text)
+                if reply:
+                    return reply
+            # v7.6 (item E): a plain-CHAT turn races the
+            # configured providers (see _chat_race); an
+            # ACTION turn never races — the agent path
+            # keeps the v7.4 power walk exactly. When the
+            # race doesn't run (fewer than two providers
+            # configured), the serial Groq call below is
+            # v7.5 behaviour, untouched.
+            _race_ran = False
+            if not _is_action:
+                _race_ran, reply = self._chat_race(
+                    text, _tier, groq_key,
+                    exclude=("freellm",) if _lead_tried
+                    else ())
+                if reply:
+                    return reply
             if not _race_ran and groq_key \
                     and not self._provider_rejected("groq"):
                 reply = self._agent_openai_compatible(

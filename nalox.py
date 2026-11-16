@@ -565,6 +565,147 @@ def _boot_probe_telegram(holder):
                         f"({type(exc).__name__})")
 
 
+# ------------------------------------------------------------- v8.0
+# REAL-READINESS STAGES. The v7.11 probe proved every piece
+# ANSWERS; these stages prove the system can actually WORK
+# before the interface opens — the big transcription model
+# LOADED (not merely loadable on first need) and one real
+# decode COMPLETED through the command lane. Field cause:
+# v7.11 declared 11/11 in ~6 s while large-v3-turbo was
+# still loading, and the owner's first hello (~15:30:55)
+# died on an empty transcription. The brain-side sibling
+# (one real completion through the lead brain) is
+# Brain.probe_brain_answer_boot.
+BOOT_BIG_MODEL_WAIT_S = 150.0
+BOOT_EARS_TEST_WAIT_S = 170.0
+
+
+def _boot_test_audio():
+    """~1 s of deterministic speech-like audio (v8.0),
+    synthesized in code — no shipped file. A sine stack
+    under a smooth envelope is enough: the readiness
+    stages test that the decode PIPELINE completes and
+    that naming the big model triggers its load, never
+    transcription accuracy. The clip must stay >= 0.2 s:
+    ears' transcribe() returns early below that, before
+    the model load is ever reached. None on failure."""
+    try:
+        import numpy as _np
+        sr = 16000
+        t = _np.arange(sr, dtype=_np.float32) / sr
+        env = _np.sin(_np.pi * t) ** 2
+        audio = (0.22 * _np.sin(2 * _np.pi * 110.0 * t)
+                 + 0.14 * _np.sin(2 * _np.pi * 220.0 * t)
+                 + 0.05 * _np.sin(2 * _np.pi * 880.0 * t))
+        return (audio * env).astype(_np.float32)
+    except Exception:
+        return None
+
+
+def _boot_probe_big_model(ears, cfg):
+    """The Full-transcription-model stage (v8.0): tell
+    the command lane to START the big-model load now —
+    through the very decode job the lazy path submits on
+    first need — and wait until the lane's own big-model
+    state says the model is loaded. The trigger job's
+    result is not the verdict (the resolved notice lands
+    a pump later); the lane state is, polled via pings
+    whose pumps absorb the notices. A ladder failure
+    (latched, or armed = preload failed with a background
+    retry pending) resolves ✗ with its reason — the
+    small model still serves, and a failed stage never
+    blocks the gate."""
+    try:
+        import ears as _ears_mod
+        client = ears._command_lane_client()
+        if client is None:
+            return ("fail", "no command ears")
+        model = (cfg.get("whisper_command_model")
+                 or _ears_mod.BIG_COMMAND_MODEL)
+        if getattr(client, "_big_state", None) == "done":
+            return ("ok", f"{client._big_resolved_name or model} "
+                            f"ready")
+        if model in ("tiny", "base", "small"):
+            return ("ok", f"command model {model} — no "
+                          f"big model to load")
+        audio = _boot_test_audio()
+        if audio is None:
+            return ("warn", "could not build the test "
+                            "clip")
+        try:
+            client.request("command", (audio, model, None),
+                           _ears_mod.COMMAND_TX_DEADLINE)
+        except Exception:
+            pass
+        deadline = time.monotonic() + BOOT_BIG_MODEL_WAIT_S
+        while time.monotonic() < deadline:
+            state = getattr(client, "_big_state", None)
+            if state == "done":
+                return ("ok", f"{client._big_resolved_name or model} "
+                                f"loaded")
+            if state in ("latched", "armed"):
+                reason = ""
+                detail = getattr(client, "_big_detail",
+                                 None)
+                if detail:
+                    try:
+                        reason = str(detail[1] or "")
+                    except Exception:
+                        reason = ""
+                return ("fail", "big model unavailable"
+                        + (f" ({reason})" if reason else "")
+                        + " — small model serves")
+            try:
+                client.request("ping", None, 5.0)
+            except Exception:
+                pass
+            time.sleep(0.5)
+        return ("warn", f"still loading {model} — "
+                        f"finishes in background")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
+def _boot_probe_ears_test(ears, cfg, holder):
+    """The Ears running test (v8.0): once the big-model
+    stage has resolved, submit ONE real decode job
+    through the command lane and require it to COMPLETE
+    inside its normal deadline. Any result — even empty
+    text — passes: this tests pipeline completion, not
+    accuracy. A timeout/crash resolves ✗ (which still
+    never blocks the gate)."""
+    try:
+        import ears as _ears_mod
+        probe = holder.get("probe")
+        if probe is not None:
+            wait_until = (time.monotonic()
+                          + BOOT_EARS_TEST_WAIT_S)
+            while time.monotonic() < wait_until:
+                st = probe.stage("bigmodel")
+                if st is None or st.get("resolved"):
+                    break
+                time.sleep(0.5)
+        client = ears._command_lane_client()
+        if client is None:
+            return ("fail", "no command ears")
+        audio = _boot_test_audio()
+        if audio is None:
+            return ("warn", "could not build the test "
+                            "clip")
+        model = (cfg.get("whisper_command_model")
+                 or _ears_mod.BIG_COMMAND_MODEL)
+        got = client.request(
+            "command", (audio, model, None),
+            _ears_mod.COMMAND_TX_DEADLINE)
+        if got is not None:
+            return ("ok", "decode pipeline completed")
+        return ("fail", "decode did not complete in time")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
 def hudstatus(state):
     """Set the HUD status line; no-op when the HUD is off."""
     global _ui_state
@@ -1523,6 +1664,11 @@ def main():
     try:
         import bootprobe as _bootprobe_mod
         _boot_probe = _bootprobe_mod.BootProbe()
+        # v8.0: the ears running test reads the probe
+        # itself (it waits for the big-model stage) —
+        # publish it into the holder before any stage
+        # starts.
+        _boot_ctx["probe"] = _boot_probe
         _boot_probe.start_stage(
             "mic", lambda: _boot_probe_mic(cfg),
             timeout_s=10.0)
@@ -1533,8 +1679,28 @@ def main():
             "command",
             lambda: _boot_probe_lane(ears, "command"),
             timeout_s=45.0)
+        # v8.0: the three REAL-readiness stages — the big
+        # transcription model actually loaded, one real
+        # decode completed, one real brain answer received
+        # (see the stage functions). Their deadlines sit
+        # just under the 180 s gate cap; a stage that
+        # outlives its deadline resolves as still-warming
+        # exactly like every v7.11 stage.
+        _boot_probe.start_stage(
+            "bigmodel",
+            lambda: _boot_probe_big_model(ears, cfg),
+            timeout_s=175.0)
+        _boot_probe.start_stage(
+            "earstest",
+            lambda: _boot_probe_ears_test(ears, cfg,
+                                          _boot_ctx),
+            timeout_s=175.0)
         _boot_probe.start_stage(
             "groq", lambda: brain.probe_groq_boot(),
+            timeout_s=30.0)
+        _boot_probe.start_stage(
+            "braintest",
+            lambda: brain.probe_brain_answer_boot(),
             timeout_s=30.0)
         _boot_probe.start_stage(
             "voice", lambda: _boot_probe_voice(speaker),
@@ -1999,7 +2165,7 @@ def main():
     # v7.11 THE GATE (Ready Means Ready): before the
     # interface opens, wait for the boot probe — every
     # stage resolved (✓/⚠/✗ alike; a failure is a
-    # resolution, never a block), or the 45 s cap from
+    # resolution, never a block), or the cap from
     # process start (pending stages are marked "still
     # warming" and finish in the background — the brain
     # and voice lines keep updating as they land, as
@@ -2009,6 +2175,10 @@ def main():
     # startup. The outcome lands in the logbook as ONE
     # line with the per-stage verdicts, so a synced log
     # shows what boot knew before the first word.
+    # v8.0: the cap is 180 s (bootprobe.GATE_CAP_S) —
+    # the gate now includes the real-readiness stages
+    # (big model loaded, ears running test, brain
+    # answer test), and the owner ordered the wait.
     if _boot_probe is not None:
         try:
             _gate = _boot_probe.wait_gate(

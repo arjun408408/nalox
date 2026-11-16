@@ -41,18 +41,38 @@ start) passes. Blocking vs non-blocking stages differ
 only in what the loading screen emphasises — the gate
 itself waits for ALL of them, because a resolved ✗ is
 just as final as a ✓, and the cap guarantees the wait
-cannot outlive 45 s. An optional abort callback (the
+cannot outlive GATE_CAP_S. An optional abort callback (the
 loading UI reporting its own death) ends the wait early:
 the caller then falls back to the pre-v7.11 boot
 behaviour. Nothing in here ever raises into the caller.
+
+v8.0: the gate gained THREE blocking stages that test the
+system END TO END instead of only asking whether pieces
+answer — "bigmodel" (the command lane's big transcription
+model is LOADED, not merely loadable), "earstest" (one
+real decode job completes through the command lane) and
+"braintest" (one real minimal completion comes back from
+the session's lead brain). The field lesson (v7.11
+session, 2026-11-16): the probe declared 11/11 in ~6 s
+while the big model was still loading, and the owner's
+first hello died on an empty transcription. The cap rises
+45 s → 180 s — the owner ordered real readiness over a
+fast open ("loading যেন অনেকক্ষণ হয়... running test
+একদম complete"). Per-stage deadlines still resolve a
+stage as a warning under the gate cap, so a true hang
+can never lock him out.
 """
 
 import threading
 import time
 
-# The hard cap: the interface opens 45 s after process
-# start even if some stages are still warming.
-GATE_CAP_S = 45.0
+# The hard cap: the interface opens GATE_CAP_S after
+# process start even if some stages are still warming.
+# v8.0: 45 s → 180 s — the real-readiness stages (big
+# model load + running tests) legitimately take longer
+# than the v7.11 presence checks did, and the owner
+# ordered the wait.
+GATE_CAP_S = 180.0
 
 STILL_WARMING = "still warming — will finish in background"
 
@@ -64,7 +84,13 @@ STAGE_DEFS = (
     ("mic", "Microphone", True),
     ("wake", "Wake-word ears", True),
     ("command", "Command ears", True),
+    # v8.0: the three REAL-readiness stages (see the module
+    # docstring) — the big model actually loaded, one real
+    # decode completed, one real brain answer received.
+    ("bigmodel", "Full transcription model", True),
+    ("earstest", "Ears running test", True),
     ("groq", "Groq brain", True),
+    ("braintest", "Brain answer test", True),
     ("voice", "Voice", True),
     ("gemini", "Gemini", False),
     ("freellm", "FreeLLMAPI", False),

@@ -268,6 +268,14 @@ DEFAULTS = {
     "freellm_api_key": "",
     "freellm_base_url": "http://127.0.0.1:31415/v1",
     "freellm_model": "auto",
+    # --- v8.0: BRAIN LEAD ORDER — "freellmapi" (the default)
+    # makes FreeLLMAPI the PRIMARY brain: it answers first on
+    # chat AND agent turns whenever its key is set and the
+    # gateway answers the availability probe; Groq/Gemini/
+    # Ollama stay as the fallback chain exactly as v7.11
+    # composed them. "groq" restores the v7.11 lead order
+    # byte-for-byte. See brain.py Brain._freellm_leads. ---
+    "brain_primary": "freellmapi",
     # --- v4.1: NO headlines at boot — news only when Arjun asks ---
     "briefing_news": False,
     "ollama_model": "llama3.1",

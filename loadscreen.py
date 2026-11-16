@@ -5,10 +5,11 @@ Shown on every start, BEFORE the Command Center: his
 logo, a progress bar with a real percentage, and the
 boot probe's checklist (bootprobe.py) flipping
 ⏳ -> ✓ / ⚠ / ✗ stage by stage. When the probe gate
-opens (all stages resolved, or the 45 s cap), nalox.py
-closes this window and opens the Command Center — the
-interface only ever appears on a machine that has
-finished starting.
+opens (all stages resolved, or the gate cap — 180 s
+since v8.0, whose real-readiness stages legitimately
+take longer), nalox.py closes this window and opens
+the Command Center — the interface only ever appears
+on a machine that has finished starting.
 
 HOSTING mirrors dashboard.py exactly (v5.5.1's lesson):
 the window is a Toplevel on the HUD's Tk root, built
@@ -210,9 +211,11 @@ class LoadingScreen:
                 pass
             root.configure(bg=BG)
             root.resizable(False, False)
-            # Centre a 600x700 window on the screen.
+            # Centre the window on the screen. (v8.0:
+            # taller — the checklist has 14 rows now,
+            # three of them the real-readiness stages.)
             try:
-                w, h = 600, 700
+                w, h = 600, 800
                 sw = root.winfo_screenwidth()
                 sh = root.winfo_screenheight()
                 root.geometry(f"{w}x{h}+"
@@ -226,7 +229,8 @@ class LoadingScreen:
                 pass
             # The window is a boot stage, not an app:
             # its close button is inert while it lives
-            # (it is destroyed by the gate, at most 45 s).
+            # (it is destroyed by the gate, at most the
+            # gate cap).
             try:
                 root.protocol("WM_DELETE_WINDOW",
                               lambda: None)
