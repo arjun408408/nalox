@@ -1,25 +1,10 @@
 Nalox log sync
 Version: 7.11
-Synced: 2026-11-16 15:30:12 (laptop local time)
+Synced: 2026-11-16 15:31:21 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-23:06:52 [VOICE] [voice] starting with google-tts (worked last time)
-23:06:52 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-23:06:52 [SYSTEM] > user: Arjun | lang: en
-23:06:52 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-23:06:52 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-23:06:52 [BRAIN] [brain] Brain: checking…
-23:06:52 [SYSTEM] [prefs] call me: sir | language: bn
-23:06:52 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-23:06:52 [SYSTEM] Nalox v6.14 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-23:06:52 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
-23:06:53 [SYSTEM] [sys] Command Center opened at start
-23:06:53 [NALOX] NALOX: শুভ সন্ধ্যা, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-23:06:54 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-23:06:54 [ERROR] [voice] ElevenLabs unavailable (402 — payment/credits). Using the local voice for this session.
-23:07:02 [VOICE] via google-tts: শুভ সন্ধ্যা, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
 23:07:02 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
 23:07:02 [SYSTEM] [ready] Say 'Nalox' to wake me
 23:07:02 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
@@ -1524,6 +1509,26 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 15:29:17 [SYSTEM] [dashboard] Command Center closed.
 15:29:26 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 15:29:53 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=8 blip=0 short=0 peak=0.0714 dec=7 (t7 b0 s0 r0) dmax=8.0s
+15:30:17 [SYSTEM] [logsync] log sent
+15:30:37 [MIC] [heard] lone and lox wake up.
+15:30:37 [WAKE] [wake] wake up — opening the Command Center
+15:30:37 [SYSTEM] [sys] boot warm-up gate opened (first wake)
+15:30:37 [MIC] [mic] wake word heard
+15:30:38 [WAKE] [wake] wake word heard
+15:30:38 [NALOX] NALOX: Yes Sir,
+15:30:39 [VOICE] via tts-cache: Yes Sir,
+15:30:45 [VOICE] [voice] male voice cache warmed
+15:30:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+15:30:53 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=9 blip=0 short=0 peak=0.1143 dec=10 (t10 b0 s0 r0) dmax=8.0s
+15:30:55 [SYSTEM] [ears] heard via local
+15:30:55 [ERROR] [ears] speech was captured but every transcription path returned empty — answered with the could-not-hear line
+15:30:55 [NALOX] NALOX: দুঃখিত sir, কথাটা শুনতে পাইনি — আবার একবার বলুন।
+15:31:02 [ERROR] Voice path edge-tts failed:
+15:31:08 [SYSTEM] [dashboard] Command Center closed.
+15:31:09 [VOICE] via google-tts: দুঃখিত sir, কথাটা শুনতে পাইনি — আবার একবার বলুন।
+15:31:09 [VOICE] [voice] male voice unavailable — female fallback for this reply
+15:31:20 [SYSTEM] [ears] big local model ready — using large-v3-turbo on cuda (float16)
+15:31:20 [SYSTEM] [ears] big local model loading…
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
