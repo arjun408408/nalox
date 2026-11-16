@@ -1,77 +1,10 @@
 Nalox log sync
 Version: 8.1
-Synced: 2026-11-16 19:22:06 (laptop local time)
+Synced: 2026-11-16 19:32:13 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-12:02:27 [BRAIN] [tool] read_my_screen
-12:02:27 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-12:02:28 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-12:02:29 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-12:02:33 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-12:02:42 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-12:02:42 [SYSTEM] [timing] wake→record 8.5s, transcribe 3.2s, brain 7.5s, speak 9.3s
-12:02:42 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:02:47 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:02:53 [SYSTEM] [ears] heard via cloud:groq
-12:02:53 [MIC] [heard] তুমি আমা কাদ ছুন্দে মাছ্ছ আখন?
-12:02:53 [YOU] [mic] heard: তুমি আমা কাদ ছুন্দে মাছ্ছ আখন?
-12:02:54 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-12:02:54 [BRAIN] [brain] chat race: Groq answered first (1187 ms)
-12:02:54 [NALOX] NALOX: আমি আপনার ল্যাপটপের ভেতরে — চাইলে বলবেন আমি গিয়ে কোথায় নেমে বসি, আর কিছু করতে পারি, স্যার?
-12:02:55 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-12:02:56 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-12:03:04 [VOICE] via google-tts: আমি আপনার ল্যাপটপের ভেতরে — চাইলে বলবেন আমি গিয়ে কোথায় নেমে বসি, আর কিছু করতে পারি, স্যার?
-12:03:04 [SYSTEM] [timing] wake→record 3.2s, transcribe 2.9s, brain 1.2s, speak 9.7s
-12:03:04 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:03:09 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-12:03:37 [SYSTEM] [ears] heard via local
-12:03:55 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:04:00 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:04:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=6 blip=3 short=0 peak=0.1385 dec=6 (t5 b0 s1 r0) dmax=10.0s
-12:04:45 [VOICE] via google-tts: নোটপ্যাড খুলছি।
-12:05:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=3 seg=5 blip=6 short=0 peak=0.1204 dec=1 (t1 b0 s0 r0) dmax=0.0s
-12:05:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:05:22 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:05:27 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:05:41 [SYSTEM] [logsync] log sent
-12:06:09 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=3 seg=16 blip=0 short=0 peak=0.2467 dec=8 (t5 b0 s3 r0) dmax=16.0s
-12:06:57 [MIC] [mic] wake word heard
-12:07:00 [WAKE] [wake] wake word heard
-12:07:00 [NALOX] NALOX: Yes Sir,
-12:07:01 [VOICE] via tts-cache: Yes Sir,
-12:07:06 [SYSTEM] [ears] heard via cloud:groq
-12:07:06 [MIC] [heard] what's up?
-12:07:06 [YOU] [mic] heard: what's up?
-12:07:07 [BRAIN] [brain] chat race: Groq answered first (1250 ms)
-12:07:07 [NALOX] NALOX: সব ঠিক আছে, স্যার — অপেক্ষায় আছি। বলুন, আজ কী করি?
-12:07:07 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-12:07:09 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-12:07:09 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=2 short=0 peak=0.2437 dec=13 (t12 b0 s1 r0) dmax=16.9s
-12:07:10 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-12:07:12 [VOICE] via google-tts: সব ঠিক আছে, স্যার — অপেক্ষায় আছি।
-12:07:15 [VOICE] via google-tts: বলুন, আজ কী করি?
-12:07:15 [SYSTEM] [timing] wake→record 2.9s, transcribe 2.9s, brain 1.3s, speak 7.8s
-12:07:15 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:07:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-12:07:29 [SYSTEM] [ears] heard via cloud:groq
-12:07:29 [MIC] [heard] তুমি আমা জন্য একটা গেম ওপেন করে যেটা করোমে প্রক্কি গেম সাচ করে পাবে সেই গেম ওপেন করে তুমি
-12:07:29 [YOU] [mic] heard: তুমি আমা জন্য একটা গেম ওপেন করে যেটা করোমে প্রক্কি গেম সাচ করে পাবে সেই গেম ওপেন করে তুমি
-12:07:30 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-12:07:30 [BRAIN] [tool] google_search {'query': 'best free browser casino games'}
-12:07:31 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-12:07:32 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-12:07:36 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-12:07:45 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-12:07:46 [SYSTEM] [timing] wake→record 9.2s, transcribe 3.5s, brain 7.5s, speak 10.0s
-12:07:46 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-12:07:52 [SYSTEM] [ears] heard via cloud:groq
-12:07:52 [MIC] [heard] ক্যাক্য দাস্যুন মিকো তালে ক্যাক্য দাস্যুন মিকো
-12:07:52 [YOU] [mic] heard: ক্যাক্য দাস্যুন মিকো তালে ক্যাক্য দাস্যুন মিকো
-12:07:53 [BRAIN] [brain] chat race: Groq answered first (1265 ms)
-12:07:53 [NALOX] NALOX: শুনতে পেলাম, তবে বুঝতে পারলাম না কী বলা হলো, স্যার। বাজাবেন নাকি "ক্যাকু" গানটা?
-12:07:54 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
 12:07:55 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
 12:07:55 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
 12:08:01 [VOICE] via google-tts: শুনতে পেলাম, তবে বুঝতে পারলাম না কী বলা হলো, স্যার।
@@ -1475,6 +1408,72 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 19:21:25 [VOICE] [voice] male voice unavailable — female fallback for this reply
 19:21:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=1 short=0 peak=0.0839 dec=10 (t10 b0 s0 r0) dmax=0.0s
 19:21:48 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:22:09 [SYSTEM] [logsync] log sent
+19:22:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=14 blip=3 short=0 peak=0.0684 dec=11 (t11 b0 s0 r0) dmax=8.0s
+19:23:07 [VOICE] via google-tts: ক্রোম খুলছি।
+19:23:07 [VOICE] [voice] male voice unavailable — female fallback for this reply
+19:23:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=2 seg=11 blip=4 short=0 peak=0.0497 dec=8 (t8 b0 s0 r0) dmax=11.7s
+19:23:44 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:23:53 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:24:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=3 short=0 peak=0.0630 dec=9 (t9 b0 s0 r0) dmax=8.0s
+19:25:03 [MIC] [heard] nalox, knh, আকো, আন, কো, ন, ছো, ণো, মো, বাাজো, কো, ঺, বর, काš, বর, মো, বমব, আো, মো, ব, কো, গ,কব, মব঩, আর, ছো, ঊ, মব,ো, আবো, লো,মব, আব, ো,ব,oup, ক, ম
+19:25:06 [MIC] [mic] wake word heard
+19:25:10 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:25:10 [WAKE] [wake] wake word heard
+19:25:10 [NALOX] NALOX: Yes Sir,
+19:25:11 [VOICE] via tts-cache: Yes Sir,
+19:25:12 [YOU] [mic] heard: nice, kaya nais kalamat ka
+19:25:19 [BRAIN] [cot-guard] FreeLLMAPI reply rejected — internal reasoning, not an answer; trying the next provider
+19:25:19 [BRAIN] [brain] primary FreeLLMAPI failed: no usable answer — falling back
+19:25:19 [BRAIN] [brain] Groq model allam-2-7b is gone — trying openai/gpt-oss-120b
+19:25:20 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.5-flash-lite
+19:25:20 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
+19:25:21 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+19:25:21 [BRAIN] [brain] chat race: Groq answered first (1797 ms)
+19:25:21 [NALOX] NALOX: সব ঠিক আছে স্যার, আর কী করতে পারি?
+19:25:21 [BRAIN] [brain] Muse Wonder: billing required (HTTP 402) — parked for this session; the other brains keep answering
+19:25:28 [VOICE] via edge-tts: সব ঠিক আছে স্যার, আর কী করতে পারি?
+19:25:28 [SYSTEM] [timing] wake→record 4.5s, transcribe 5.5s, brain 8.3s, speak 7.5s
+19:25:28 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+19:25:31 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=8 blip=4 short=0 peak=0.1004 dec=7 (t7 b0 s0 r0) dmax=2.9s
+19:25:39 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:25:42 [SYSTEM] [ears] heard via cloud:groq
+19:25:42 [MIC] [heard] লোক্স তুমি অমার দেখস্টো পে যে হটসাপ খুলায়া আছে সেখানে যেভে যাদের আমি রিপাই দিই নিতাদের কে রিপাই দিই বল্বে আমি নাইলোক্স কি হেরকো ত্বালে
+19:25:42 [YOU] [mic] heard: লোক্স তুমি অমার দেখস্টো পে যে হটসাপ খুলায়া আছে সেখানে যেভে যাদের আমি রিপাই দিই নিতাদের কে রিপাই দিই বল্বে আমি নাইলোক্স কি হেরকো ত্বালে
+19:25:42 [BRAIN] [brain] config reloaded (models/preferences)
+19:25:43 [BRAIN] [brain] Groq: models on this account (11): canopylabs/orpheus-v1-english, whisper-large-v3-turbo, canopylabs/orpheus-arabic-saudi, meta-llama/llama-prompt-guard-2-86m, whisper-large-v3, meta-llama/llama-prompt-guard-2-22m, openai/gpt-oss-safeguard-20b, qwen/qwen3.8-27b, openai/gpt-oss-20b, openai/gpt-oss-120b, allam-2-7b
+19:25:43 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b
+19:25:43 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+19:25:43 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+19:25:48 [BRAIN] [tool] read_my_screen
+19:25:55 [BRAIN] [length-guard] FreeLLMAPI reply trimmed to two sentences
+19:25:55 [BRAIN] [brain] primary FreeLLMAPI answered (12422 ms)
+19:25:55 [NALOX] NALOX: The user is speaking in Bengali but with some phonetic spelling issues. Let me try to understand what they're saying.
+19:26:03 [VOICE] via edge-tts: The user is speaking in Bengali but with some phonetic spelling issues.
+19:26:11 [VOICE] via edge-tts: Let me try to understand what they're saying.
+19:26:11 [SYSTEM] [timing] wake→record 8.5s, transcribe 5.6s, brain 12.4s, speak 16.1s
+19:26:11 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+19:26:16 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+19:26:31 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
+19:26:51 [SYSTEM] [ears] heard via local
+19:27:02 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:27:08 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:27:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=4 short=0 peak=0.1422 dec=11 (t11 b0 s0 r0) dmax=8.0s
+19:28:06 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:28:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:28:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=16 blip=1 short=0 peak=0.1541 dec=13 (t13 b0 s0 r0) dmax=9.8s
+19:29:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=13 blip=4 short=0 peak=0.1225 dec=12 (t12 b0 s0 r0) dmax=0.0s
+19:29:38 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:29:44 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:29:49 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:30:06 [MIC] [heard] 何をか?
+19:30:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=14 blip=1 short=0 peak=0.1089 dec=10 (t8 b0 s2 r0) dmax=10.0s
+19:30:45 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:31:15 [MIC] [heard] δηγιουθεί με λεπαιγία.
+19:31:31 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=1 short=0 peak=0.0545 dec=8 (t7 b0 s1 r0) dmax=13.0s
+19:31:36 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:31:59 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+19:32:13 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
