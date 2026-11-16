@@ -119,7 +119,11 @@ _NEVER_FILES = {"config.json", "custom_commands.json",
                 "logsync_state.json",
                 # v6.10: the ears ladder's remembered
                 # resolution — same rule again.
-                "ears_state.json"}
+                "ears_state.json",
+                # v7.10: the brain's persisted dead-model
+                # memory (item P3) — his machine's own
+                # state, never shipped or overwritten.
+                "dead_models.json"}
 _NEVER_SUFFIXES = (".flag", ".lock", ".db", ".sqlite",
                    ".sqlite3")
 _NEVER_DIRS = {"logs", "captures", "leads", "demos",

@@ -906,6 +906,112 @@ _MODEL_MISS = object()
 _MODEL_RATELIMITED = object()
 MODEL_RATELIMIT_COOLDOWN_S = 60.0
 
+# v7.10 (item P2): QUOTA-AWARE PARKING. Groq's free
+# quotas are PER MODEL (each of qwen/qwen3.8-27b,
+# openai/gpt-oss-120b, openai/gpt-oss-20b: 30 RPM,
+# 1,000 requests/day, 200K tokens/day — field +
+# provider docs, 2026-11-16). A 429 that comes back
+# within minutes of a park is almost never the
+# per-minute limit recovering — it is the DAILY token
+# budget gone, and re-asking that model every 60 s
+# wastes the surviving models' turns too. So: a SECOND
+# 429 within RATELIMIT_ESCALATION_WINDOW_S of the
+# model's first park escalates the park to
+# MODEL_RATELIMIT_ESCALATED_COOLDOWN_S (30 min, logged
+# distinctly), and a model that has escalated stays at
+# 30 min for its third and later parks this session —
+# a daily quota does not refill inside a session. A
+# model that only ever parked once starts a fresh
+# 60 s episode after the window, exactly as v7.9.
+RATELIMIT_ESCALATION_WINDOW_S = 600.0
+MODEL_RATELIMIT_ESCALATED_COOLDOWN_S = 1800.0
+
+# v7.10 (item P1): OLLAMA AUTO-START. The field's chat
+# safety net fired on 2026-11-16 and logged "Ollama
+# failed: not reachable at http://localhost:11434" —
+# the server simply was not RUNNING (nobody had opened
+# the Ollama app), so the free local brain existed on
+# disk but never stood a chance. Now, when an Ollama
+# attempt is about to be made and the server does not
+# answer, Nalox starts `ollama serve` itself (hidden,
+# CREATE_NO_WINDOW) if Ollama is installed, and polls
+# readiness for at most OLLAMA_AUTOSTART_POLL_S before
+# the attempt proceeds. Guardrails: at most ONE
+# auto-start attempt per OLLAMA_AUTOSTART_MIN_INTERVAL_S;
+# a server that already answers is never restarted;
+# not installed = v7.9 behaviour byte-for-byte.
+OLLAMA_AUTOSTART_POLL_S = 20.0
+OLLAMA_AUTOSTART_MIN_INTERVAL_S = 600.0
+
+# v7.10 (item P3): DEAD-MODEL MEMORY PERSISTS. v7.7's
+# _dead_models was session-only, so every boot re-paid
+# Gemini's serial dead hop (2.5-flash -> 2.0-flash ->
+# 2.5-flash-lite, ~3-9 s) before flash-latest answered.
+# The set now persists to dead_models.json (the
+# voice_state.json pattern; updater deny-listed, never
+# shipped) with a wall-clock timestamp per entry.
+# Entries older than DEAD_MODEL_TTL_S are dropped at
+# load — models do come back, and a week-old corpse
+# gets one fresh probe. The load merges INTO the
+# session set; the walk filters exactly as v7.7, so a
+# model present in a fresh /models discovery fetch is
+# callable unless an UNEXPIRED dead mark says it 404'd
+# in a real walk — persistence never widens the set
+# beyond what a walk actually proved.
+DEAD_MODELS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "dead_models.json")
+DEAD_MODEL_TTL_S = 7 * 24 * 3600.0
+
+
+def _load_dead_models():
+    """The persisted dead-model marks, fresh entries
+    only: {(provider, model_key): marked_at_wall}.
+    Corrupt / missing / odd-shaped files all read as
+    empty — a damaged state file must never cost Nalox
+    a working model. Never raises."""
+    try:
+        with open(DEAD_MODELS_PATH, "r",
+                  encoding="utf-8") as fh:
+            data = json.load(fh)
+        entries = data.get("dead") if isinstance(
+            data, dict) else None
+        if not isinstance(entries, list):
+            return {}
+        now = time.time()
+        out = {}
+        for item in entries:
+            try:
+                provider, mkey, ts = item
+                ts = float(ts)
+            except Exception:
+                continue
+            if now - ts > DEAD_MODEL_TTL_S:
+                continue
+            out[(str(provider), str(mkey))] = ts
+        return out
+    except Exception:
+        return {}
+
+
+def _save_dead_models(times):
+    """Persist the dead-model marks (guarded — a failed
+    write costs the optimisation, never the turn).
+    Entries past the TTL are pruned on the way out so
+    the file cannot grow stale corpses forever."""
+    try:
+        now = time.time()
+        entries = [[prov, mkey, ts]
+                   for (prov, mkey), ts
+                   in sorted(times.items())
+                   if now - float(ts) <= DEAD_MODEL_TTL_S]
+        with open(DEAD_MODELS_PATH, "w",
+                  encoding="utf-8") as fh:
+            json.dump({"dead": entries}, fh,
+                      ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
 # v7.9 (item B): the chat path's Ollama safety net is ONE
 # bounded attempt — this per-call HTTP budget, the first
 # live candidate only — never the full 30 s local walk.
@@ -2520,10 +2626,29 @@ class Brain:
         # these out (see _agent_openai_walk): a model proven
         # dead is never requested again this session, and a
         # provider whose candidates are ALL dead reports
-        # unavailable at once instead of hopping. Session
-        # scope only — a restart re-probes, exactly like
-        # the Groq walk's remembered working model.
+        # unavailable at once instead of hopping.
+        # v7.10 (item P3): the set now PERSISTS across
+        # restarts (dead_models.json, 7-day expiry — see
+        # DEAD_MODELS_PATH), so the boot no longer
+        # re-pays the hop every morning; _dead_model_times
+        # carries each mark's wall-clock timestamp for
+        # the save. Expired marks were dropped by the
+        # load, so anything in the set is a live corpse.
         self._dead_models = set()
+        self._dead_model_times = {}
+        try:
+            _persisted_dead = _load_dead_models()
+            for _dkey, _dts in _persisted_dead.items():
+                self._dead_models.add(_dkey)
+                self._dead_model_times[_dkey] = _dts
+            if _persisted_dead:
+                _dline = (f"[brain] remembered "
+                          f"{len(_persisted_dead)} dead "
+                          f"models from last sessions")
+                _lb("BRAIN", _dline)
+                log.info(_dline)
+        except Exception:
+            pass
         # v7.9: RATE-LIMIT COOLDOWNS — (provider, model)
         # pairs parked by a 429, mapped to their monotonic
         # expiry (see _park_model_ratelimit). A parked model
@@ -2532,6 +2657,26 @@ class Brain:
         # so nothing here is remembered across restarts and
         # the walk never reports it "gone".
         self._model_cooldowns = {}
+        # v7.10 (item P2): PARK HISTORY for the quota
+        # escalation — (provider, model) -> {"first":
+        # monotonic of this episode's first park,
+        # "level": 1 or 2}. A second 429 inside the
+        # escalation window (or any later park once the
+        # model has escalated) parks for 30 min instead
+        # of 60 s: the daily quota is gone, not the
+        # minute. Session scope only — a restart starts
+        # the model at level 1 again, which is correct:
+        # a new day may have refilled the quota.
+        self._ratelimit_history = {}
+        # v7.10 (item P1): OLLAMA AUTO-START state — the
+        # monotonic time of the last auto-start ATTEMPT
+        # (0.0 = never; attempts are rationed to one per
+        # OLLAMA_AUTOSTART_MIN_INTERVAL_S) and the
+        # once-per-session flag for the not-installed
+        # line, so a machine without Ollama hears the
+        # explanation once, not on every fallback.
+        self._ollama_autostart_last = 0.0
+        self._ollama_notinstalled_noted = False
         # v7.9 (item D): THIS TURN's failure causes, a set
         # drawn from {"ratelimit", "auth", "other"}, fed by
         # _brain_fail (by HTTP status) and by the 429 park.
@@ -5910,6 +6055,116 @@ class Brain:
         except Exception:
             return False
 
+    # ------------------------------------------------ v7.10 P1
+    def _ollama_executable(self):
+        """The path of the `ollama` executable if Ollama
+        is installed, else None (v7.10, item P1).
+        Resolution is defensive — PATH first, then the
+        standard Windows install locations (the Ollama
+        installer's per-user path, then the machine-wide
+        one); ANY failure reads as "not installed", and
+        a machine without Ollama keeps v7.9 behaviour
+        byte-for-byte. Never raises."""
+        try:
+            import shutil
+            found = shutil.which("ollama")
+            if found:
+                return found
+        except Exception:
+            pass
+        try:
+            if os.name == "nt":
+                candidates = []
+                local_app = os.environ.get("LOCALAPPDATA")
+                if local_app:
+                    candidates.append(os.path.join(
+                        local_app, "Programs", "Ollama",
+                        "ollama.exe"))
+                program_files = os.environ.get("ProgramFiles")
+                if program_files:
+                    candidates.append(os.path.join(
+                        program_files, "Ollama",
+                        "ollama.exe"))
+                for cand in candidates:
+                    if os.path.isfile(cand):
+                        return cand
+        except Exception:
+            pass
+        return None
+
+    def _maybe_autostart_ollama(self,
+                                announce_not_installed=True):
+        """Start the local Ollama server if it is merely
+        not RUNNING (v7.10, item P1). Returns True when
+        the server answers by the end of the call.
+
+        Called when an Ollama attempt is about to be
+        made and the server does not answer: the chat
+        safety net, the agent fallback (both through
+        _agent_ollama) and the boot offline-brain probe
+        (_note_ollama_at_boot). Guardrails: a server
+        that already answers is NEVER restarted (the
+        first probe returns at once); at most ONE
+        auto-start attempt per
+        OLLAMA_AUTOSTART_MIN_INTERVAL_S no matter the
+        outcome; the readiness poll is the only wait
+        (OLLAMA_AUTOSTART_POLL_S), so a voice turn is
+        never blocked longer than that. Outcomes log
+        ONE line each: "[brain] Ollama server
+        auto-started" on success; "[brain] Ollama not
+        installed — local brain unavailable" at most
+        once per session when there is nothing to start
+        (the boot probe passes announce_not_installed=
+        False — it already owns a quiet not-detected
+        line, and a not-installed machine must not hear
+        the story twice). Never raises."""
+        try:
+            if self._probe_ollama_once():
+                return True
+            now = time.monotonic()
+            last = getattr(self, "_ollama_autostart_last",
+                           0.0)
+            if last and (now - last
+                         < OLLAMA_AUTOSTART_MIN_INTERVAL_S):
+                return False
+            self._ollama_autostart_last = now
+            exe = self._ollama_executable()
+            if not exe:
+                if announce_not_installed and not getattr(
+                        self, "_ollama_notinstalled_noted",
+                        False):
+                    self._ollama_notinstalled_noted = True
+                    line = ("[brain] Ollama not installed "
+                            "— local brain unavailable")
+                    _lb("BRAIN", line)
+                    log.info(line)
+                return False
+            try:
+                import subprocess
+                subprocess.Popen(
+                    [exe, "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    **actions._hidden_console_kwargs())
+            except Exception:
+                return False
+            deadline = (time.monotonic()
+                        + OLLAMA_AUTOSTART_POLL_S)
+            while time.monotonic() < deadline:
+                if self._probe_ollama_once():
+                    line = ("[brain] Ollama server "
+                            "auto-started")
+                    _lb("BRAIN", line)
+                    log.info(line)
+                    return True
+                time.sleep(0.5)
+            log.info("[brain] Ollama auto-start "
+                     "attempted — server still not "
+                     "reachable")
+            return False
+        except Exception:
+            return False
+
     def _start_provider_probe(self):
         """Refresh the Ollama availability cache in a daemon
         thread — never blocks startup speech or a command."""
@@ -7007,10 +7262,35 @@ class Brain:
             url = (self.cfg.get("ollama_url")
                    or "http://localhost:11434").rstrip("/")
             url = url.replace("://localhost", "://127.0.0.1")
-            resp = requests.get(url + "/api/tags", timeout=1.5)
-            if resp.status_code != 200:
-                log.info(quiet)
-                return
+            resp = None
+            try:
+                resp = requests.get(url + "/api/tags",
+                                    timeout=1.5)
+            except Exception:
+                resp = None
+            if resp is None or resp.status_code != 200:
+                # v7.10 (item P1): not answering is not
+                # the same as not installed — the server
+                # may simply not be running. One rationed
+                # auto-start attempt (silent about
+                # not-installed: this note already owns
+                # the quiet line below), then look again.
+                _started = False
+                try:
+                    _started = bool(
+                        self._maybe_autostart_ollama(
+                            announce_not_installed=False))
+                except Exception:
+                    _started = False
+                if _started:
+                    try:
+                        resp = requests.get(
+                            url + "/api/tags", timeout=1.5)
+                    except Exception:
+                        resp = None
+                if resp is None or resp.status_code != 200:
+                    log.info(quiet)
+                    return
             installed = []
             try:
                 for item in (resp.json().get("models") or []):
@@ -7126,6 +7406,31 @@ class Brain:
         (v7.8) — the chat race fields it no longer."""
         return getattr(self, "_muse_parked", None) is not None
 
+    # ------------------------------------------------ v7.10 P3
+    def _mark_model_dead(self, provider, model):
+        """Record a walk-proven dead model (v7.7's
+        session memory, v7.10 item P3: now PERSISTED).
+        Adds the (provider, model) pair to _dead_models
+        with a wall-clock timestamp and saves the set to
+        dead_models.json, so the next boot starts out
+        knowing the corpse instead of re-paying its 404
+        hop. Already-known pairs keep their ORIGINAL
+        timestamp (the 7-day expiry runs from the first
+        proof, not the latest reminder) and do not
+        re-save. Never raises."""
+        try:
+            key = (provider, _model_key(model))
+            if key in self._dead_models:
+                return
+            self._dead_models.add(key)
+            try:
+                self._dead_model_times[key] = time.time()
+                _save_dead_models(self._dead_model_times)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     # ------------------------------------------------ v7.9 429
     def _park_model_ratelimit(self, provider, model, label):
         """Park ONE model for the rate-limit cooldown
@@ -7137,21 +7442,54 @@ class Brain:
         turn's cause set records "ratelimit" for the
         truthful fallback line (item D). Never raises; the
         model is NOT added to _dead_models — it is expected
-        back, and the walk must never call it gone."""
+        back, and the walk must never call it gone.
+
+        v7.10 (item P2): QUOTA-AWARE ESCALATION — Groq's
+        free quota is per model per DAY (200K tokens), so
+        a model that 429s AGAIN within
+        RATELIMIT_ESCALATION_WINDOW_S of its first park
+        is not riding out a minute limit, its daily
+        budget is gone: the park becomes
+        MODEL_RATELIMIT_ESCALATED_COOLDOWN_S (30 min)
+        with its own log line, and once a model has
+        escalated, its third and later parks stay at
+        30 min for the rest of the session. A model that
+        only ever parked once starts over at 60 s after
+        the window — v7.9 behaviour, untouched."""
         try:
             key = (provider, _model_key(model))
             now = time.monotonic()
             if self._model_cooldowns.get(key, 0.0) > now:
                 return
-            self._model_cooldowns[key] = (
-                now + MODEL_RATELIMIT_COOLDOWN_S)
+            hist = self._ratelimit_history.get(key)
+            escalated = False
+            if hist is not None:
+                if hist.get("level", 1) >= 2:
+                    escalated = True
+                elif (now - hist.get("first", now)
+                        <= RATELIMIT_ESCALATION_WINDOW_S):
+                    escalated = True
+            if escalated:
+                self._ratelimit_history[key] = {
+                    "first": (hist or {}).get("first", now),
+                    "level": 2}
+                self._model_cooldowns[key] = (
+                    now + MODEL_RATELIMIT_ESCALATED_COOLDOWN_S)
+                line = (f"[brain] {label} model {model} "
+                        f"rate-limited again — parked 30m "
+                        f"(likely daily quota)")
+            else:
+                self._ratelimit_history[key] = {
+                    "first": now, "level": 1}
+                self._model_cooldowns[key] = (
+                    now + MODEL_RATELIMIT_COOLDOWN_S)
+                line = (f"[brain] {label} model {model} "
+                        f"rate-limited — parked 60s, "
+                        f"trying next")
             try:
                 self._turn_fail_causes.add("ratelimit")
             except Exception:
                 pass
-            line = (f"[brain] {label} model {model} "
-                    f"rate-limited — parked 60s, "
-                    f"trying next")
             _lb("BRAIN", line)
             log.info(line)
         except Exception:
@@ -9003,13 +9341,27 @@ class Brain:
         except Exception:
             pass
         url = self.cfg.get("ollama_url", "http://localhost:11434").rstrip("/")
+        _reachable = False
         try:
-            if requests.get(url + "/api/tags",
-                            timeout=1.5).status_code != 200:
-                self._ollama_last_error = (
-                    f"not reachable at {url}")
-                return None
+            _reachable = requests.get(
+                url + "/api/tags",
+                timeout=1.5).status_code == 200
         except Exception:
+            _reachable = False
+        if not _reachable:
+            # v7.10 (item P1): unreachable used to end the
+            # attempt here — but the field's server was
+            # simply not RUNNING. Give auto-start its one
+            # rationed chance; if it brings the server up
+            # the attempt proceeds, and if Ollama is not
+            # installed the failure below is v7.9's line,
+            # byte-for-byte.
+            try:
+                _reachable = bool(
+                    self._maybe_autostart_ollama())
+            except Exception:
+                _reachable = False
+        if not _reachable:
             try:
                 self._ollama_last_error = (
                     f"not reachable at {url}")
@@ -9051,12 +9403,10 @@ class Brain:
                 last_miss = cand
                 # v7.7 (item I): this name is dead for the
                 # rest of the session — no later turn pays
-                # for its 404 again.
-                try:
-                    self._dead_models.add(
-                        ("ollama", _model_key(cand)))
-                except Exception:
-                    pass
+                # for its 404 again. v7.10 (item P3): the
+                # mark persists, so no later BOOT pays for
+                # it either (7-day expiry).
+                self._mark_model_dead("ollama", cand)
                 if idx + 1 < len(candidates):
                     _lb("BRAIN",
                         f"[brain] Ollama model {cand} is not "
@@ -9486,12 +9836,10 @@ class Brain:
                 last_miss = cand
                 # v7.7 (item I): this name is dead for the
                 # rest of the session — no later turn pays
-                # for its 404 again.
-                try:
-                    self._dead_models.add(
-                        (provider, _model_key(cand)))
-                except Exception:
-                    pass
+                # for its 404 again. v7.10 (item P3): the
+                # mark persists, so no later BOOT pays for
+                # it either (7-day expiry).
+                self._mark_model_dead(provider, cand)
                 if idx + 1 < len(candidates):
                     _lb("BRAIN",
                         f"[brain] {label} model {cand} is gone "

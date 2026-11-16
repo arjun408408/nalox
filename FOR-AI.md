@@ -1359,3 +1359,183 @@ becomes the v7.9 rule). All provider traffic in
 tests is stubbed; the owner's real Groq rate limit
 and Ollama's real 500 cannot be reproduced on the
 build VM.
+
+## v7.10 — "free brain pool এবার নিজে নিজে চলবে" (2026-11-16)
+
+OWNER ORDER (2026-11-16 14:30 IST): no new signups,
+and the paid Muse Wonder path is DECLINED (his
+pasted Wonder key authenticates but the bench
+returned HTTP 402 billing_not_configured — Wonder
+stays dormant; this release does not touch the Muse
+code). Polish the EXISTING free pool — Groq + Gemini
++ Ollama — so it works as one reliable free brain.
+Three items, all in brain.py unless noted:
+
+P1 — OLLAMA AUTO-START. Field evidence (v7.9 sync):
+the chat safety net fired and logged "[brain] chat
+fallback: Ollama failed: not reachable at
+http://localhost:11434" — the Ollama SERVER was
+simply not running (the app was never opened), so
+the local brain existed on disk but was never
+reachable. Now `_maybe_autostart_ollama()` runs when
+an Ollama attempt is about to be made and the server
+does not answer — the attempt sites are
+`_agent_ollama` (which serves BOTH the chat safety
+net and the agent fallback) and the boot
+offline-brain probe `_note_ollama_at_boot`. If
+Ollama is installed (`_ollama_executable`: PATH,
+then %LOCALAPPDATA%\Programs\Ollama\ollama.exe,
+then %ProgramFiles%\Ollama\ollama.exe; any failure =
+not installed) it spawns `ollama serve` with
+`actions._hidden_console_kwargs()` (CREATE_NO_WINDOW)
+and polls `_probe_ollama_once` for up to
+OLLAMA_AUTOSTART_POLL_S (20 s) before the attempt
+proceeds. Guardrails: a server that already answers
+is never restarted; at most ONE auto-start attempt
+per OLLAMA_AUTOSTART_MIN_INTERVAL_S (600 s); the
+readiness poll is the only added wait. Outcomes log
+one line each: "[brain] Ollama server auto-started"
+/ "[brain] Ollama not installed — local brain
+unavailable" (the latter at most once per session,
+and suppressed from the boot probe, which already
+owns its quiet not-detected line). If Ollama is not
+installed, behaviour is byte-identical to v7.9 —
+same reachability failure, same `_ollama_last_error`.
+
+P2 — QUOTA-AWARE PARKING. Groq's free quotas are
+PER MODEL (provider docs + field, 2026-11-16): each
+of qwen/qwen3.8-27b, openai/gpt-oss-120b and
+openai/gpt-oss-20b gets 30 RPM, 1,000 requests/day
+and 200K tokens/day. A morning of heavy testing
+burns ONE model's daily tokens while the others sit
+fresh — that asymmetry is what produced the 429
+storms. v7.9 parked a 429'd model for 60 s;
+`_park_model_ratelimit` now keeps a per-model
+history (`_ratelimit_history`): a SECOND 429 within
+RATELIMIT_ESCALATION_WINDOW_S (600 s) of the first
+park escalates the park to
+MODEL_RATELIMIT_ESCALATED_COOLDOWN_S (1800 s) with
+the distinct line "[brain] … rate-limited again —
+parked 30m (likely daily quota)", and once a model
+has escalated, its third and later parks stay at
+30 min for the rest of the session (a daily quota
+does not refill inside a session). A model that
+only ever parked once starts a fresh 60 s episode
+after the window. The escalation lives INSIDE the
+shared park machinery, so the chat walk, the race's
+Groq racer and the agent loop all inherit it — no
+forked logic. History is session-only on purpose:
+after a restart (possibly a new day) a model starts
+at level 1 again. All other v7.9 429 behaviour
+(advance, cause set, cooldown filtering) unchanged.
+
+P3 — DEAD-MODEL MEMORY PERSISTS. v7.7's
+`_dead_models` was session-only, so every boot
+re-paid Gemini's dead hop (2.5-flash -> 2.0-flash
+-> 2.5-flash-lite, ~3–9 s of "model is gone" hops)
+before gemini-flash-latest answered. Marks now go
+through `_mark_model_dead(provider, model)` (the
+two former `.add` sites: the OpenAI-compatible walk
+and the Ollama walk), which stamps each pair with
+`time.time()` in `_dead_model_times` and saves to
+dead_models.json (`_save_dead_models`, the
+voice_state.json pattern: module-dir path, guarded,
+corrupt reads as empty). At Brain construction
+`_load_dead_models()` merges the fresh marks into
+the session set and logs "[brain] remembered N dead
+models from last sessions" only when N > 0. Entries
+older than DEAD_MODEL_TTL_S (7 days) are dropped at
+load AND pruned at save — models do come back, and
+a week-old corpse earns one fresh probe. The file
+is in updater.py's `_NEVER_FILES` deny list and in
+.gitignore: his machine's state, never shipped,
+never overwritten by an update. Self-discovery is
+not fought: the walk's dead filter is exactly
+v7.7's, so a model present in a fresh /models fetch
+is callable unless an UNEXPIRED mark records a real
+walk-proven 404 — persistence never invents corpses.
+
+P4 — FIRST-WAKE BOOT DIET (steered in during the
+build; owner field report 2026-11-16 14:41 IST:
+after boot his speech does not get through until
+the first successful wake — only then does
+everything respond; worker-slow lines land inside
+the first minute of sessions while the boot minute
+carries the command-lane preload, brain validation,
+logsync, the updater check and v7.9's male cache
+warming). nalox.py now has a first-wake BOOT GATE
+(`_boot_gate`, `BOOT_GATE_DEADLINE_S` = 120 s): it
+opens on the first successful wake (the `_on_wake`
+callback calls `_open_boot_gate("first wake")`) or
+from a timer at 120 s (`_open_boot_gate("120s")`),
+exactly once, logging "[sys] boot warm-up gate
+opened (first wake)" / "(120s)" via hudlog. The
+male fixed-line cache warming — a NETWORK synthesis
+pass — is deferred behind the gate
+(`_after_boot_gate(...)` at the v7.9 call site);
+the warming code in voice.py is unchanged, and if
+neither trigger fired it still runs at 120 s.
+AUDIT of the other boot starters, with decisions:
+logsync's first sync fires at ~75 s (FIRST_DELAY_S)
+— already OUTSIDE the first minute, a single small
+upload, and it is the diagnostic channel every fix
+is verified through: LEFT AS IS. The updater's
+boot check fires at ~+60 s (CHECK_FIRST_DELAY_S) —
+one tiny version probe whose download/apply cost
+is paid only when a new version exists; it is the
+mechanism that self-delivered v7.4/v7.6/v7.8 in the
+field and the v7.9/v7.10 auto-update guarantee
+(5-min cadence + Command-Center poke + this check)
+rides on it: LEFT AS IS, deliberately — moving it
+to the gate would delay a waiting update by up to
+a minute for no measured decode relief. The
+ElevenLabs boot probe is one tiny background
+synthesis on the voice critical path (it restores
+the owner's chosen voice): LEFT AS IS. Ears start,
+brain validation, the greeting and the logbook are
+critical path and exempt by the owner's own rule.
+Wake-lane priority raise and thread counts are
+untouched.
+
+NOT in this release: the Muse Wonder code (v7.8/
+v7.9) is untouched and dormant without a working
+paid key; no new providers; no Settings changes.
+
+TESTS: test_v710 pins P1 (installed + unreachable ->
+hidden serve spawn + readiness poll + attempt
+proceeds and answers; not installed -> zero spawns
+and the v7.9 failure line byte-for-byte; already
+running -> never restarted; attempt rationing),
+P2 (first 429 -> 60 s park + v7.9 line; second 429
+inside 10 min -> 30 m park + distinct line; third
+stays 30 m; a lone park after the window resets to
+60 s), P3 (marks survive a simulated restart; the
+boot line fires only when N > 0; a 7-day-old mark
+expires and the model is callable again; the state
+file is deny-listed), P4 (deferred warming not
+invoked behind a shut gate; invoked after a
+simulated first wake; invoked at the deadline with
+no wake; the gate line logs exactly once, naming
+its trigger). Disclosed amendments to older
+suites: (1) the standard version-needle sweep
+7.9 -> 7.10 in 29 suites + test_v79's S1/S4/S5
+(test_v79's S2 per-version banner pin for 7.9 is
+preserved — the dashboard table keeps every
+shipped version's headline); (2) test_v65 +
+test_v74 Brain factories isolate DEAD_MODELS_PATH
+per construction — P3 makes marks persist, and
+those suites pin session-scope walk behaviour, so
+each of their Brains now starts from a virgin
+state path (v7.9 semantics); every assertion in
+them is unchanged, and persistence itself is
+pinned in test_v710 P3; (3) README scan windows
+grew in test_v69 S3 (20000 -> 22000) and test_v78
+S7 (3000 -> 4000), the suites' own established
+pattern, because the v7.10 block prepended. No
+existing boot-order test pinned the warming call
+site, so P4 needed no boot-order amendments. All
+provider traffic in tests is stubbed, and the
+Windows process behaviour (spawning `ollama
+serve`) is unit-pinned with a stubbed Popen — it
+has NOT been run on a real Windows machine or
+against a real Ollama install from this build VM.

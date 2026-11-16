@@ -523,8 +523,9 @@ _NOTICE_HEADLINES = {
     "7.7": "শোনার লাইন এবার ডুববে না",
     "7.8": "Muse Wonder যোগ হলো",
     "7.9": "brain-এর limit লাগলেও অন্য brain উত্তর দেবে",
+    "7.10": "free brain pool এবার নিজে নিজে চলবে",
 }
-_NOTICE_HEADLINE_NOW = "brain-এর limit লাগলেও অন্য brain উত্তর দেবে"
+_NOTICE_HEADLINE_NOW = "free brain pool এবার নিজে নিজে চলবে"
 
 
 def update_notice_text(version):

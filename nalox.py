@@ -348,6 +348,83 @@ def hudlog(msg):
         pass
 
 
+# ------------------------------------------------------------- v7.10 P4
+# FIRST-WAKE BOOT DIET. Field report (owner, 2026-11-16
+# 14:41 IST): after boot his speech does not get through
+# until the first successful wake — only after Nalox has
+# woken once does everything respond. The boot minute is
+# crowded: the command-lane preload, brain validation,
+# logsync's first sync, the +60 s updater check, and
+# (v7.9) the male fixed-line cache warming, a NETWORK
+# synthesis pass — while worker-slow lines land inside
+# the first minute of sessions. The ears own the boot
+# minute now: non-essential warm-up work waits behind
+# this gate, which opens on the FIRST SUCCESSFUL WAKE
+# of the session or BOOT_GATE_DEADLINE_S after boot,
+# whichever comes first. Deferred in this release: the
+# male cache warming (the only deferred starter — see
+# main()). Audited and DELIBERATELY LEFT (FOR-AI.md
+# v7.10): logsync's first sync (already ~75 s, outside
+# the first minute, and it is the diagnostic channel)
+# and the updater's +60 s boot check (one tiny version
+# probe; it is the mechanism that self-delivered
+# v7.4/v7.6/v7.8 in the field — the v7.9/v7.10
+# auto-update guarantee rides on it). The gate opens
+# exactly once and says so in ONE log line naming the
+# trigger: "[sys] boot warm-up gate opened (first
+# wake)" / "(120s)".
+BOOT_GATE_DEADLINE_S = 120.0
+_boot_gate = threading.Event()
+_boot_gate_lock = threading.Lock()
+_boot_gate_opened = False
+
+
+def _open_boot_gate(reason):
+    """Open the first-wake boot gate (v7.10, item P4):
+    release every deferred warm-up starter and log the
+    opening ONCE, naming what opened it ("first wake"
+    or "120s"). Later calls are silent no-ops. Returns
+    True only for the call that opened it. Never
+    raises."""
+    global _boot_gate_opened
+    try:
+        with _boot_gate_lock:
+            if _boot_gate_opened:
+                return False
+            _boot_gate_opened = True
+        _boot_gate.set()
+        hudlog(f"[sys] boot warm-up gate opened "
+               f"({reason})")
+        return True
+    except Exception:
+        return False
+
+
+def _boot_gate_timer():
+    """The gate's deadline arm (v7.10, item P4): if no
+    successful wake opens the gate within
+    BOOT_GATE_DEADLINE_S, open it from the timer — a
+    session where he never speaks still gets its
+    warm-up, just late instead of never."""
+    if not _boot_gate.wait(BOOT_GATE_DEADLINE_S):
+        _open_boot_gate("120s")
+
+
+def _after_boot_gate(fn):
+    """Run fn() once the boot gate opens (v7.10, item
+    P4), on a daemon thread; if the gate is already
+    open it runs at once. fn's own failures are its
+    own — the gate never propagates them."""
+    def _run():
+        _boot_gate.wait()
+        try:
+            fn()
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True,
+                     name="nalox-boot-gate").start()
+
+
 def hudstatus(state):
     """Set the HUD status line; no-op when the HUD is off."""
     global _ui_state
@@ -1269,7 +1346,20 @@ def main():
         # line is a fixed line too — warmed (male) and
         # cache-served like the others.
         _bn_fixed.append("কাজটা চলছে, sir — একটু অপেক্ষা করুন।")
-        speaker.start_male_cache_warming(_bn_fixed)
+        # v7.10 (item P4): the warming itself is
+        # DEFERRED behind the first-wake boot gate —
+        # the boot minute belongs to the ears, and a
+        # network synthesis pass has no business
+        # competing with the first wake. It runs after
+        # the first successful wake or at the 120 s
+        # deadline, whichever comes first; the warming
+        # code in voice.py is unchanged.
+        threading.Thread(target=_boot_gate_timer,
+                         daemon=True,
+                         name="nalox-boot-gate-timer").start()
+        _after_boot_gate(
+            lambda: speaker.start_male_cache_warming(
+                _bn_fixed))
     except Exception:
         pass
     ears = Ears(cfg)
@@ -1307,6 +1397,16 @@ def main():
     # Wake feedback (v3.4): the instant the wake word matches, post to
     # the HUD and play a short beep, so Arjun KNOWS Nalox heard him.
     def _on_wake():
+        # v7.10 (item P4): a successful wake opens the
+        # first-wake boot gate — the deferred warm-up
+        # work (male cache warming) starts now, once
+        # the ears have proven themselves. Once-only
+        # inside _open_boot_gate; every later wake is a
+        # no-op here.
+        try:
+            _open_boot_gate("first wake")
+        except Exception:
+            pass
         hudlog("[mic] wake word heard")
         try:
             import winsound
