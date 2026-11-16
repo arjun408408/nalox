@@ -1539,3 +1539,211 @@ Windows process behaviour (spawning `ollama
 serve`) is unit-pinned with a stubbed Popen — it
 has NOT been run on a real Windows machine or
 against a real Ollama install from this build VM.
+
+## v7.11 — "Loading screen: সব ready হয়ে তবেই খুলবে" (2026-11-16)
+
+OWNER ORDER (2026-11-16 14:59 IST, after he read his
+own log and understood the boot race himself): when
+Nalox starts, a prominent LOADING screen must appear
+with real progress; during loading, EVERY AI
+model/provider and subsystem gets probed — what
+works is marked working, what fails is marked failed
+and skipped at talk time; only at 100% does the main
+interface open, fully ready, so his first words get
+~1 s replies. ALL models stay (nothing deleted) —
+the probe only checks, orders and marks. His
+diagnosis is field-proven: [ready] was declared
+while Gemini hops, the Ollama auto-start and the
+provider checks were still landing mid-conversation
+(the 14:31 IST turn paid for all three). The same
+screenshot proved v7.10 P1 in the field ("[brain]
+Ollama server auto-started" 14:56:03, offline brain
+ready qwen3:8b) — this release must not regress it.
+
+DESIGN — three new pieces, no answering-logic
+changes anywhere (L4: this release is boot + UI +
+probe wiring only):
+
+1. bootprobe.py — the readiness coordinator (pure
+   logic: no Tk, no network, no nalox imports).
+   Eleven stages in STAGE_DEFS order: mic, wake,
+   command, groq, voice (BLOCKING — the interface's
+   promise) and gemini, freellm, ollama, muse, phone,
+   telegram (non-blocking). Every stage resolves
+   EXACTLY ONCE for the gate: ok / warn / fail are all
+   resolutions — a failed stage never blocks, it is
+   known-bad before the first word. A stage that
+   outlives its own timeout, or is pending at the
+   cap, resolves as a CAPPED warn ("still warming —
+   will finish in background"); its thread keeps
+   running and its real result replaces the capped
+   warn in the record without moving the count, so
+   progress (resolved / total) is monotonic by
+   construction. wait_gate(cap_deadline, abort=None)
+   blocks the main thread at the start-surface block;
+   the abort callback (the loading screen reporting
+   its own death) ends the wait early and nalox.py
+   falls back to the pre-v7.11 boot. The coordinator
+   never raises: a probe exception resolves its stage
+   as "fail" with the exception's short name, and a
+   coordinator-internal failure reads as an abort.
+
+2. loadscreen.py — the loading window, hosted
+   EXACTLY like the Command Center (a Toplevel on the
+   HUD's Tk root, built/driven only on the HUD thread
+   via hud.run_on_tk; one Tk interpreter). Dark
+   palette shared with dashboard.py, his logo
+   (assets/logo_round.png -> logo.jpg, PIL, guarded),
+   "NALOX", a drawn progress bar + percentage, and one
+   checklist row per stage flipping ⏳ -> ✓/⚠/✗ with
+   a one-line detail. The probe's on_update feeds it;
+   a 250 ms after-chain re-renders from the stored
+   snapshot in case a queued callback was dropped.
+   close() is exactly-once. Headless mode mirrors
+   dashboard.py's _force_headless pattern (pure
+   bookkeeping, no Tk) so the handoff logic is
+   unit-pinnable; THE VISUAL RESULT IS FIRST PROVEN
+   ON THE OWNER'S PC — the build VM is headless.
+
+3. The probes (nalox.py stage functions + five new
+   Brain methods). Every probe wraps an EXISTING
+   readiness signal and FEEDS the existing machinery
+   — no shadow state:
+   - mic: ears.pick_input_device (v7.1's probe-and-
+     choose) + an input-device existence check.
+   - wake / command lanes: a "ping" job through the
+     lane's OWN _TxWorkerClient. The worker preloads
+     its models BEFORE answering a ping, so a pong IS
+     "lane ready, model loaded" — the first segment
+     no longer pays the load. A ping that burns its
+     whole deadline (30 s wake / 40 s command) reads
+     as still-warming; a fast failure reads as a
+     worker that could not start. The lazy BIG model
+     (large-v3-turbo) is deliberately NOT part of
+     readiness: it loads on first real need by design
+     (v6.12 ladder), and forcing a ~1.6 GB load into
+     every boot would delay the interface for a model
+     most boots never use — readiness means the
+     resident models (tiny/base + small), exactly the
+     set the first minute of talk actually exercises.
+   - groq: Brain.probe_groq_boot joins the validation
+     thread __init__ already started (the /models
+     fetch + walk composition + head remember) and
+     reports its published outcome. No new call.
+   - gemini: Brain.probe_gemini_boot fetches the
+     account's model LIST from the OpenAI-compatible
+     surface (GET {GEMINI_BASE}/models — a list call,
+     no completion, no quota) and intersects it with
+     _model_candidates("gemini"): absent names are
+     marked dead via _mark_model_dead (v7.10 P3,
+     persisted) BEFORE the first turn, so the
+     mid-conversation hop chain dies at boot. A
+     failed / non-200 / unparseable list marks
+     NOTHING and logs one line — a network wobble is
+     not a dead model. A 401/403 reports the key, and
+     also marks nothing (the provider is rejected;
+     its models are not thereby dead).
+   - freellm: Brain.probe_freellm_boot runs the
+     existing _probe_freellm_once and writes the
+     verdict into the reachability cache the command
+     path reads.
+   - ollama: Brain.probe_ollama_boot reads /api/tags;
+     when the server does not answer, the v7.10
+     auto-start runs INSIDE the probe (same
+     10-minute rationing — validation's boot note
+     shares the budget, and a short re-check covers a
+     concurrent starter still inside its readiness
+     poll). Readiness reflects the outcome; the
+     detail lists the pulled model names.
+   - muse: Brain.probe_muse_boot — ZERO network
+     without a key. With a key, GET {MUSE_BASE}/
+     models only: 200 = "key accepted — billing
+     checked at first use" (a list call CANNOT prove
+     billing — the field's 402 billing_not_configured
+     arrived on a completion, and the label must not
+     claim otherwise); 402 = "billing needed";
+     401/403 = "key rejected". Report only — parking
+     remains the answering path's business (v7.8).
+   - voice: speaker.describe_active() — the boot
+     log's own line, now a gate stage.
+   - phone / telegram: local startup state only
+     (phone_link started/connected; the bridge
+     object + token presence, read from a holder
+     main() fills when the bridge is built).
+
+THE GATE + SAFETY VALVES. nalox.py waits at the
+start-surface block (after every subsystem has been
+constructed and started, before _open_dashboard):
+the Command Center opens when all stages resolve,
+with a HARD CAP of GATE_CAP_S = 45 s measured from
+process start (main()'s first line stamps it);
+anything still pending at the cap is marked ⚠
+"still warming" and the interface opens anyway —
+background completions keep updating the brain/
+voice lines through the existing refreshers. The
+gate outcome lands in the logbook as ONE SYSTEM
+line with the verdict counts and the warn/fail
+stage names. Crash-safety: probe construction, the
+screen, and the wait each sit in their own
+try/except; any failure degrades to the v7.10 boot
+(open the Command Center, log the error) — the
+loading screen can never brick startup. Supervisor
+relaunches show the same screen (it is simply the
+boot UI). The greeting, tray and every other boot
+behaviour are unchanged; the greeting still speaks
+after the Command Center opens, via the tts-cache,
+as before.
+
+PROBE-COST DISCIPLINE. List calls only: Groq's
+existing /models (validation's), Gemini's /models,
+Ollama's /api/tags, Muse's /models, FreeLLMAPI's
+existing reachability GET. The one completion-shaped
+call in the whole boot remains validation's
+pre-existing Groq head remember — v7.11 adds no new
+completion quota burn anywhere.
+
+TESTS: test_v711.py (see its header). All provider
+traffic is stubbed; the loading UI's LOGIC is
+pinned with the headless mode + stubbed Tk host —
+its visual result has NOT been seen from this VM.
+
+TESTS (v7.11): test_v711.py — 126 checks: the
+coordinator (stage set + blocking split, progress
+math + monotonicity, a crashed probe = a known
+failure, a failed stage never blocks, the cap and
+per-stage timeouts resolve as capped "still
+warming" warns, a late real result replaces the
+capped warn without moving progress, the abort
+watch), the Brain probes (Groq = validation
+reported, no new call; Gemini list intersection —
+absent names dead + persisted pre-turn, failed /
+non-200 / unparseable / rejected lists mark
+nothing, all-absent fails; Ollama tags + the
+auto-start invoked inside the probe + not-installed
+fails honestly; Muse zero-network without a key,
+one /models call with one, billing never claimed
+proven; FreeLLMAPI reachability + cache write),
+the loading screen's headless bookkeeping + the
+exactly-once handoff, the nalox.py stage functions
+on stubs, and a full simulated boot ending "ready"
+with the Gemini corpses already in the dead set.
+FULL BATTERY: 3,424 checks, 0 failures (34 suites,
+each in a pristine copy, sequentially). Disclosed
+amendments to older suites: (1) the standard
+version-needle sweep 7.10 -> 7.11 in 30 suites
+(version.txt value, UPDATE.bat banner needle,
+README "leads with" needle, and the labels that
+name the current version; test_v710's per-version
+pins — its banner-table entry and FOR-AI section —
+are preserved, as test_v79's were before it);
+(2) README scan windows grew in test_v61 S4/S5
+(40000 -> 45000), test_v69 S3 (22000 -> 25000),
+test_v78 S7 (4000 -> 6000) and test_v79 S5b
+(2500 -> 4500), the suites' own established
+pattern, because the v7.11 block prepended;
+(3) test_v77 C4's ordering needle moved to the
+current release (v7.11 precedes v7.7), its
+original intent. UPDATE.bat's CRLF endings were
+verified byte-wise during this build (143 CRLF,
+0 bare LF) — edit it only with CRLF-preserving
+tools.

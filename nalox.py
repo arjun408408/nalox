@@ -425,6 +425,146 @@ def _after_boot_gate(fn):
                      name="nalox-boot-gate").start()
 
 
+# ------------------------------------------------------------- v7.11
+# BOOT PROBE STAGES ("Ready Means Ready" — bootprobe.py
+# runs them concurrently, loadscreen.py renders them).
+# Each returns (status, detail): "ok" / "warn" / "fail"
+# plus one short checklist line. Every stage wraps an
+# EXISTING readiness signal — the ears lane clients'
+# ping lifecycle proof (the worker preloads its models
+# BEFORE it answers a ping, so a pong IS "lane ready,
+# model loaded"), sounddevice's device pick, the
+# speaker's own active-voice read, the phone link's
+# local state — and the Brain's probe methods feed the
+# answering machinery itself (validation state,
+# persisted dead marks, reachability caches). No stage
+# keeps a shadow copy of anything.
+BOOT_PROBE_WAKE_DEADLINE_S = 30.0
+BOOT_PROBE_COMMAND_DEADLINE_S = 40.0
+
+
+def _boot_probe_mic(cfg):
+    """The microphone stage: the existing device pick
+    (v7.1's probe-and-choose included) + proof that at
+    least one input device exists."""
+    try:
+        import ears as _ears_mod
+        idx = _ears_mod.pick_input_device(cfg)
+        name = _ears_mod._device_name(idx)
+        try:
+            import sounddevice as _sd
+            have = any(
+                (d.get("max_input_channels", 0) or 0) > 0
+                for d in _sd.query_devices())
+        except Exception:
+            have = True  # cannot tell — do not cry wolf
+        if have:
+            return ("ok", name)
+        return ("fail", "no microphone found")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
+def _boot_probe_lane(ears, lane):
+    """One transcription lane's stage (v7.11): a ping
+    through the lane's OWN client. The worker spawns on
+    the request, preloads its models, and only then
+    answers — so a pong means the lane is warm before
+    the first word is spoken, instead of the first
+    segment paying the load mid-conversation. A ping
+    that burns its whole deadline reads as still
+    warming (the worker is loading, not dead); one
+    that fails fast reads as a worker that could not
+    start."""
+    label = "wake ears" if lane == "wake" \
+        else "command ears"
+    try:
+        client = ears._wake_lane_client() \
+            if lane == "wake" \
+            else ears._command_lane_client()
+        if client is None:
+            return ("fail", f"no {label}")
+        deadline = BOOT_PROBE_WAKE_DEADLINE_S \
+            if lane == "wake" \
+            else BOOT_PROBE_COMMAND_DEADLINE_S
+        t0 = time.monotonic()
+        val = client.request("ping", None, deadline)
+        if val is not None:
+            return ("ok", "ready")
+        if time.monotonic() - t0 >= deadline * 0.8:
+            return ("warn", "still loading models — "
+                            "finishes in background")
+        return ("fail", f"{label} worker could not "
+                        f"start")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
+def _boot_probe_voice(speaker):
+    """The voice stage: the speaker's own active-voice
+    read (the same line the boot log has always
+    printed) — the engine that will speak is known
+    before the greeting, not discovered by it."""
+    try:
+        line = speaker.describe_active()
+        if line:
+            return ("ok", line)
+        return ("warn", "voice unknown")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
+def _boot_probe_phone():
+    """The phone-link stage: local startup state only
+    (the command server starts inside Brain.__init__;
+    the phone itself being away is normal and is not
+    a failure of the link)."""
+    try:
+        import phone_link
+        if phone_link.is_connected():
+            name = ""
+            try:
+                name = phone_link.device_name() or ""
+            except Exception:
+                pass
+            return ("ok", "phone connected"
+                    + (f": {name}" if name else ""))
+        if getattr(phone_link, "_state", {}).get(
+                "started"):
+            return ("ok", "link server on — waiting "
+                          "for the phone app")
+        return ("warn", "link server not started")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
+def _boot_probe_telegram(holder):
+    """The Telegram stage: local startup state only.
+    The bridge object lands in the holder when main()
+    builds it (a few hundred ms after the probe
+    starts); the stage waits briefly for it, then
+    reports what exists."""
+    try:
+        deadline = time.monotonic() + 8.0
+        bridge = holder.get("bridge")
+        while bridge is None \
+                and time.monotonic() < deadline:
+            time.sleep(0.2)
+            bridge = holder.get("bridge")
+        if bridge is None:
+            return ("warn", "bridge not started")
+        if not getattr(bridge, "token", None):
+            return ("warn", "not configured")
+        return ("ok", "bridge on")
+    except Exception as exc:
+        return ("warn", f"could not check "
+                        f"({type(exc).__name__})")
+
+
 def hudstatus(state):
     """Set the HUD status line; no-op when the HUD is off."""
     global _ui_state
@@ -1275,6 +1415,10 @@ def _reminder_checker(store, speaker, cfg):
 def main():
     global _hud, _dashboard
     cfg = CONFIG
+    # v7.11: the boot probe's hard cap is measured from
+    # process start (GATE_CAP_S) — this is as close to
+    # it as the process can see.
+    _boot_t0 = time.monotonic()
     # v5.2: arm faulthandler FIRST — if native code kills this
     # process later (the silent v5.1 deaths), the traceback is
     # already pointed at nalox_fault.log.
@@ -1364,6 +1508,58 @@ def main():
         pass
     ears = Ears(cfg)
     brain = Brain(cfg, speaker)
+
+    # v7.11 (Ready Means Ready): the BOOT PROBE starts
+    # now — every stage runs concurrently from here, so
+    # by the time the gate below is reached, each
+    # provider/subsystem has been checked, ordered and
+    # marked (the dead Gemini names are already in the
+    # persisted dead set, Ollama is already started,
+    # the ears' workers are already warm). A failure to
+    # even START the probe costs nothing: _boot_probe
+    # stays None and the boot is v7.10's, exactly.
+    _boot_probe = None
+    _boot_ctx = {"bridge": None}
+    try:
+        import bootprobe as _bootprobe_mod
+        _boot_probe = _bootprobe_mod.BootProbe()
+        _boot_probe.start_stage(
+            "mic", lambda: _boot_probe_mic(cfg),
+            timeout_s=10.0)
+        _boot_probe.start_stage(
+            "wake", lambda: _boot_probe_lane(ears, "wake"),
+            timeout_s=35.0)
+        _boot_probe.start_stage(
+            "command",
+            lambda: _boot_probe_lane(ears, "command"),
+            timeout_s=45.0)
+        _boot_probe.start_stage(
+            "groq", lambda: brain.probe_groq_boot(),
+            timeout_s=30.0)
+        _boot_probe.start_stage(
+            "voice", lambda: _boot_probe_voice(speaker),
+            timeout_s=10.0)
+        _boot_probe.start_stage(
+            "gemini", lambda: brain.probe_gemini_boot(),
+            timeout_s=12.0)
+        _boot_probe.start_stage(
+            "freellm", lambda: brain.probe_freellm_boot(),
+            timeout_s=8.0)
+        _boot_probe.start_stage(
+            "ollama", lambda: brain.probe_ollama_boot(),
+            timeout_s=40.0)
+        _boot_probe.start_stage(
+            "muse", lambda: brain.probe_muse_boot(),
+            timeout_s=10.0)
+        _boot_probe.start_stage(
+            "phone", _boot_probe_phone, timeout_s=6.0)
+        _boot_probe.start_stage(
+            "telegram",
+            lambda: _boot_probe_telegram(_boot_ctx),
+            timeout_s=12.0)
+    except Exception as exc:
+        log.warning("Boot probe failed to start: %s", exc)
+        _boot_probe = None
 
     # v5.7 STEP ASIDE: actions.py calls this hook before every
     # open (app/folder/URL) so the Command Center hides itself
@@ -1490,6 +1686,29 @@ def main():
         log.warning("Command Center skipped: no app window to "
                     "host it (the dashboard lives in the app "
                     "window's screen).")
+
+    # v7.11: the LOADING SCREEN — up over the rest of
+    # the boot, rendering the probe's checklist live;
+    # the gate (at the start-surface block below)
+    # closes it the moment the interface may open. It
+    # hosts on the HUD like the Command Center; with no
+    # app window there is no screen, and the probe +
+    # gate still run (the readiness is the point — the
+    # window is its display). A failure here only costs
+    # the display: _load_screen stays None and the gate
+    # simply has nothing to close.
+    _load_screen = None
+    if _boot_probe is not None and _hud is not None:
+        try:
+            from loadscreen import LoadingScreen
+            _load_screen = LoadingScreen(cfg)
+            _load_screen.attach(_hud)
+            _load_screen.bind_probe(_boot_probe)
+            _load_screen.start()
+        except Exception as exc:
+            log.warning("Loading screen failed to "
+                        "start: %s", exc)
+            _load_screen = None
 
     # Brain status line in the HUD header (v4.8): pushed now and
     # refreshed every few seconds, so when the boot key check
@@ -1745,6 +1964,10 @@ def main():
     try:
         from telegram_bridge import TelegramBridge
         bridge = TelegramBridge(cfg, brain, speaker, ears)
+        # v7.11: the boot probe's Telegram stage reads
+        # the bridge from the holder (its probe thread
+        # started beside the Brain and waits for this).
+        _boot_ctx["bridge"] = bridge
         if bridge.token:
             bridge.start()
     except Exception as exc:
@@ -1772,6 +1995,65 @@ def main():
         _logsync_mod.start_background(cfg)
     except Exception as exc:
         log.warning("Log sync failed to start: %s", exc)
+
+    # v7.11 THE GATE (Ready Means Ready): before the
+    # interface opens, wait for the boot probe — every
+    # stage resolved (✓/⚠/✗ alike; a failure is a
+    # resolution, never a block), or the 45 s cap from
+    # process start (pending stages are marked "still
+    # warming" and finish in the background — the brain
+    # and voice lines keep updating as they land, as
+    # they always have). If the LOADING SCREEN itself
+    # has failed, the wait aborts at once and the boot
+    # is v7.10's exactly — the screen can never brick
+    # startup. The outcome lands in the logbook as ONE
+    # line with the per-stage verdicts, so a synced log
+    # shows what boot knew before the first word.
+    if _boot_probe is not None:
+        try:
+            _gate = _boot_probe.wait_gate(
+                _boot_t0 + _bootprobe_mod.GATE_CAP_S,
+                abort=lambda: (_load_screen is not None
+                               and _load_screen.failed))
+            _snap = _boot_probe.snapshot()
+            _ok_n = sum(1 for s in _snap
+                        if s["status"] == "ok")
+            _warn_l = [s["label"] for s in _snap
+                       if s["status"] == "warn"]
+            _fail_l = [s["label"] for s in _snap
+                       if s["status"] == "fail"]
+            _verdict = (f"{_ok_n}/{len(_snap)} ok"
+                        + (f"; warn: {', '.join(_warn_l)}"
+                           if _warn_l else "")
+                        + (f"; FAILED: "
+                           f"{', '.join(_fail_l)}"
+                           if _fail_l else ""))
+            if _gate == "ready":
+                logbook.log(
+                    "SYSTEM",
+                    "[sys] boot probe complete — "
+                    f"everything checked ({_verdict})")
+            elif _gate == "capped":
+                logbook.log(
+                    "SYSTEM",
+                    "[sys] boot probe cap reached — "
+                    "opening anyway; still-warming "
+                    f"stages finish in background "
+                    f"({_verdict})")
+            else:
+                logbook.log(
+                    "SYSTEM",
+                    "[sys] boot probe aborted (loading "
+                    "screen failed) — opening the "
+                    "Command Center the pre-v7.11 way "
+                    f"({_verdict})")
+        except Exception as exc:
+            log.warning("Boot gate failed: %s", exc)
+        try:
+            if _load_screen is not None:
+                _load_screen.close()
+        except Exception:
+            pass
 
     # v6.2 START SURFACE (the owner's sharpened rule): EVERY
     # start lands on the Command Center — autostart at login,

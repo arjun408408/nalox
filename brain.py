@@ -7406,6 +7406,284 @@ class Brain:
         (v7.8) — the chat race fields it no longer."""
         return getattr(self, "_muse_parked", None) is not None
 
+    # ------------------------------------------------ v7.11 boot probes
+    # The loading screen's provider stages (bootprobe.py
+    # runs these; nalox.py wires them). Each returns
+    # (status, detail) — "ok" / "warn" / "fail" + one
+    # short line for the checklist — and FEEDS the
+    # existing machinery (the validation state, the
+    # persisted dead marks, the reachability caches);
+    # none of them keeps a shadow copy of anything.
+    # Probe-cost discipline: LIST calls only — the one
+    # completion-shaped call in the whole boot remains
+    # validation's existing Groq head remember, exactly
+    # as before v7.11.
+
+    def probe_groq_boot(self, timeout_s=25.0):
+        """The Groq stage: wait for the boot validation
+        (the /models fetch + walk composition that
+        __init__ already started) to settle, then report
+        its outcome. No new network call of its own."""
+        try:
+            if not (self.cfg.get("groq_api_key")
+                    or "").strip():
+                return ("warn", "no key — cloud brain off")
+            t = getattr(self, "_validate_thread", None)
+            if t is not None and t.is_alive():
+                t.join(max(1.0, float(timeout_s)))
+                if t.is_alive():
+                    return ("warn", "still checking — "
+                                    "finishes in background")
+            with self._status_lock:
+                checks = dict(self._key_checks)
+            res = checks.get("groq")
+            if res is None:
+                return ("warn", "check incomplete — "
+                                "finishes in background")
+            if res.get("state") == "ok":
+                n = len(self._discovered_models.get(
+                    "groq") or [])
+                walk = self._model_candidates("groq")
+                head = walk[0] if walk else "?"
+                if n:
+                    return ("ok", f"key OK · {n} models "
+                                  f"· head {head}")
+                return ("ok", f"key OK · head {head}")
+            if res.get("state") == "rejected":
+                return ("fail", "key rejected — check "
+                                "Settings → Brain")
+            return ("fail", "unreachable — "
+                    + str(res.get("detail") or "")[:60])
+        except Exception as exc:
+            return ("warn", f"check failed "
+                            f"({type(exc).__name__})")
+
+    def probe_gemini_boot(self, timeout_s=8.0):
+        """The Gemini stage: fetch the account's model
+        LIST (no completion — no quota burned) and mark
+        every configured candidate that is ABSENT from
+        it dead via the persisted machinery, BEFORE the
+        first turn — the mid-conversation "model is
+        gone" hop chain (field: 2.5-flash -> 2.0-flash
+        -> 2.5-flash-lite, ~3–9 s per turn) dies here at
+        boot instead. A failed/unparseable list call
+        marks NOTHING (a network wobble is not a dead
+        model) and logs one line."""
+        try:
+            key = (self.cfg.get("gemini_api_key")
+                   or "").strip()
+            if not key:
+                return ("warn", "not configured")
+            cands = self._model_candidates("gemini")
+            if not cands:
+                return ("warn", "no models configured")
+            import requests
+            try:
+                resp = requests.get(
+                    GEMINI_BASE + "/models",
+                    headers={"Authorization":
+                             f"Bearer {key}"},
+                    timeout=(3.05, 5))
+            except Exception as exc:
+                _lb("BRAIN",
+                    "[brain] Gemini boot check skipped — "
+                    f"model list unreachable "
+                    f"({type(exc).__name__}); nothing "
+                    f"marked")
+                log.info("[brain] Gemini boot list "
+                         "failed: %s", exc)
+                return ("warn", "list check failed — "
+                                "models kept")
+            if resp.status_code in (401, 403):
+                return ("fail", f"key rejected "
+                                f"(HTTP {resp.status_code})")
+            if resp.status_code != 200:
+                _lb("BRAIN",
+                    "[brain] Gemini boot check skipped — "
+                    f"model list HTTP {resp.status_code}; "
+                    f"nothing marked")
+                return ("warn", f"list HTTP "
+                                f"{resp.status_code} — "
+                                f"models kept")
+            ids = set()
+            try:
+                for item in (resp.json().get("data")
+                             or []):
+                    mid = str(item.get("id") or "")
+                    if mid:
+                        ids.add(mid)
+                        ids.add(_model_key(mid))
+            except Exception:
+                ids = set()
+            if not ids:
+                # An empty parse must never nuke the
+                # walk — treat it like a failed call.
+                _lb("BRAIN",
+                    "[brain] Gemini boot check skipped — "
+                    "model list unparseable; nothing "
+                    "marked")
+                return ("warn", "list unparseable — "
+                                "models kept")
+            marked = []
+            for cand in cands:
+                if cand not in ids \
+                        and _model_key(cand) not in ids:
+                    self._mark_model_dead("gemini", cand)
+                    marked.append(cand)
+            alive = [c for c in cands if c not in marked]
+            if marked:
+                _lb("BRAIN",
+                    "[brain] Gemini boot check: "
+                    f"{len(marked)} configured model(s) "
+                    f"not on this account — marked dead "
+                    f"before the first turn: "
+                    f"{', '.join(marked)}")
+            if not alive:
+                return ("fail", "no configured model "
+                                "exists on the account")
+            detail = f"{len(alive)} model(s) ready"
+            if marked:
+                detail += f" · {len(marked)} dead skipped"
+            return ("ok", detail)
+        except Exception as exc:
+            return ("warn", f"check failed "
+                            f"({type(exc).__name__})")
+
+    def probe_freellm_boot(self):
+        """The FreeLLMAPI stage: the existing
+        reachability probe, with its verdict written
+        into the reachability cache the command path
+        reads — the first turn never pays the connect
+        timeout for a closed app."""
+        try:
+            if not (self.cfg.get("freellm_api_key")
+                    or "").strip():
+                return ("warn", "not configured")
+            up = self._probe_freellm_once()
+            try:
+                with self._prov_lock:
+                    self._freellm = {
+                        "at": time.monotonic(), "up": up}
+            except Exception:
+                pass
+            if up:
+                return ("ok", "gateway up")
+            return ("fail", "app not running — open "
+                            "FreeLLMAPI")
+        except Exception as exc:
+            return ("warn", f"check failed "
+                            f"({type(exc).__name__})")
+
+    def _ollama_tags(self):
+        """Model names from /api/tags, or None when the
+        server does not answer (v7.11 — the boot
+        probe's read; _note_ollama_at_boot keeps its
+        own guarded parse and its one ready line)."""
+        try:
+            import requests
+            url = (self.cfg.get("ollama_url")
+                   or "http://localhost:11434").rstrip("/")
+            url = url.replace("://localhost", "://127.0.0.1")
+            resp = requests.get(url + "/api/tags",
+                                timeout=1.5)
+            if resp.status_code != 200:
+                return None
+            names = []
+            for item in (resp.json().get("models")
+                         or []):
+                name = str(item.get("name") or "").strip()
+                if name:
+                    names.append(name)
+            return names
+        except Exception:
+            return None
+
+    def probe_ollama_boot(self):
+        """The Ollama stage: /api/tags; when the server
+        does not answer, the v7.10 auto-start path runs
+        HERE, inside the probe (same 10-minute
+        rationing), and readiness reflects the outcome
+        — the first turn never meets a connection
+        refusal the boot already knew about."""
+        try:
+            names = self._ollama_tags()
+            if names is None:
+                try:
+                    self._maybe_autostart_ollama(
+                        announce_not_installed=False)
+                except Exception:
+                    pass
+                names = self._ollama_tags()
+            if names is None:
+                # A concurrent starter (validation's
+                # boot note) may still be inside its
+                # readiness poll — brief re-check before
+                # the verdict, but only when a start was
+                # actually attempted recently.
+                last = getattr(self, "_ollama_autostart_last",
+                               0.0)
+                if last and (time.monotonic() - last
+                             < OLLAMA_AUTOSTART_POLL_S + 10.0):
+                    deadline = time.monotonic() + 6.0
+                    while names is None \
+                            and time.monotonic() < deadline:
+                        time.sleep(0.5)
+                        names = self._ollama_tags()
+            if names is None:
+                if not self._ollama_executable():
+                    return ("fail", "not installed")
+                return ("warn", "server starting — "
+                                "finishes in background")
+            if names:
+                detail = "ready: " + ", ".join(names[:3])
+                if len(names) > 3:
+                    detail += f" +{len(names) - 3} more"
+                return ("ok", detail)
+            return ("warn", "server up — no models "
+                            "pulled")
+        except Exception as exc:
+            return ("warn", f"check failed "
+                            f"({type(exc).__name__})")
+
+    def probe_muse_boot(self):
+        """The Muse Wonder stage: ZERO network without
+        a key. With a key, a /models LIST call only (no
+        completion): 200 proves the KEY is accepted —
+        it cannot prove billing, so the detail says
+        billing is checked at first use (the field's
+        402 billing_not_configured arrived on a
+        completion, not on any list)."""
+        try:
+            key = (self.cfg.get("muse_api_key")
+                   or "").strip()
+            if not key:
+                return ("warn", "no key — off")
+            import requests
+            try:
+                resp = requests.get(
+                    MUSE_BASE + "/models",
+                    headers={"Authorization":
+                             f"Bearer {key}"},
+                    timeout=(3.05, 5))
+            except Exception as exc:
+                return ("warn", f"unreachable "
+                                f"({type(exc).__name__}) — "
+                                f"checked at first use")
+            if resp.status_code == 200:
+                return ("ok", "key accepted — billing "
+                              "checked at first use")
+            if resp.status_code == 402:
+                return ("warn", "billing needed "
+                                "(HTTP 402)")
+            if resp.status_code in (401, 403):
+                return ("fail", f"key rejected "
+                                f"(HTTP {resp.status_code})")
+            return ("warn", f"HTTP {resp.status_code} — "
+                            f"checked at first use")
+        except Exception as exc:
+            return ("warn", f"check failed "
+                            f"({type(exc).__name__})")
+
     # ------------------------------------------------ v7.10 P3
     def _mark_model_dead(self, provider, model):
         """Record a walk-proven dead model (v7.7's

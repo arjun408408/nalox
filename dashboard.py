@@ -524,8 +524,9 @@ _NOTICE_HEADLINES = {
     "7.8": "Muse Wonder যোগ হলো",
     "7.9": "brain-এর limit লাগলেও অন্য brain উত্তর দেবে",
     "7.10": "free brain pool এবার নিজে নিজে চলবে",
+    "7.11": "Loading screen: সব ready হয়ে তবেই খুলবে",
 }
-_NOTICE_HEADLINE_NOW = "free brain pool এবার নিজে নিজে চলবে"
+_NOTICE_HEADLINE_NOW = "Loading screen: সব ready হয়ে তবেই খুলবে"
 
 
 def update_notice_text(version):
