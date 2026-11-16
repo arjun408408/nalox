@@ -1,19 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-16 21:14:00 (laptop local time)
+Synced: 2026-11-16 21:24:07 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-13:23:16 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.5s, brain 1.0s, speak 2.2s
-13:23:16 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:23:27 [SYSTEM] [ears] heard via cloud:groq
-13:23:27 [MIC] [heard] kansai international airport
-13:23:27 [YOU] [mic] heard: kansai international airport
-13:23:28 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
-13:23:31 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-13:23:33 [BRAIN] [brain] reply translated to Bengali (rescue)
-13:23:33 [NALOX] NALOX: কানসাই আন্তর্জাতিক বিমানবন্দর (KIX) হল জাপানের একটি প্রধান আন্তর্জাতিক বিমানবন্দর, যা ওসাকা-কোবে-কিয়োটো অঞ্চলে পরিষেবা প্রদান করে।
 13:23:44 [SYSTEM] [logsync] log sent
 13:23:46 [VOICE] via google-tts: কানসাই আন্তর্জাতিক বিমানবন্দর (KIX) হল জাপানের একটি প্রধান আন্তর্জাতিক বিমানবন্দর, যা ওসাকা-কোবে-কিয়োটো অঞ্চলে পরিষেবা প্রদান করে।
 13:23:52 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.4s, brain 6.5s, speak 19.2s
@@ -1446,6 +1437,17 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 21:12:40 [SYSTEM] [timing] record 60.2s, transcribe 9.6s, brain 0.0s, speak 4.5s
 21:12:40 [SYSTEM] [dashboard] close: Command Center was not open.
 21:13:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:14:03 [SYSTEM] [logsync] log sent
+21:14:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:15:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:16:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:17:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:18:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:19:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:20:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:21:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:22:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+21:23:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
