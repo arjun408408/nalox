@@ -1,38 +1,10 @@
 Nalox log sync
-Version: 7.1
-Synced: 2026-11-16 02:02:26 (laptop local time)
+Version: 7.2
+Synced: 2026-11-16 07:51:46 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:32:40 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-14:32:59 [SYSTEM] [timing] wake→record 2.1s, transcribe 3.5s, brain 6.1s, speak 40.0s
-14:32:59 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:33:04 [ERROR] [voice] watchdog: speaking flag auto-cleared
-14:33:11 [SYSTEM] [ears] heard via cloud:groq
-14:33:11 [MIC] [heard] mellox close common centre
-14:33:11 [YOU] [mic] heard: mellox close common centre
-14:33:17 [BRAIN] FreeLLMAPI answered
-14:33:17 [NALOX] NALOX: The user's messages seem fragmented and unclear. Let me piece them together: 1. "nice na, looks." - This was the first message, I responded. 2. "kling, my recycle bin" - Possibly "clean my recycle bin" or "open my recycle bin" 3. "pictures, music," - Could be listing folders 4. "mellox close common centre" - This is very unclear. Maybe "meltdown close common centre"? Or "mello close common centre"? Or "my close common centre"? The user might be giving me a series of commands or requests. Let me think about what tools I have: - I can open folders: downloads, documents, desktop, pictures, music, videos - I can organize downloads - I can find duplicate files - I can open apps - I can search files - I can take screenshots - etc. The phrase "mellox close common centre" doesn't map to any known command. Could be a typo or voice misrecognition. Maybe they meant "close common centre" as in close some application? Or "common centre" might refer to something else. Given the ambiguity, I should ask for clarification. But let me try to interpret: maybe they want me to: 1. Clean/open recycle bin 2. Open pictures and music folders 3. Close something called "common centre" But I don't have a tool to clean the recycle bin directly. I
-14:33:40 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0
-14:33:57 [SYSTEM] [timing] wake→record 4.4s, transcribe 1.9s, brain 5.8s, speak 40.0s
-14:33:57 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:33:58 [ERROR] [supervisor] Nalox process DIED (exit code 1) — relaunching in 5 seconds. A traceback in nalox_fault.log, if present, names the native fault.
-14:34:04 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-14:37:55 [SYSTEM] > user: Arjun | lang: en
-14:37:55 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-14:37:55 [VOICE] [voice] active: ElevenLabs — your custom voice
-14:37:55 [BRAIN] [brain] Brain: checking…
-14:37:55 [SYSTEM] [prefs] call me: sir | language: bn
-14:37:55 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-14:37:55 [SYSTEM] Nalox v5.6 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — your custom voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-14:37:55 [NALOX] NALOX: Good afternoon, sir! Hi sir, how are you? I'm Nalox. How can I help you today?
-14:37:56 [ERROR] [BRAIN] Claude key REJECTED: HTTP 401 — authentication_error — invalid x-api-key
-14:37:56 [ERROR] [voice] ElevenLabs unavailable (402 — payment/credits). Using the local voice for this session.
-14:37:56 [SYSTEM] Telegram: discarded 1 queued message(s) from while Nalox was off
-14:38:04 [ERROR] [dashboard] Command Center show failed: Command Center did not confirm showing in time.
-14:38:04 [ERROR] [dashboard] Command Center did not open — falling back to the window (via _on_command_center <- __call__ <- mainloop <- _run)
-14:38:05 [VOICE] via pyttsx3: Good afternoon, sir! Hi sir, how are you? I'm Nalox. How can I help you today?
 14:38:05 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
 14:38:05 [SYSTEM] [ready] Say 'Nalox' to wake me
 14:38:05 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
@@ -1661,11 +1633,66 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 02:01:17 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
 02:02:05 [SYSTEM] [dashboard] Command Center closed.
 02:02:07 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0
+02:02:28 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
+07:49:09 [VOICE] [voice] starting with google-tts (worked last time)
+07:49:09 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+07:49:09 [SYSTEM] > user: Arjun | lang: en
+07:49:09 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+07:49:09 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+07:49:09 [BRAIN] [brain] Brain: checking…
+07:49:09 [SYSTEM] [prefs] call me: sir | language: bn
+07:49:09 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+07:49:10 [VOICE] [speaker] output: Headphones (Realtek(R) Audio)
+07:49:10 [SYSTEM] Nalox v7.2 started | mic: Microphone Array (Realtek(R) Au | output: Headphones (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
+07:49:10 [SYSTEM] [sys] Command Center opened at start
+07:49:10 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+07:49:11 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+07:49:17 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+07:49:17 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+07:49:17 [SYSTEM] [ready] Say 'Nalox' to wake me
+07:49:17 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
+07:49:17 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
+07:49:51 [MIC] [heard] لیو که حوض
+07:50:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
+07:50:10 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=1 short=0 peak=0.0400
+07:50:11 [SYSTEM] [dashboard] Command Center closed.
+07:50:14 [ERROR] [supervisor] Nalox process DIED (exit code 1) — relaunching in 5 seconds. A traceback in nalox_fault.log, if present, names the native fault.
+07:50:20 [VOICE] [voice] starting with google-tts (worked last time)
+07:50:20 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+07:50:20 [SYSTEM] > user: Arjun | lang: en
+07:50:20 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
+07:50:20 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+07:50:20 [BRAIN] [brain] Brain: checking…
+07:50:20 [SYSTEM] [prefs] call me: sir | language: bn
+07:50:20 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+07:50:21 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+07:50:21 [SYSTEM] Nalox v7.2 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
+07:50:21 [SYSTEM] [sys] Command Center opened at start
+07:50:21 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+07:50:22 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+07:50:28 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+07:50:28 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+07:50:28 [SYSTEM] [ready] Say 'Nalox' to wake me
+07:50:28 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
+07:50:29 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
+07:51:11 [MIC] [heard] nalox, open the chrome
+07:51:18 [MIC] [mic] wake word heard
+07:51:18 [WAKE] [wake] wake word heard
+07:51:18 [NALOX] NALOX: Yes Sir, I'm here.
+07:51:21 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=3 blip=0 short=0 peak=0.0602
+07:51:26 [ERROR] [voice] ElevenLabs unavailable (402 — payment/credits). Using the local voice for this session.
+07:51:31 [VOICE] via google-tts: Yes Sir, I'm here.
+07:51:31 [ERROR] [voice] say() overran its budget (13s > 11s)
+07:51:31 [YOU] [mic] heard: logs open the chrome
+07:51:31 [SYSTEM] [dashboard] Command Center closed.
+07:51:31 [NALOX] NALOX: ক্রোম খুলছি।
+07:51:35 [VOICE] via google-tts: ক্রোম খুলছি।
+07:51:35 [SYSTEM] [timing] wake→record 15.4s, transcribe 23.6s, brain 0.1s, speak 3.5s
+07:51:35 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
+07:51:40 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
-  File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\voice.py", line 676 in say
-  File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\nalox.py", line 1074 in _speak
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012 in run
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
   File "C:\Users\arjun\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
@@ -1952,3 +1979,8 @@ Thread 0x000065a0 (most recent call first):
 ===== CLEAN EXIT 2026-11-16 00:56:33 — supervisor saw code 42 =====
 
 ===== Nalox boot 2026-11-16 02:01:06 — faulthandler armed =====
+===== CLEAN EXIT 2026-11-16 02:02:28 — supervisor saw code 42 =====
+
+===== Nalox boot 2026-11-16 07:49:09 — faulthandler armed =====
+
+===== Nalox boot 2026-11-16 07:50:20 — faulthandler armed =====
