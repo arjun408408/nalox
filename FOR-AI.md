@@ -2267,3 +2267,208 @@ its window: test_v69 [:25000]→[:27000]
 ("নিজে নিজে চলবে"), test_v79 [:6500]→[:8000]
 ("নিজে নিজেই এসে যাবে"), test_v78 [:4000]→[:5500]
 ("Muse Wonder") and [:7000]→[:9500] ("PAID API").
+
+## v8.3 — "'না' বললে না-ই, না পারলে সোজা বলবে" (2026-11-16)
+
+Intent discipline + honest can't-do + reasoning-leak
+closure. All changes are in brain.py (+ release
+plumbing in dashboard.py / UPDATE.bat /
+UPDATE-README.txt / version.txt). NOT touched, per the
+brief: ears.py worker/pump/load logic, brain provider
+order/race, live-text decision logic, bootprobe, the
+voice chain, config/keys.
+
+FIELD EVIDENCE (the owner's Telegram + voice tests,
+2026-11-16 evening, from his screenshots):
+- A1 (Telegram 19:21): "Open WhatsApp Desktop directly,
+  not Google Chrome or Google Search. Check my chats,
+  find the person whose message I haven't replied to
+  yet, open that chat, and send the message: 'I am
+  NALOX. Talk to me.'" → "ক্রোম খুলছি।" — the
+  deterministic app-control intent matched the target
+  "chrome" and an open verb clauses apart, inside an
+  explicit NOT.
+- A2 (Telegram 19:23): the same order in careful
+  Bengali, containing "কোনোভাবেই Google Chrome, Google
+  Search বা অন্য কোনো ব্রাউজার খুলবে না" → "ক্রোম
+  খুলছি।" again.
+- A3 (Telegram 19:20): "Open WhatsApp, find the person
+  whose message I haven't replied to yet, and send them
+  this message…" → the tail was treated as a Google
+  search query ("গুগলে <tail> খুঁজছি") — the web-search
+  intent's `find` trigger extracted the rest of the
+  sentence.
+- A4 (Telegram 19:18, Banglish): "Whatsapp open koro
+  Jake ami reply di ni tate reply diye bolo I am Nalox
+  talk me" → "Sorry, I could not find <the whole
+  sentence> on this laptop." — the generic open block
+  treated everything after "open" as an app name, and
+  the not-found line is English under a Bengali pref.
+- C (voice 19:26): after "Looking at your screen…",
+  Nalox SPOKE as its reply, in English: "The user is
+  speaking in Bengali but with some phonetic spelling
+  issues. Let me try to understand what they're
+  saying." — the model's third-person meta-commentary
+  about the owner, offered as the answer.
+
+ROOT FACTS: WhatsApp messaging does not exist in Nalox
+(no tool reads or sends WhatsApp messages — Phase-1
+audit; the phone app can only OPEN WhatsApp). Every A
+attempt should have ended in an honest can't-do.
+Verified by experiment on the v8.2 tree: `_split_chain`
+does NOT split any of the four inputs (each reaches
+`_handle_single` whole), and brain.py is byte-identical
+between v8.1 (field) and v8.2.
+
+THE FIXES:
+1. INTENT DISCIPLINE (module helpers `_intent_clauses`,
+   `_clause_tokens`, `_is_complex_instruction`,
+   `_clause_negated`, `_trigger_clause_negated`,
+   `_app_control_negated`): the deterministic fast paths
+   stand down when (a) the utterance is a multi-clause
+   instruction (>12 tokens, ≥3 clauses, or ≥2 commas /
+   dandas) or (b) the trigger/target sits in a negated
+   clause (EN not/never/no/don't… with contraction
+   fragments re-merged — the ASR punctuation pass splits
+   "don't" into "don"+"t"; BN whole-token না/নয়, and
+   কোনোভাবেই anywhere negates its whole order). Applied
+   at: `_app_control_intents` (complex + target-clause
+   negation), the Google/web-search block and the
+   generic open block in `_handle_single` (complex +
+   trigger-clause negation), `_content_intents` as a
+   whole (its rules match on bare word PRESENCE — the
+   loosest triggers in the router; "don't open chrome"
+   was still opening Chrome there after the earlier
+   blocks stood down), and the Bengali YouTube/Google
+   rules in `_bengali_commands` (complex only — they
+   extract "the rest of the sentence" as the query, the
+   A3 shape). The generic open block additionally
+   requires the app candidate to be ≤4 tokens: a long
+   sentence is never an app name and falls through to
+   the brain whole. Bare commands ("open chrome",
+   "ক্রোম খোলো", "ল্যাপটপ লক করো", garbled one-breath
+   lines) stay far under every arm — pinned in test_v83
+   section F alongside the v8.1 ভালক whole-token pins.
+2. HONEST CAN'T-DO (`_whatsapp_messaging_request` +
+   `Brain._unsupported_capability_reply`, checked in
+   `_handle_single` BEFORE the app-control intents):
+   a WhatsApp mention + a messaging word (EN/Banglish
+   token message/send/reply/chat/unread…; BN substring
+   মেসেজ/রিপ্লাই/চ্যাট/উত্তর/পাঠ) ends the turn in ONE
+   line naming the missing capability — Bengali under
+   pref bn ("দুঃখিত স্যার, আমি WhatsApp-এর মেসেজ পড়তে
+   বা পাঠাতে পারি না — এই ক্ষমতাটা আমার এখনো নেই।").
+   Nothing fires before or after it in the turn.
+   "open whatsapp" alone has no messaging word and
+   still opens the website, exactly as before. The
+   general case is a system-prompt capability-honesty
+   rule ("reading or sending WhatsApp messages is the
+   standing example… never route around the gap with an
+   unrelated action, and never claim you did it"),
+   needle-pinned.
+3. META-COMMENTARY GUARD (`_reply_is_meta_commentary`,
+   consulted inside `_reply_looks_like_deliberation`):
+   third-person narration about the user / the input /
+   the model's own process — "the user is speaking…"
+   openers (a meta-verb set after "the user"), process
+   phrases ("let me try to understand", "phonetic
+   spelling", …), and the mixed shape (a "the user is…"
+   clause + "let me" in one reply) — is now rejected by
+   the CoT/reasoning guard itself on every
+   `_guard_reply` path (chat race, FreeLLMAPI lead,
+   agent, writing), taking the existing rejection →
+   next-provider / stern-retry → honest-line course.
+   Mechanism note, with evidence: direct evaluation on
+   the v8.2 tree showed the v5.6 guard returning False
+   for the exact field sentence (its opener list has
+   "the user is saying", not "the user is speaking";
+   its phrase arm needs planning phrases the text never
+   uses), while the language guard DID hold wherever
+   the reply traversed `_guard_reply` — a stubbed
+   end-to-end replay (FreeLLMAPI lead, read_my_screen
+   tool, then the field sentence, pref bn) ends in the
+   honest Bengali fallback, NOT the leak. The one reply
+   source that never traversed `_guard_reply` was the
+   vision description: `_look_at_screen_reply` returned
+   `vision.describe_screen_ollama(...)` raw. That
+   return now passes the full `_guard_reply` (label
+   "Vision (screen)"); a rejection falls through to the
+   OCR + brain summary, exactly like a vision failure
+   always has. The incident turn's own screen step is
+   the exposed path; both halves of the hole (guard
+   shape + unguarded return) are closed and pinned.
+   Non-targets pinned as passing: Bengali replies
+   addressing স্যার, second-person English replies,
+   "The user manual says…" (no meta verb).
+4. DETERMINISTIC FAILURE LINES FOLLOW THE PREF
+   (`Brain._loc_find_failure`): actions.open_app's
+   "Sorry, I could not find X on this laptop." and
+   open_folder's "I could not find the X folder." are
+   rewritten per the reply language at every user-facing
+   return site — the generic open block, the
+   app-control sorry return, and `_run_custom`'s
+   open_app/open_folder actions. Under pref bn the line
+   is Bengali; pref en keeps the original. (The
+   `_snap_app_to` site only inspects the string and the
+   `_run_tool` site is model-facing; both untouched.)
+
+HONEST LIMITS:
+- The discipline gates are heuristics over surface
+  shape (token counts, clause punctuation, negation
+  tokens). A short negated command in a shape not
+  covered (e.g. a negation in a separate sentence from
+  a bare "chrome" mention) can still fall to the
+  content rules' neighbours or the agent — but the
+  deterministic layer no longer ACTS on the four field
+  shapes or their near variants, and anything it
+  declines reaches the brain whole instead of being
+  fragmented.
+- The can't-do check is deliberately narrow (WhatsApp
+  messaging only). Other capability gaps ride on the
+  system-prompt honesty rule + the narrate/claim
+  guards, as before — a model can still fail to follow
+  the prompt; the deterministic net exists for the
+  field-proven case.
+- No real provider exists on this VM: the guard and
+  routing behaviour is proven with stubbed transports
+  (the same discipline as every prior suite). The
+  field proof owed from the owner's PC: the four
+  Telegram orders re-sent, and a voice order that makes
+  Nalox look at the screen.
+
+INTENTIONAL TEST CHANGES (v8.3 sweep — disclosed per
+the standing rule; no check was deleted or weakened in
+what it asserts):
+- Every older suite's current-version pins moved
+  8.2 → 8.3: the version.txt expected value and the
+  UPDATE.bat banner needle "Nalox update v8.3"
+  (35 suites; test_v55 and test_regression54 carry no
+  such pins and are untouched).
+- UPDATE-README read windows widened where the
+  prepended v8.3 block (~1,650 chars) pushed a pinned
+  needle out of its window — the same growth the
+  v6.13–v8.2 sweeps applied: the [:4000] "v7.11" lead
+  checks → [:6000] in 30 suites (the v7.11 header now
+  sits at char 4544); test_v711's [:4000]
+  "LOADING SCREEN" → [:6000]; test_v80's S3 [:2000]
+  "NALOX UPDATE v8.0 (FINAL)" → [:4500] (header now
+  at 3033); test_v81's S4/S4b [:2000] → [:4500]
+  (v8.1 header at 2189, the owner's sentence at
+  2356); test_v61's two [:45000] windows → [:48000]
+  (needles at 45036/45105). Windows that still
+  contain their needles were NOT touched (v69
+  [:27000], v710 [:6000], v78 [:5500]/[:9500], v79
+  [:8000], v57/v571/v61's larger content windows,
+  v82's S4 [:1500]).
+- test_v82's own release pins that remain TRUE were
+  kept verbatim: its banner check (update_notice_text
+  ("8.2") still returns the v8.2 line from the
+  per-version table), its README "NALOX UPDATE v8.2"
+  window, and its FOR-AI "## v8.2" needle.
+- Battery note: the first v8.3 battery run showed 11
+  non-pin failures across test_v611/v66/v67/v73/v77
+  (provider-walk timing checks) under back-to-back
+  load; every one passed in isolation on the same
+  tree, and the post-sweep full battery is 3,790
+  passed / 0 failed across 38 suites — the same
+  load-flake class recorded in the v8.2 build.

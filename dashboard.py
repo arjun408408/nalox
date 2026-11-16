@@ -528,8 +528,9 @@ _NOTICE_HEADLINES = {
     "8.0": "FreeLLMAPI brain, আসল loading",
     "8.1": "Live caption-ই এবার আসল কান",
     "8.2": "কানের crash বন্ধ, live caption ঠিক আছে",
+    "8.3": "'না' বললে না-ই, না পারলে সোজা বলবে",
 }
-_NOTICE_HEADLINE_NOW = "কানের crash বন্ধ, live caption ঠিক আছে"
+_NOTICE_HEADLINE_NOW = "'না' বললে না-ই, না পারলে সোজা বলবে"
 
 # v8.0: a version may own its WHOLE banner line when the
 # standard "v<version> — <headline>" shape cannot carry
@@ -541,6 +542,8 @@ _NOTICE_FULL = {
             "Live caption-ই এবার আসল কান"),
     "8.2": ("✅ Updated to v8.2 — "
             "কানের crash বন্ধ, live caption ঠিক আছে"),
+    "8.3": ("✅ Updated to v8.3 — "
+            "'না' বললে না-ই, না পারলে সোজা বলবে"),
 }
 
 

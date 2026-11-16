@@ -1816,6 +1816,245 @@ def _translate_to_bengali(text):
         return None
 
 
+# ------------------------------------------------- v8.3: intent discipline
+# Field (2026-11-16 evening, the owner's Telegram + voice
+# tests): the deterministic fast paths fired on fragments
+# of long instructions and did the OPPOSITE of what was
+# asked —
+#   * "Open WhatsApp Desktop directly, not Google Chrome
+#     or Google Search. Check my chats, find the person…
+#     and send the message…" → "ক্রোম খুলছি।" (the app-
+#     control intent matched the word Chrome inside an
+#     explicit NOT, plus an open verb clauses away);
+#   * the same order in careful Bengali — "কোনোভাবেই
+#     Google Chrome … খুলবে না" → "ক্রোম খুলছি।" again;
+#   * "Open WhatsApp, find the person whose message I
+#     haven't replied to yet, and send them this
+#     message…" → the tail became a Google search query
+#     ("গুগলে <tail> খুঁজছি");
+#   * Banglish "Whatsapp open koro Jake ami reply di ni…"
+#     → the whole sentence was treated as an app name and
+#     answered with the English not-found line.
+# The fast paths exist for SHORT, single, unambiguous
+# commands ("open chrome", "ক্রোম খোলো"). A multi-clause
+# instruction, or a trigger sitting under a negation, is
+# neither: the deterministic intents stand down and the
+# whole text reaches the brain/agent, which can reason
+# about all of it. The helpers below are that standing-
+# down test — pure functions, shared by
+# _app_control_intents and the search/open blocks of
+# _handle_single.
+_INTENT_MAX_TOKENS = 12
+_EN_NEG_TOKENS = frozenset((
+    "not", "never", "no", "dont", "don't", "isnt", "isn't",
+    "arent", "aren't", "wont", "won't", "cannot", "cant",
+    "can't"))
+_CLAUSE_SPLIT_RE = re.compile(r"[,.;!?।\n]+")
+
+
+def _intent_clauses(text):
+    """The utterance's clauses (v8.3): split on sentence /
+    clause punctuation (comma, period, semicolon, the
+    Bengali danda, newlines), lowercased, empties dropped.
+    Negation scope is judged per clause: a "not" in one
+    clause does not poison a command in another, and a
+    negated clause never lends its app name to a verb
+    three clauses away."""
+    return [c.strip() for c in
+            _CLAUSE_SPLIT_RE.split((text or "").lower())
+            if c.strip()]
+
+
+_CONTRACTION_HEADS = frozenset((
+    "don", "isn", "aren", "won", "can", "didn", "doesn",
+    "couldn", "shouldn", "wouldn", "haven", "hasn",
+    "hadn", "mustn"))
+
+
+def _clause_tokens(clause):
+    """ASR-normalised whole tokens of one clause — the
+    same normalisation _app_control_intents matches on,
+    with one repair: the punctuation pass splits English
+    contractions at the apostrophe ("don't" → "don" +
+    "t"), which would hide the negator from the scope
+    checks, so a trailing "t" fragment is merged back
+    onto its contraction head ("don" + "t" → "don't")."""
+    cleaned = _ASR_PUNCT_RE.sub(" ", clause or "")
+    toks = [_ASR_TOKEN_MAP.get(tok, tok)
+            for tok in cleaned.split()]
+    out = []
+    for tok in toks:
+        if tok == "t" and out and out[-1] in _CONTRACTION_HEADS:
+            out[-1] = out[-1] + "'t"
+        else:
+            out.append(tok)
+    return out
+
+
+def _is_complex_instruction(text):
+    """True when the utterance is a multi-clause
+    INSTRUCTION rather than a single bare command (v8.3):
+    more than _INTENT_MAX_TOKENS tokens, three or more
+    clauses, or two or more commas / dandas. Bare
+    commands — "open chrome", "ক্রোম খোলো", "ল্যাপটপ লক
+    করো", the garbled one-breath field lines — stay far
+    under every arm of this test."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    toks = _ASR_PUNCT_RE.sub(" ", t.lower()).split()
+    if len(toks) > _INTENT_MAX_TOKENS:
+        return True
+    if len(_intent_clauses(t)) >= 3:
+        return True
+    return t.count(",") >= 2 or t.count("।") >= 2
+
+
+def _clause_negated(clause_toks, clause_raw):
+    """True when one clause carries a negation (v8.3): an
+    English negator token, a whole-token Bengali না / নয়,
+    or the absolute-negation adverb কোনোভাবেই."""
+    if "কোনোভাবেই" in (clause_raw or ""):
+        return True
+    if any(tok in _EN_NEG_TOKENS for tok in clause_toks):
+        return True
+    return "না" in clause_toks or "নয়" in clause_toks
+
+
+def _trigger_clause_negated(text, triggers):
+    """True when a clause containing one of the trigger
+    tokens is negated (v8.3) — the search/open blocks'
+    standing-down test: "don't search for…" / "not open…"
+    must not fire the very intent they forbid."""
+    for clause in _intent_clauses(text):
+        ctoks = _clause_tokens(clause)
+        if any(trig in ctoks for trig in triggers):
+            if _clause_negated(ctoks, clause):
+                return True
+    return False
+
+
+def _app_control_negated(text, surface):
+    """True when the clause that mentions the app-control
+    TARGET is negated (v8.3) — "not Google Chrome" /
+    "কোনোভাবেই Google Chrome … খুলবে না": the mention is
+    a prohibition, not a command. কোনোভাবেই is checked
+    globally as well: its field shape spans the target
+    clause and the verb clause of one order, so anywhere
+    in the utterance it negates the order it rides in."""
+    if "কোনোভাবেই" in (text or ""):
+        return True
+    surf_toks = surface.split() if surface.isascii() else None
+    for clause in _intent_clauses(text):
+        ctoks = _clause_tokens(clause)
+        if surf_toks is not None:
+            hit = _tokens_run_in(ctoks, surf_toks)
+        else:
+            hit = surface in clause
+        if hit and _clause_negated(ctoks, clause):
+            return True
+    return False
+
+
+# ------------------------------------------------- v8.3: honest can't-do
+# WhatsApp messaging does not exist in Nalox — no tool
+# reads or sends a WhatsApp message (the Phase-1 audit;
+# the phone app can only OPEN WhatsApp). Asked anyway
+# (field 2026-11-16 19:18–19:23 IST, four times over),
+# Nalox thrashed through unrelated intents instead of
+# saying so. A request that names WhatsApp AND asks for
+# messaging (read / send / reply / chats) now ends in ONE
+# honest line naming the missing capability — checked
+# before the app/search intents, so nothing fires before
+# it and nothing after it in the turn. Merely OPENING
+# WhatsApp (the website route, the phone app) is a real
+# capability and stays untouched: no messaging word, no
+# can't-do.
+_WA_MSG_TOKENS = frozenset((
+    "message", "messages", "messaging", "send", "sent",
+    "sending", "reply", "replied", "replies", "replying",
+    "chat", "chats", "unread"))
+_WA_MSG_SUBSTRINGS = (
+    "মেসেজ", "রিপ্লাই", "চ্যাট", "উত্তর", "পাঠ")
+
+
+def _whatsapp_messaging_request(text):
+    """True when the utterance asks Nalox to READ or SEND
+    WhatsApp messages (v8.3) — a capability with no tool
+    behind it. Requires the WhatsApp mention itself plus
+    a messaging word (an English/Banglish token or a
+    Bengali substring); "open whatsapp" alone is an open
+    request and returns False."""
+    t = (text or "").lower()
+    if "whatsapp" not in t and "হোয়াটসঅ্যাপ" not in t \
+            and "হোয়াটস অ্যাপ" not in t:
+        return False
+    toks = set(_ASR_PUNCT_RE.sub(" ", t).split())
+    if toks & _WA_MSG_TOKENS:
+        return True
+    return any(s in t for s in _WA_MSG_SUBSTRINGS)
+
+
+# ------------------------------------------------- v8.3: meta-commentary
+# Field (2026-11-16 19:26 IST): after the screen step,
+# Nalox SPOKE as its reply, in English: "The user is
+# speaking in Bengali but with some phonetic spelling
+# issues. Let me try to understand what they're saying."
+# — the model's third-person reasoning ABOUT the owner
+# and his input, offered as the answer. The v5.6
+# deliberation guard below missed the shape on both of
+# its arms: its opener list has "the user is saying" but
+# not "the user is speaking", and its phrase arm needs
+# planning phrases this text never uses. The language
+# guard was the only net that held — and it does not
+# cover the one reply source that never passed
+# _guard_reply at all (the vision description, which
+# _look_at_screen_reply returned raw; that return is
+# guarded now too). The meta-commentary test joins the
+# deliberation guard itself, so EVERY _guard_reply path
+# — chat race, FreeLLMAPI lead, agent path, vision —
+# rejects the shape and the cascade takes its existing
+# retry → honest-line course. The shapes are third-
+# person narration about the user / the input / the
+# model's own process AS the reply's substance, never
+# content: Nalox speaks TO Arjun (Bengali, or second-
+# person English), and "the user manual…" carries no
+# meta verb after "the user".
+_META_USER_VERBS = (
+    "is speaking", "is saying", "is asking", "is trying",
+    "is writing", "is typing", "is requesting",
+    "is looking", "seems", "appears", "wants", "asked",
+    "said", "mentioned", "wrote", "typed", "requested",
+    "needs")
+_META_PHRASES = (
+    "let me try to understand", "let me understand what",
+    "i'll try to understand", "i will try to understand",
+    "trying to understand what",
+    "understand what they're saying",
+    "understand what they are saying",
+    "let me figure out what they",
+    "let me figure out what the user",
+    "let me interpret", "phonetic spelling")
+
+
+def _reply_is_meta_commentary(body):
+    """True when a (lowercased, whitespace-folded) reply
+    is META-COMMENTARY (v8.3): the model talking ABOUT
+    the user, his input, or its own process in the third
+    person instead of answering him. See the section
+    note for the field sentence this is pinned against."""
+    if body.startswith("the user "):
+        rest = body[len("the user "):]
+        if any(rest.startswith(v) for v in _META_USER_VERBS):
+            return True
+    if any(p in body for p in _META_PHRASES):
+        return True
+    if re.search(r"\bthe user (is|was|seems|appears)\b",
+                 body) and "let me" in body:
+        return True
+    return False
+
+
 # ------------------------------------------------- v5.6: CoT guard
 # The recycle-bin incident (2026-11-15 14:21): a reasoning
 # model inside the FreeLLMAPI chain answered "clean my
@@ -1871,6 +2110,14 @@ def _reply_looks_like_deliberation(text):
     for opener in _COT_OPENERS:
         if body.startswith(opener):
             return True
+    # v8.3: META-COMMENTARY — third-person narration
+    # about the user / his input / the model's own
+    # process (the 19:26 IST field leak: "The user is
+    # speaking in Bengali but with some phonetic
+    # spelling issues. Let me try to understand what
+    # they're saying."). See _reply_is_meta_commentary.
+    if _reply_is_meta_commentary(body):
+        return True
     hits = sum(1 for p in _COT_PHRASES if p in body)
     if hits >= 2:
         return True
@@ -3155,6 +3402,17 @@ class Brain:
         if dash_reply is not None:
             return dash_reply
 
+        # ---- v8.3: HONEST CAN'T-DO (unsupported capability) ----
+        # Before every deterministic intent below: a request
+        # for a capability with no tool behind it (WhatsApp
+        # messaging — see _unsupported_capability_reply)
+        # ends in the honest line. Nothing fires before it
+        # and nothing after it this turn — the field failure
+        # was the thrash, not the refusal.
+        cant_reply = self._unsupported_capability_reply(text)
+        if cant_reply is not None:
+            return cant_reply, None
+
         # ---- v6.8: APP CLOSE / OPEN (deterministic) ----
         # BEFORE the standby family below and before every
         # open path: a CLOSE verb must never be answered by
@@ -3392,8 +3650,18 @@ class Brain:
         # v4.4: the YouTube guard reads the NORMALISED text, so a
         # misheard "ytube" is not Google-searched either — it
         # belongs to the YouTube intents / content rules below.
+        # v8.3 INTENT DISCIPLINE: a multi-clause instruction, or
+        # a search verb under a negation, stands this intent
+        # down — "find the person whose message I haven't
+        # replied to yet, and send them…" is not a search query
+        # (field 2026-11-16 19:20 IST: the tail of exactly such
+        # an order was Google-searched verbatim). The whole
+        # text falls through to the brain/agent instead.
         m = re.search(r"(?:google|search the web|search|find)(?: for)?\s+(.+)", text)
-        if m and "youtube" not in _normalise_asr(text):
+        if m and "youtube" not in _normalise_asr(text) \
+                and not _is_complex_instruction(text) \
+                and not _trigger_clause_negated(
+                    text, ("search", "find", "google")):
             query = _clean(m.group(1))
             actions.google_search(query)
             return self._loc(f"Searching Google for {query}.",
@@ -3405,8 +3673,16 @@ class Brain:
             return self._loc("Opening YouTube.", "ইউটিউব খুলছি।"), None
 
         # ---- open website ----
+        # v8.3 INTENT DISCIPLINE: the whole block stands down
+        # for a multi-clause instruction or an "open" under a
+        # negation (see the search block above) — and inside
+        # it, the app candidate must be short and name-like:
+        # a long sentence is never an app name (field
+        # 2026-11-16 19:18 IST: "open koro jake ami reply di
+        # ni…" was looked up as an app, verbatim).
         m = re.search(r"\bopen\b\s+(.+)", text)
-        if m:
+        if m and not _is_complex_instruction(text) \
+                and not _trigger_clause_negated(text, ("open",)):
             target = _clean(m.group(1))
             site_names = ["gmail", "github", "whatsapp", "instagram", "facebook",
                           "twitter", "chatgpt", "amazon", "flipkart", "drive",
@@ -3419,15 +3695,21 @@ class Brain:
                 return actions.open_website(target), None
             # ---- open folder ----
             if target in actions.FOLDERS:
-                return actions.open_folder(target), None
+                return self._loc_find_failure(
+                    actions.open_folder(target)), None
             if target.replace(" folder", "") in actions.FOLDERS:
-                return actions.open_folder(target.replace(" folder", "")), None
+                return self._loc_find_failure(actions.open_folder(
+                    target.replace(" folder", ""))), None
             # ---- open app ----
-            return actions.open_app(target.replace(" app", "")), None
+            app_name = target.replace(" app", "")
+            if len(app_name.split()) <= 4:
+                return self._loc_find_failure(
+                    actions.open_app(app_name)), None
 
         m = re.search(r"\bopen\b.*\b(downloads|documents|desktop|pictures|music|videos)\b", text)
         if m:
-            return actions.open_folder(m.group(1)), None
+            return self._loc_find_failure(
+                actions.open_folder(m.group(1))), None
 
         # ---- volume ----
         if "volume up" in text or "increase volume" in text or "louder" in text:
@@ -3892,7 +4174,21 @@ class Brain:
             desc = vision.describe_screen_ollama(
                 self.cfg, result.get("image"), self.lang)
             if desc:
-                return desc
+                # v8.3: the vision description is a MODEL
+                # reply like any other — it passes the same
+                # _guard_reply (markup / script / reasoning-
+                # leak incl. meta-commentary / language /
+                # length) before it may be spoken. This
+                # return used to be the one unguarded model-
+                # text path in the codebase, and the
+                # 2026-11-16 19:26 IST meta-commentary leak
+                # rode the screen step. A rejection falls
+                # through to the OCR + brain summary below,
+                # exactly like a vision failure always has.
+                desc = self._guard_reply(
+                    desc, "Vision (screen)", None)
+                if desc:
+                    return desc
         if not text:
             return self._loc(
                 f"I captured the screen, {self._addr()}, but I could not read "
@@ -3993,7 +4289,13 @@ class Brain:
                     "খুলে দিলাম।")
 
         # YouTube: play / search / open
-        if "ইউটিউব" in text or "ইউ টিউব" in text:
+        # v8.3 INTENT DISCIPLINE: these two rules extract
+        # "the rest of the sentence" as their query — inside
+        # a multi-clause instruction that rest is somebody
+        # else's order, not a search (the A3 shape, Bengali
+        # side). Bare Bengali commands stay untouched.
+        if ("ইউটিউব" in text or "ইউ টিউব" in text) \
+                and not _is_complex_instruction(text):
             rest = text.replace("ইউটিউবে", " ").replace("ইউটিউব", " ") \
                        .replace("ইউ টিউব", " ")
             for junk in ("খোলো", "খুলুন", "খোল", "খুলো", "চালাও", "বাজাও",
@@ -4018,8 +4320,9 @@ class Brain:
             actions.open_youtube()
             return "ইউটিউব খুলছি।"
 
-        # Google search
-        if "গুগল" in text and ("সার্চ" in text or "খোঁজ" in text or "খুঁজ" in text):
+        # Google search (v8.3: same standing-down as above)
+        if "গুগল" in text and ("সার্চ" in text or "খোঁজ" in text or "খুঁজ" in text) \
+                and not _is_complex_instruction(text):
             rest = text.replace("গুগল", " ").replace("গুগলে", " ")
             for junk in ("সার্চ করো", "খোঁজো", "খুঁজো", "করো", "দাও"):
                 rest = rest.replace(junk, " ")
@@ -4421,6 +4724,57 @@ class Brain:
                         "khulo", "khol", "ওপেন", "খোলো",
                         "খুলুন", "খোল"}
 
+    def _unsupported_capability_reply(self, text):
+        """v8.3 HONEST CAN'T-DO: a request for a capability
+        with NO tool behind it ends here — one line naming
+        what Nalox cannot do, in the reply language. Today
+        the explicit case is WhatsApp messaging (see
+        _whatsapp_messaging_request): opening WhatsApp is
+        real, reading/sending its messages is not, and the
+        field proved four times over (2026-11-16 19:18–
+        19:23 IST) that without this check the router
+        thrashes through unrelated intents instead of
+        answering. Checked in _handle_single BEFORE the
+        app-control intents, so the honest line is the
+        turn's whole outcome — nothing fires before it and
+        nothing after it."""
+        if _whatsapp_messaging_request(text):
+            return self._loc(
+                "Sorry sir, I cannot read or send WhatsApp "
+                "messages — I don't have that ability yet.",
+                "দুঃখিত স্যার, আমি WhatsApp-এর মেসেজ পড়তে "
+                "বা পাঠাতে পারি না — এই ক্ষমতাটা আমার "
+                "এখনো নেই।")
+        return None
+
+    def _loc_find_failure(self, result):
+        """v8.3: the deterministic NOT-FOUND lines follow
+        the reply language. actions.open_app / open_folder
+        answer in English ("Sorry, I could not find X on
+        this laptop.") and the user-facing paths spoke
+        that raw — field 2026-11-16 19:18 IST: a Bengali-
+        pref owner got the English line with his whole
+        sentence as the "app name". Under pref bn the line
+        is Bengali now; the English original stands for
+        pref en. Anything else passes through untouched."""
+        if not result:
+            return result
+        m = re.match(r"Sorry, I could not find (.+) on "
+                     r"this laptop\.", result)
+        if m:
+            return self._loc(
+                result,
+                f"দুঃখিত স্যার, '{m.group(1)}' এই "
+                "ল্যাপটপে খুঁজে পেলাম না।")
+        m = re.match(r"I could not find the (.+) folder\.",
+                     result)
+        if m:
+            return self._loc(
+                result,
+                f"দুঃখিত স্যার, '{m.group(1)}' "
+                "ফোল্ডারটা খুঁজে পেলাম না।")
+        return result
+
     def _app_control_intents(self, text):
         """Deterministic app close/open (v6.8) — the fix for
         the field bug where "ক্রোম বন্ধ করো" OPENED Chrome.
@@ -4454,6 +4808,15 @@ class Brain:
             return None
         if "studio" in tset:
             return None
+        # v8.3 INTENT DISCIPLINE: a multi-clause
+        # instruction is not a bare app command — the
+        # brain/agent receives it whole and reasons over
+        # all of it (field 2026-11-16 19:21/19:23 IST: a
+        # 30-word order to use WhatsApp and NOT Chrome was
+        # answered by opening Chrome, because this intent
+        # matched a target and a verb clauses apart).
+        if _is_complex_instruction(text):
+            return None
         target = None
         for surface, key, disp_en, disp_bn in \
                 self._APP_CONTROL_TARGETS:
@@ -4466,6 +4829,12 @@ class Brain:
                 target = (key, disp_en, disp_bn)
                 break
         if target is None:
+            return None
+        # v8.3: a target mentioned under a negation is a
+        # prohibition, not a command — "not Google Chrome"
+        # / "কোনোভাবেই Google Chrome … খুলবে না" must
+        # never open (or close) the very app it forbids.
+        if _app_control_negated(text, surface):
             return None
         key, disp_en, disp_bn = target
         # v8.1: the Bengali/Hindi close verbs are WHOLE
@@ -4515,7 +4884,9 @@ class Brain:
             result = actions.open_app(key)
             if result and str(result).lower().startswith(
                     "sorry"):
-                return result
+                # v8.3: the not-found line follows the
+                # reply language (see _loc_find_failure).
+                return self._loc_find_failure(result)
             return self._loc(f"Opening {disp_en}.",
                              f"{disp_bn} খুলছি।")
         return None
@@ -5860,11 +6231,15 @@ class Brain:
             if action == "speak":
                 return target
             if action == "open_app":
-                return actions.open_app(target)
+                # v8.3: a taught command's not-found line
+                # follows the reply language too.
+                return self._loc_find_failure(
+                    actions.open_app(target))
             if action == "open_folder":
                 low = target.lower()
                 if low in actions.FOLDERS:
-                    return actions.open_folder(target)
+                    return self._loc_find_failure(
+                        actions.open_folder(target))
                 if os.path.isdir(os.path.expandvars(target)):
                     res = actions.open_path(target)
                     ok = bool(res.get("ok")) \
@@ -5876,7 +6251,8 @@ class Brain:
                     return self._loc(
                         f"I couldn't open {target}, {user}.",
                         f"{target} খুলতে পারলাম না, {user_bn}।")
-                return actions.open_folder(target)
+                return self._loc_find_failure(
+                    actions.open_folder(target))
             if action == "open_url":
                 url = target if "://" in target \
                     else "https://" + target
@@ -6110,6 +6486,24 @@ class Brain:
         channel_reply = self._channel_reply(text)
         if channel_reply is not None:
             return channel_reply
+
+        # v8.3 INTENT DISCIPLINE: the content rules match on
+        # the bare PRESENCE of a platform word — the loosest
+        # triggers in the router. A multi-clause instruction,
+        # or one whose platform/verb mention sits under a
+        # negation, is not theirs to fire on: "don't open
+        # chrome" must not open Chrome just because the word
+        # is present (the field's A1/A2 orders carried the
+        # same shape at length). The whole text belongs to
+        # the brain/agent instead. Bare garbled commands —
+        # this family's reason to exist — are short and
+        # negation-free, so they are untouched.
+        if _is_complex_instruction(text):
+            return None
+        if _trigger_clause_negated(
+                text, ("chrome", "browser", "youtube",
+                       "open", "play", "search", "find")):
+            return None
 
         nt = _normalise_asr(text)
         if not nt:
@@ -8803,6 +9197,24 @@ class Brain:
                    "content for the request and type THAT; "
                    "never type the owner's spoken instruction "
                    "itself into the document.")
+        # v8.3: CAPABILITY HONESTY (field 2026-11-16
+        # 19:18–19:23 IST): asked four times to read/send
+        # WhatsApp messages — a capability with NO tool —
+        # the chain models routed around the gap with
+        # unrelated actions (a Google search, opening the
+        # very browser the order forbade) instead of
+        # saying they could not. The deterministic layer
+        # now answers the explicit WhatsApp case itself
+        # (see _unsupported_capability_reply); this rule is
+        # the general one for every capability gap.
+        prompt += (" You can only do what your tools do. "
+                   "If a request needs a capability you "
+                   "have NO tool for — reading or sending "
+                   "WhatsApp messages is the standing "
+                   "example — say so honestly in ONE short "
+                   "line naming what you cannot do; never "
+                   "route around the gap with an unrelated "
+                   "action, and never claim you did it.")
         # v6.6: CONVERSATIONAL CLOSE — the one mannerism the
         # owner picked from the MARK LIV demo video he studied
         # (2026-11-15): its replies feel alive because they so
