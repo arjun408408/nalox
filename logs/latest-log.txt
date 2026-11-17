@@ -1,23 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-17 09:02:49 (laptop local time)
+Synced: 2026-11-17 09:12:54 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:31:57 [SYSTEM] [ears] big local model ready — using large-v3-turbo on cuda (float16)
-14:31:57 [SYSTEM] [ears] big local model loading…
-14:32:00 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-14:32:03 [SYSTEM] [ears] heard via local
-14:32:24 [MIC] [heard] nalox.
-14:32:24 [MIC] [mic] wake word heard
-14:32:25 [WAKE] [wake] wake word heard
-14:32:25 [NALOX] NALOX: Yes Sir,
-14:32:26 [VOICE] via tts-cache: Yes Sir,
-14:32:41 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:32:41 [SYSTEM] [ears] heard via cloud:groq
-14:32:41 [MIC] [heard] আইক আজ কো তোমি কোম ওপেন করো, কোম ওপেন করায় পর আমা জনে এটা হিংদি সংগ পিলেন করো, ইটুভে, ইলে করো
-14:32:41 [YOU] [mic] heard: আইক আজ কো তোমি কোম ওপেন করো, কোম ওপেন করায় পর আমা জনে এটা হিংদি সংগ পিলেন করো, ইটুভে, ইলে করো
 14:32:42 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
 14:32:47 [BRAIN] [brain] chat fallback: Ollama failed: not reachable at http://localhost:11434
 14:32:48 [BRAIN] [brain] reply translated to Bengali (rescue)
@@ -1418,6 +1405,17 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 09:00:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 09:01:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 09:02:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:02:52 [SYSTEM] [logsync] log sent
+09:03:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:04:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:05:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:06:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:07:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:08:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:09:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:10:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:11:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+09:12:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
