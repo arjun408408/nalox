@@ -1,17 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-17 08:22:21 (laptop local time)
+Synced: 2026-11-17 08:32:28 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:29:53 [BRAIN] [brainbench] Groq · llama-3.3-70b-versatile — skipped — not on this account
-14:29:56 [BRAIN] [brainbench] Groq · openai/gpt-oss-120b — ok 3/3 · first token 1.02s · reply 1.05s · Bengali 0% · guards ✗
-14:29:56 [BRAIN] [brainbench] Groq · qwen/qwen3-32b — skipped — not on this account
-14:30:00 [BRAIN] [brainbench] Groq · openai/gpt-oss-20b — ok 3/3 · first token 1.08s · reply 1.05s · Bengali 0% · guards ✗
-14:30:00 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=10 blip=0 short=0 peak=0.0545 dec=7 (t7 b0 s0 r0) dmax=10.5s
-14:30:02 [BRAIN] [brainbench] Groq · allam-2-7b — ok 3/3 · first token 0.72s · reply 0.94s · Bengali 0% · guards ✗
-14:30:04 [BRAIN] [brainbench] OpenRouter · anthropic/claude-sonnet-4.5 — failed 0/3 · RuntimeError: HTTP 402 {"error":{"message":"Insufficient credits. This account n
 14:30:04 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2 — failed 0/3 · RuntimeError: HTTP 402 {"error":{"message":"Insufficient credits. This account n
 14:30:05 [BRAIN] [brainbench] OpenRouter · z-ai/glm-5.2:free — failed 0/3 · RuntimeError: HTTP 404 {"error":{"message":"This model is unavailable for free.
 14:30:07 [BRAIN] [brainbench] Muse Wonder · muse-wonder-1.0 — failed 0/3 · RuntimeError: HTTP 402 {"error":{"code":"billing_not_configured","message":"Bill
@@ -1409,6 +1402,17 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 08:19:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 08:20:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 08:21:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:22:25 [SYSTEM] [logsync] log sent
+08:22:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:23:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:24:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:25:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:26:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:27:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:28:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:29:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:30:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:31:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
