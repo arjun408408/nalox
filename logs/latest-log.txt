@@ -1,58 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-17 08:09:07 (laptop local time)
+Synced: 2026-11-17 08:12:14 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:16:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:17:45 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:17:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2605 dec=13 (t12 b0 s1 r0) dmax=10.0s
-14:18:01 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:18:44 [SYSTEM] [dashboard] Command Center closed.
-14:18:45 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:18:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2268 dec=11 (t10 b0 s1 r0) dmax=10.0s
-14:19:11 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:19:16 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:19:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0601 dec=11 (t10 b0 s1 r0) dmax=10.0s
-14:20:22 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:20:27 [VOICE] via google-tts: Hi Arjun, this is my voice.
-14:20:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=0 short=0 peak=0.1133 dec=9 (t4 b0 s5 r0) dmax=5.4s
-14:21:36 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:21:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0915 dec=13 (t10 b0 s3 r0) dmax=8.0s
-14:22:36 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:22:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:22:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0618 dec=12 (t11 b0 s1 r0) dmax=8.0s
-14:23:04 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:23:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1141 dec=11 (t5 b0 s6 r0) dmax=8.0s
-14:23:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:24:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1683 dec=13 (t13 b0 s0 r0) dmax=5.0s
-14:24:52 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:25:06 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:25:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1561 dec=10 (t9 b0 s1 r0) dmax=8.7s
-14:26:17 [SYSTEM] [logsync] log sent
-14:26:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:26:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0254 dec=13 (t9 b0 s4 r0) dmax=5.5s
-14:27:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0296 dec=12 (t4 b0 s8 r0) dmax=8.0s
-14:28:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.0325 dec=12 (t5 b0 s7 r0) dmax=2.3s
-14:28:53 [SYSTEM] [sys] exiting (restart): Settings — Save & Restart
-14:28:54 [SYSTEM] [supervisor] Nalox exited (code 0) — a restart-style exit, relaunching in 5 seconds.
-14:28:59 [VOICE] [voice] starting with edge-tts (worked last time)
-14:28:59 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-14:28:59 [SYSTEM] > user: Arjun | lang: en
-14:28:59 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-14:28:59 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-14:28:59 [BRAIN] [brain] Brain: checking…
-14:28:59 [SYSTEM] [prefs] call me: sir | language: bn
-14:29:00 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-14:29:00 [SYSTEM] Nalox v7.9 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-14:29:00 [SYSTEM] [sys] Command Center opened at start
-14:29:00 [NALOX] NALOX: শুভ বিকেল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-14:29:01 [BRAIN] [brain] Groq: models on this account (11): openai/gpt-oss-20b, whisper-large-v3, openai/gpt-oss-safeguard-20b, qwen/qwen3.8-27b, openai/gpt-oss-120b, meta-llama/llama-prompt-guard-2-86m, whisper-large-v3-turbo, meta-llama/llama-prompt-guard-2-22m, canopylabs/orpheus-arabic-saudi, canopylabs/orpheus-v1-english, allam-2-7b
-14:29:01 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> openai/gpt-oss-20b -> allam-2-7b
-14:29:01 [BRAIN] [brain] Groq: auto chat head: qwen/qwen3.8-27b (validation pick — leads the chat walk)
-14:29:01 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-14:29:07 [VOICE] [voice] male voice cache warmed
 14:29:08 [VOICE] via tts-cache: শুভ বিকেল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
 14:29:08 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
 14:29:08 [SYSTEM] [ready] Say 'Nalox' to wake me
@@ -1410,6 +1362,52 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 08:06:44 [MIC] [mic] connected (system default microphone)
 08:07:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 08:08:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:09:10 [SYSTEM] [logsync] log sent
+08:09:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:09:38 [MIC] [mic] connected (system default microphone)
+08:09:44 [SYSTEM] [input] dictation (cloud:groq): তুমি আমার লেপটোপে Spotify টালোট করো
+08:09:44 [YOU] [mic] heard: তুমি আমার লেপটোপে Spotify টালোট করো
+08:09:45 [BRAIN] [brain] Gemini model gemini-flash-latest rate-limited again — parked 30m (likely daily quota)
+08:09:45 [BRAIN] [tool] open_app {'name': 'spotify'}
+08:09:47 [BRAIN] [brain] chat race: Groq answered first (2468 ms)
+08:09:47 [NALOX] NALOX: স্পটিফাই ইনস্টল নেই বলে খুলতে পারছি না, স্যার। আর কিছু দরকার?
+08:09:53 [VOICE] via edge-tts: স্পটিফাই ইনস্টল নেই বলে খুলতে পারছি না, স্যার।
+08:09:57 [VOICE] via edge-tts: আর কিছু দরকার?
+08:09:57 [SYSTEM] [timing] record 5.1s, transcribe 1.3s, brain 2.5s, speak 10.2s
+08:09:57 [MIC] [mic] connected (system default microphone)
+08:10:02 [MIC] [mic] connected (system default microphone)
+08:10:08 [SYSTEM] [input] dictation (cloud:groq): তা হলে তুমি স্পটিবা ডাইলোট করে নিস্টাল করু
+08:10:08 [YOU] [mic] heard: তা হলে তুমি স্পটিবা ডাইলোট করে নিস্টাল করু
+08:10:10 [BRAIN] [brain] chat race: Groq answered first (1609 ms)
+08:10:10 [NALOX] NALOX: দুঃখিত, স্যার, আমি স্পটিফাই আনইনস্টল করতে পারি না।
+08:10:19 [VOICE] via edge-tts: দুঃখিত, স্যার, আমি স্পটিফাই আনইনস্টল করতে পারি না।
+08:10:19 [SYSTEM] [timing] record 5.5s, transcribe 1.2s, brain 1.6s, speak 8.6s
+08:10:19 [MIC] [mic] connected (system default microphone)
+08:10:25 [ERROR] [dictation] speech was captured but cloud transcription returned nothing usable — answered with the could-not-hear line
+08:10:25 [NALOX] NALOX: দুঃখিত sir, কথাটা শুনতে পাইনি — আবার একবার বলুন।
+08:10:29 [VOICE] via tts-cache: দুঃখিত sir, কথাটা শুনতে পাইনি — আবার একবার বলুন।
+08:10:34 [MIC] [mic] connected (system default microphone)
+08:10:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=recording
+08:10:42 [SYSTEM] [input] dictation (cloud:groq): ইনিস্টাল করতে পারো না Microsoft Store দিয়ে Spotify ইনিস্টাল করো
+08:10:42 [YOU] [mic] heard: ইনিস্টাল করতে পারো না Microsoft Store দিয়ে Spotify ইনিস্টাল করো
+08:10:44 [BRAIN] [tool] open_app {'name': 'Microsoft Store'}
+08:10:58 [ERROR] [BRAIN] Ollama FAILED: ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=8.0)
+08:10:58 [BRAIN] [brain] chat fallback: Ollama failed: ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=8.0)
+08:10:58 [NALOX] NALOX: দুঃখিত sir, brain-এর limit শেষ হয়ে গেছে — একটু পরে আবার চেষ্টা করুন।
+08:11:05 [SYSTEM] [input] text: ইনিস্টাল করতে পারো না Microsoft Store দিয়ে Spotify ইনিস্টাল করো
+08:11:06 [VOICE] via edge-tts: দুঃখিত sir, brain-এর limit শেষ হয়ে গেছে — একটু পরে আবার চেষ্টা করুন।
+08:11:06 [SYSTEM] [timing] record 7.2s, transcribe 1.4s, brain 16.1s, speak 7.3s
+08:11:06 [MIC] [mic] connected (system default microphone)
+08:11:06 [YOU] [mic] heard: ইনিস্টাল করতে পারো না Microsoft Store দিয়ে Spotify ইনিস্টাল করো
+08:11:08 [BRAIN] [tool] open_app {'name': 'Microsoft Store'}
+08:11:11 [BRAIN] [length-guard] Groq reply rejected — too long for a command answer; trying the next provider
+08:11:22 [ERROR] [BRAIN] Ollama FAILED: ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=8.0)
+08:11:22 [BRAIN] [brain] chat fallback: Ollama failed: ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=8.0)
+08:11:22 [NALOX] NALOX: দুঃখিত sir, brain-এর limit শেষ হয়ে গেছে — একটু পরে আবার চেষ্টা করুন।
+08:11:29 [VOICE] via edge-tts: দুঃখিত sir, brain-এর limit শেষ হয়ে গেছে — একটু পরে আবার চেষ্টা করুন।
+08:11:29 [SYSTEM] [timing] record 0.0s, transcribe 0.0s, brain 16.1s, speak 7.0s
+08:11:29 [MIC] [mic] connected (system default microphone)
+08:11:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=followup
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
