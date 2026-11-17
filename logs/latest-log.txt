@@ -1,30 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-17 08:06:01 (laptop local time)
+Synced: 2026-11-17 08:09:07 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:14:47 [SYSTEM] Nalox v7.9 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-14:14:47 [BRAIN] [brain] Groq: models on this account (11): canopylabs/orpheus-v1-english, openai/gpt-oss-120b, qwen/qwen3.8-27b, openai/gpt-oss-safeguard-20b, allam-2-7b, openai/gpt-oss-20b, canopylabs/orpheus-arabic-saudi, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3, whisper-large-v3-turbo, meta-llama/llama-prompt-guard-2-86m
-14:14:47 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> allam-2-7b -> openai/gpt-oss-20b
-14:14:47 [BRAIN] [brain] Groq: auto chat head: qwen/qwen3.8-27b (validation pick — leads the chat walk)
-14:14:47 [SYSTEM] [sys] Command Center opened at start
-14:14:47 [NALOX] NALOX: শুভ বিকেল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-14:14:48 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-14:15:00 [VOICE] via edge-tts: শুভ বিকেল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-14:15:00 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-14:15:00 [SYSTEM] [ready] Say 'Nalox' to wake me
-14:15:00 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-14:15:00 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-14:15:13 [VOICE] [voice] male voice cache warmed
-14:15:14 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:15:24 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:15:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=9 blip=0 short=0 peak=0.1612 dec=7 (t7 b0 s0 r0) dmax=12.6s
-14:16:10 [SYSTEM] [logsync] log sent
-14:16:42 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:16:46 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:16:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=12 blip=0 short=0 peak=0.3055 dec=8 (t7 b0 s1 r0) dmax=22.4s
 14:16:51 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 14:17:45 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
 14:17:47 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2605 dec=13 (t12 b0 s1 r0) dmax=10.0s
@@ -1405,6 +1385,31 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 08:05:45 [SYSTEM] [timing] record 7.8s, transcribe 1.0s, brain 15.6s, speak 8.4s
 08:05:45 [MIC] [mic] connected (system default microphone)
 08:05:59 [MIC] [mic] connected (system default microphone)
+08:06:02 [SYSTEM] [input] dictation (cloud:groq): আ
+08:06:02 [YOU] [mic] heard: আ
+08:06:03 [BRAIN] [brain] Gemini model gemini-flash-latest rate-limited — parked 60s, trying next
+08:06:03 [BRAIN] [brain] chat race: Groq answered first (1156 ms)
+08:06:03 [NALOX] NALOX: কীভাবে সাহায্য করতে পারি, স্যার?
+08:06:04 [SYSTEM] [logsync] log sent
+08:06:10 [VOICE] via edge-tts: কীভাবে সাহায্য করতে পারি, স্যার?
+08:06:10 [SYSTEM] [timing] record 2.0s, transcribe 0.8s, brain 1.2s, speak 6.7s
+08:06:10 [MIC] [mic] connected (system default microphone)
+08:06:18 [ERROR] [dictation] speech was captured but cloud transcription returned nothing usable — answered with the could-not-hear line
+08:06:18 [NALOX] NALOX: দুঃখিত sir, কথাটা শুনতে পাইনি — আবার একবার বলুন।
+08:06:22 [VOICE] via tts-cache: দুঃখিত sir, কথাটা শুনতে পাইনি — আবার একবার বলুন।
+08:06:25 [MIC] [mic] connected (system default microphone)
+08:06:31 [SYSTEM] [input] dictation (cloud:groq): আমি বলচি তুমি আমাছোনে মোজ এই আয় ওপেন করো
+08:06:31 [YOU] [mic] heard: আমি বলচি তুমি আমাছোনে মোজ এই আয় ওপেন করো
+08:06:33 [BRAIN] [tool] open_youtube
+08:06:34 [BRAIN] [brain] chat race: Groq answered first (2906 ms)
+08:06:34 [NALOX] NALOX: ইয়ুটা খুলেছি, স্যার। আর কিছু করতে চান?
+08:06:36 [heartbeat] state=speaking mic=system default microphone queue=0 dict=idle
+08:06:39 [VOICE] via edge-tts: ইয়ুটা খুলেছি, স্যার।
+08:06:44 [VOICE] via edge-tts: আর কিছু করতে চান?
+08:06:44 [SYSTEM] [timing] record 5.0s, transcribe 1.2s, brain 2.9s, speak 9.6s
+08:06:44 [MIC] [mic] connected (system default microphone)
+08:07:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:08:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
