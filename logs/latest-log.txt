@@ -1,158 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-16 22:19:04 (laptop local time)
+Synced: 2026-11-17 08:01:54 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-13:32:28 [YOU] [mic] heard: একস্ত অনেক দিন হয়ন কায়ায়ায়ায়তে তুমে এটা জিনিশ করনা তমার নিজে কে টেক্স্ট করো থিকায় যে সবকে যো ঠিকতা কাছে নাকে তমার নিজে পোসেজ
-13:32:29 [BRAIN] [brain] chat race: Groq answered first (1219 ms)
-13:32:29 [NALOX] NALOX: [Assistant rejected] আমি আপনাকে সরাসরি বুঝতে পারছি না, স্যার। টেক্সট বা পোস্ট করার বিষয়ে আরেকটু স্পষ্ট করে বলবেন।
-13:32:33 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=5 blip=0 short=0 peak=0.1557 dec=3 (t2 b0 s1 r0) dmax=5.4s
-13:32:36 [VOICE] via google-tts: [Assistant rejected] আমি আপনাকে সরাসরি বুঝতে পারছি না, স্যার।
-13:32:41 [VOICE] via google-tts: টেক্সট বা পোস্ট করার বিষয়ে আরেকটু স্পষ্ট করে বলবেন।
-13:32:41 [SYSTEM] [timing] wake→record 8.5s, transcribe 3.7s, brain 1.2s, speak 12.2s
-13:32:41 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:32:52 [SYSTEM] [ears] heard via cloud:groq
-13:32:52 [MIC] [heard] তুমি আয় কাছ করো, তুমি আয় করো আমার লেপটোপে নোটপেড ওপেন করো আমার নামে ভারাজ নিশ লেখো
-13:32:52 [YOU] [mic] heard: তুমি আয় কাছ করো, তুমি আয় করো আমার লেপটোপে নোটপেড ওপেন করো আমার নামে ভারাজ নিশ লেখো
-13:32:53 [BRAIN] [tool] open_app {'name': 'notepad'}
-13:32:53 [SYSTEM] [dashboard] Command Center closed.
-13:32:57 [ERROR] [BRAIN] Groq FAILED: HTTP 429 — rate_limit_exceeded — Rate limit reached for model `qwen/qwen3.8-27b` in organization `org_01m7et8kg1eskv4a4k8cqmyzdz` s
-13:33:00 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:33:09 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:33:10 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.9s, brain 7.6s, speak 9.5s
-13:33:10 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:33:21 [SYSTEM] [ears] heard via cloud:groq
-13:33:21 [MIC] [heard] kampen
-13:33:21 [YOU] [mic] heard: kampen
-13:33:22 [BRAIN] [brain] chat race: Groq answered first (1016 ms)
-13:33:22 [NALOX] NALOX: আপনি কি কীপার মানে বলতে চাইছেন, নাকি অন্য কিছু? আরেকটু স্পষ্ট করে বলবেন, আমি শুনছি।
-13:33:27 [VOICE] via google-tts: আপনি কি কীপার মানে বলতে চাইছেন, নাকি অন্য কিছু?
-13:33:31 [VOICE] via google-tts: আরেকটু স্পষ্ট করে বলবেন, আমি শুনছি।
-13:33:32 [SYSTEM] [logsync] log sent
-13:33:33 [heartbeat] state=speaking mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-13:33:35 [SYSTEM] [timing] wake→record 8.6s, transcribe 2.5s, brain 1.0s, speak 12.9s
-13:33:35 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:33:47 [SYSTEM] [ears] heard via cloud:groq
-13:33:47 [MIC] [heard] তুমি নোট্পেট ওপেন করো যা নোট্পেটা আমান নামে ভারলিনিস লেখো তোকনে একটারা বললেম, তোকনে নোটপেট ওপেন হলো তারাকে কিন্তে হলো চুলছে নাতে
-13:33:47 [YOU] [mic] heard: তুমি নোট্পেট ওপেন করো যা নোট্পেটা আমান নামে ভারলিনিস লেখো তোকনে একটারা বললেম, তোকনে নোটপেট ওপেন হলো তারাকে কিন্তে হলো চুলছে নাতে
-13:33:48 [BRAIN] [tool] open_app {'name': 'notepad'}
-13:33:52 [ERROR] [BRAIN] Groq FAILED: HTTP 429 — rate_limit_exceeded — Rate limit reached for model `qwen/qwen3.8-27b` in organization `org_01m7et8kg1eskv4a4k8cqmyzdz` s
-13:33:55 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:34:04 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:34:04 [SYSTEM] [timing] wake→record 8.4s, transcribe 3.6s, brain 8.2s, speak 9.3s
-13:34:04 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:34:16 [SYSTEM] [ears] heard via cloud:groq
-13:34:16 [MIC] [heard] তুমি এই যে নোডু পেড ওপেন করছে সেখানে কিছু লেখু, কিছু লেখু
-13:34:16 [YOU] [mic] heard: তুমি এই যে নোডু পেড ওপেন করছে সেখানে কিছু লেখু, কিছু লেখু
-13:34:17 [BRAIN] [tool] type_text {'text': 'Nalox'}
-13:34:23 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:34:32 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:34:32 [SYSTEM] [timing] wake→record 8.5s, transcribe 3.0s, brain 7.5s, speak 9.1s
-13:34:32 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:34:33 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-13:34:43 [SYSTEM] [ears] heard via cloud:groq
-13:34:43 [MIC] [heard] hello everyone! i'm going to show you a beautiful beautiful beautiful
-13:34:43 [YOU] [mic] heard: hello everyone! i'm going to show you a beautiful beautiful beautiful
-13:34:47 [BRAIN] [brain] chat race: Groq answered first (4077 ms)
-13:34:47 [NALOX] NALOX: জি স্যার, আপনার কণ্ঠস্বর পরিষ্কার শুনতে পাচ্ছি। বলুন, আপনি যা দেখাতে চান, তার বিবরণ জানাচ্ছেন।
-13:34:54 [VOICE] via google-tts: জি স্যার, আপনার কণ্ঠস্বর পরিষ্কার শুনতে পাচ্ছি।
-13:34:59 [VOICE] via google-tts: বলুন, আপনি যা দেখাতে চান, তার বিবরণ জানাচ্ছেন।
-13:35:01 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.6s, brain 4.1s, speak 13.8s
-13:35:01 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:35:12 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:35:13 [SYSTEM] [ears] heard via cloud:groq
-13:35:13 [MIC] [heard] এটিউ বোপেনি করে এটা ভালো হিন্দি সংচালা হয় যেটা ফাংক টাইপের হয় মিক্সিংগ হয় ভাল লাগে যেটা ছুনে
-13:35:13 [YOU] [mic] heard: এটিউ বোপেনি করে এটা ভালো হিন্দি সংচালা হয় যেটা ফাংক টাইপের হয় মিক্সিংগ হয় ভাল লাগে যেটা ছুনে
-13:35:20 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:35:28 [VOICE] via google-tts: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
-13:35:29 [SYSTEM] [timing] wake→record 8.6s, transcribe 3.2s, brain 6.5s, speak 9.0s
-13:35:29 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:35:33 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=0 blip=0 short=0 peak=0.0000
-13:35:39 [SYSTEM] [ears] heard via cloud:groq
-13:35:39 [MIC] [heard] the
-13:35:39 [YOU] [mic] heard: the
-13:35:40 [BRAIN] [brain] chat race: Groq answered first (875 ms)
-13:35:40 [NALOX] NALOX: জি স্যার, বলুন।
-13:35:43 [VOICE] via google-tts: জি স্যার, বলুন।
-13:35:44 [SYSTEM] [timing] wake→record 8.5s, transcribe 2.2s, brain 0.9s, speak 3.8s
-13:35:44 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:36:23 [SYSTEM] [ears] heard via local
-13:36:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=1 blip=0 short=0 peak=0.1384
-13:36:39 [SYSTEM] [logsync] log sent
-13:36:42 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:37:14 [MIC] [heard] ¿alonellox, oíca?
-13:37:14 [MIC] [mic] wake word heard
-13:37:14 [WAKE] [wake] wake word heard
-13:37:14 [NALOX] NALOX: Yes Sir,
-13:37:15 [VOICE] via tts-cache: Yes Sir,
-13:37:16 [YOU] [mic] heard: ¡helo una locura
-13:37:18 [BRAIN] [brain] chat race: Groq answered first (1188 ms)
-13:37:18 [NALOX] NALOX: জি স্যার, আমি আছি। বলুন, কীভাবে সাহায্য করতে পারি?
-13:37:21 [VOICE] via google-tts: জি স্যার, আমি আছি।
-13:37:25 [VOICE] via google-tts: বলুন, কীভাবে সাহায্য করতে পারি?
-13:37:31 [SYSTEM] [timing] wake→record 7.2s, transcribe 10.1s, brain 1.2s, speak 13.7s
-13:37:31 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-13:37:33 [heartbeat] state=awake mic=Microphone Array (Realtek(R) Au queue=0 seg=9 blip=0 short=0 peak=0.2574 dec=9 (t8 b0 s1 r0) dmax=10.1s
-13:38:10 [SYSTEM] [ears] heard via local
-13:38:28 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:38:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=1 seg=4 blip=0 short=0 peak=0.1635 dec=2 (t2 b0 s0 r0) dmax=8.0s
-13:38:34 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:39:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2276 dec=14 (t14 b0 s0 r0) dmax=8.0s
-13:40:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:40:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1787 dec=12 (t12 b0 s0 r0) dmax=8.0s
-13:40:33 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:41:05 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-13:41:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.2679 dec=12 (t11 b0 s1 r0) dmax=8.0s
-13:41:37 [SYSTEM] Exit Nalox pressed in the app window.
-13:41:38 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
-14:10:32 [VOICE] [voice] starting with google-tts (worked last time)
-14:10:32 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
-14:10:32 [SYSTEM] > user: Arjun | lang: en
-14:10:32 [SYSTEM] [sys] Command Center ready — say 'Nalox, wake up' to open it
-14:10:32 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
-14:10:32 [BRAIN] [brain] Brain: checking…
-14:10:32 [SYSTEM] [prefs] call me: sir | language: bn
-14:10:33 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
-14:10:33 [SYSTEM] Nalox v7.9 started | mic: Microphone Array (Realtek(R) Au | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
-14:10:33 [SYSTEM] [sys] Command Center opened at start
-14:10:33 [NALOX] NALOX: শুভ বিকেল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-14:10:33 [BRAIN] [brain] Groq: models on this account (11): allam-2-7b, openai/gpt-oss-120b, qwen/qwen3.8-27b, canopylabs/orpheus-v1-english, openai/gpt-oss-safeguard-20b, whisper-large-v3-turbo, canopylabs/orpheus-arabic-saudi, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3, meta-llama/llama-prompt-guard-2-86m, openai/gpt-oss-20b
-14:10:33 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> allam-2-7b -> openai/gpt-oss-20b
-14:10:33 [BRAIN] [brain] Groq: auto chat head: qwen/qwen3.8-27b (validation pick — leads the chat walk)
-14:10:34 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
-14:10:40 [VOICE] via tts-cache: শুভ বিকেল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
-14:10:40 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
-14:10:40 [SYSTEM] [ready] Say 'Nalox' to wake me
-14:10:40 [MIC] [mic] connected: Microphone Array (Realtek(R) Au
-14:10:40 [SYSTEM] [gate] floor=0.0000 threshold=0.0060 (say 'Nalox' a bit louder if I miss you)
-14:10:57 [SYSTEM] [dashboard] Command Center closed.
-14:11:10 [VOICE] [voice] male voice cache warmed
-14:11:29 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:11:32 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:11:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=10 blip=0 short=0 peak=0.2002 dec=7 (t6 b0 s1 r0) dmax=12.7s
-14:11:55 [SYSTEM] [logsync] log sent
-14:12:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.3526 dec=11 (t5 b0 s6 r0) dmax=8.0s
-14:13:14 [MIC] [heard] εναλόξ, κανογιάρμοι
-14:13:19 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:13:33 [heartbeat] state=listening mic=Microphone Array (Realtek(R) Au queue=0 seg=12 blip=0 short=0 peak=0.1823 dec=12 (t2 b0 s10 r0) dmax=12.7s
-14:13:37 [MIC] [heard] nalox, wake up
-14:13:37 [WAKE] [wake] wake up — opening the Command Center
-14:13:37 [MIC] [mic] wake word heard
-14:13:37 [WAKE] [wake] wake word heard
-14:13:37 [NALOX] NALOX: Yes Sir,
-14:13:39 [VOICE] via tts-cache: Yes Sir,
-14:13:51 [SYSTEM] [ears] heard via cloud:groq
-14:13:51 [MIC] [heard] now look, they're going to come
-14:13:51 [YOU] [mic] heard: now look, they're going to come
-14:13:51 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-14:13:52 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
-14:13:52 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
-14:13:53 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
-14:13:56 [BRAIN] [brain] chat fallback: Ollama failed: not reachable at http://localhost:11434
-14:13:58 [BRAIN] [brain] reply translated to Bengali (rescue)
-14:13:58 [NALOX] NALOX: আমি শুনছি, আর যা আসবে তার জন্য প্রস্তুত আছি, স্যার। শুধু আমাকে আদেশ দিন.
 14:14:06 [VOICE] via edge-tts: আমি শুনছি, আর যা আসবে তার জন্য প্রস্তুত আছি, স্যার।
 14:14:13 [SYSTEM] [dashboard] Command Center closed.
 14:14:13 [ERROR] Voice path edge-tts failed:
@@ -1432,10 +1284,136 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 22:18:53 [VOICE] via google-tts: আর কীভাবে সাহায্য করতে পারি, স্যার?
 22:18:53 [SYSTEM] [timing] record 6.7s, transcribe 1.7s, brain 2.8s, speak 20.1s
 22:18:53 [MIC] [mic] connected (system default microphone)
+22:19:07 [SYSTEM] [logsync] log sent
+22:19:15 [SYSTEM] [input] dictation (cloud:groq): আমার মাথা এটা বেন দেবানা, এটা বেন যোদে ফ্রি উস্করি, তো ফ্রি যদাতকন চলে, তাতকন চলে, না চলতি বানে ভলে
+22:19:15 [YOU] [mic] heard: আমার মাথা এটা বেন দেবানা, এটা বেন যোদে ফ্রি উস্করি, তো ফ্রি যদাতকন চলে, তাতকন চলে, না চলতি বানে ভলে
+22:19:15 [BRAIN] [brain] config reloaded (models/preferences)
+22:19:17 [BRAIN] [tool] pc_quick_clean
+22:19:17 [BRAIN] [brain] Groq: models on this account (11): openai/gpt-oss-20b, meta-llama/llama-prompt-guard-2-86m, meta-llama/llama-prompt-guard-2-22m, canopylabs/orpheus-v1-english, qwen/qwen3.8-27b, whisper-large-v3, allam-2-7b, openai/gpt-oss-120b, canopylabs/orpheus-arabic-saudi, openai/gpt-oss-safeguard-20b, whisper-large-v3-turbo
+22:19:17 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
+22:19:17 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+22:19:17 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+22:19:19 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+22:19:19 [BRAIN] [brain] chat race: Groq answered first (4108 ms)
+22:19:19 [NALOX] NALOX: কম্পিউটারের রিসাইকেল বিন এবং টেম্প ফোল্ডার পরিষ্কার করে ফেলেছি। আর কিছু দরকার কি, স্যার?
+22:19:27 [VOICE] via edge-tts: কম্পিউটারের রিসাইকেল বিন এবং টেম্প ফোল্ডার পরিষ্কার করে ফেলেছি।
+22:19:32 [VOICE] via edge-tts: আর কিছু দরকার কি, স্যার?
+22:19:32 [SYSTEM] [timing] record 19.8s, transcribe 2.4s, brain 4.1s, speak 13.1s
+22:19:33 [MIC] [mic] connected (system default microphone)
+22:19:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=followup
+22:19:44 [SYSTEM] [input] dictation (cloud:groq): তুমি আমাদ যোনে যেটা সঙ্ক পেলে করবে, যার নামবে কুমার সনো সঙ্ক পেলে করবে
+22:19:44 [YOU] [mic] heard: তুমি আমাদ যোনে যেটা সঙ্ক পেলে করবে, যার নামবে কুমার সনো সঙ্ক পেলে করবে
+22:19:44 [BRAIN] [brain] config reloaded (models/preferences)
+22:19:45 [BRAIN] [brain] Groq: models on this account (11): whisper-large-v3, meta-llama/llama-prompt-guard-2-86m, meta-llama/llama-prompt-guard-2-22m, openai/gpt-oss-safeguard-20b, canopylabs/orpheus-v1-english, canopylabs/orpheus-arabic-saudi, allam-2-7b, openai/gpt-oss-20b, whisper-large-v3-turbo, qwen/qwen3.8-27b, openai/gpt-oss-120b
+22:19:45 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
+22:19:45 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+22:19:45 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+22:19:45 [BRAIN] [brain] Gemini model gemini-flash-latest rate-limited again — parked 30m (likely daily quota)
+22:19:46 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+22:19:46 [BRAIN] [brain] chat race: Groq answered first (1592 ms)
+22:19:46 [NALOX] NALOX: দুঃখিত স্যার, আপনি কী খুলতে বা চালাতে চান তা একটু পরিষ্কার করে বলবেন?
+22:19:55 [VOICE] via edge-tts: দুঃখিত স্যার, আপনি কী খুলতে বা চালাতে চান তা একটু পরিষ্কার করে বলবেন?
+22:19:55 [SYSTEM] [timing] record 10.2s, transcribe 1.7s, brain 1.6s, speak 9.2s
+22:19:55 [MIC] [mic] connected (system default microphone)
+22:20:05 [SYSTEM] [input] dictation (cloud:groq): আমি চালাদে আয়, আমতুমি এখন যুটুবে আয়, কুমার সানো সাংগ চালো করোরে এই, জখন বলছে, জখন বলছে কানো
+22:20:05 [YOU] [mic] heard: আমি চালাদে আয়, আমতুমি এখন যুটুবে আয়, কুমার সানো সাংগ চালো করোরে এই, জখন বলছে, জখন বলছে কানো
+22:20:05 [BRAIN] [brain] config reloaded (models/preferences)
+22:20:06 [BRAIN] [brain] Groq: models on this account (11): openai/gpt-oss-120b, openai/gpt-oss-20b, allam-2-7b, whisper-large-v3, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3-turbo, canopylabs/orpheus-v1-english, meta-llama/llama-prompt-guard-2-86m, qwen/qwen3.8-27b, canopylabs/orpheus-arabic-saudi, openai/gpt-oss-safeguard-20b
+22:20:06 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
+22:20:06 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+22:20:06 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+22:20:08 [BRAIN] [tool] youtube_play {'query': 'Kumar Sano song'}
+22:20:10 [SYSTEM] [dashboard] Command Center closed.
+22:20:11 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+22:20:21 [ERROR] [BRAIN] Ollama FAILED: ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=8.0)
+22:20:21 [BRAIN] [brain] chat fallback: Ollama failed: ReadTimeout: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=8.0)
+22:20:21 [NALOX] NALOX: দুঃখিত sir, brain-এর limit শেষ হয়ে গেছে — একটু পরে আবার চেষ্টা করুন।
+22:20:26 [MIC] [mic] connected (system default microphone)
+22:20:32 [VOICE] via edge-tts: দুঃখিত sir, brain-এর limit শেষ হয়ে গেছে — একটু পরে আবার চেষ্টা করুন।
+22:20:32 [SYSTEM] [timing] record 8.0s, transcribe 1.7s, brain 16.2s, speak 11.1s
+22:20:34 [SYSTEM] [input] dictation (cloud:groq): প্রিনের লেমেট শেশ হয়ে গাছে, একটু পারে আবার চেষ্টা করুন
+22:20:34 [YOU] [mic] heard: প্রিনের লেমেট শেশ হয়ে গাছে, একটু পারে আবার চেষ্টা করুন
+22:20:34 [BRAIN] [brain] config reloaded (models/preferences)
+22:20:35 [BRAIN] [brain] Groq: models on this account (11): canopylabs/orpheus-v1-english, meta-llama/llama-prompt-guard-2-22m, openai/gpt-oss-120b, allam-2-7b, qwen/qwen3.8-27b, whisper-large-v3, canopylabs/orpheus-arabic-saudi, openai/gpt-oss-safeguard-20b, whisper-large-v3-turbo, meta-llama/llama-prompt-guard-2-86m, openai/gpt-oss-20b
+22:20:35 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b
+22:20:35 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+22:20:35 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+22:20:35 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+22:20:35 [BRAIN] [brain] chat race: Groq answered first (1109 ms)
+22:20:35 [NALOX] NALOX: দয়া করে আপনি কী কাজটি করতে চান তা স্পষ্টভাবে বলবেন, স্যার?
+22:20:39 [heartbeat] state=speaking mic=system default microphone queue=0 dict=idle
+22:20:42 [ERROR] Voice path edge-tts failed:
+22:20:49 [VOICE] via google-tts: দয়া করে আপনি কী কাজটি করতে চান তা স্পষ্টভাবে বলবেন, স্যার?
+22:20:49 [VOICE] [voice] male voice unavailable — female fallback for this reply
+22:20:49 [SYSTEM] [timing] record 6.2s, transcribe 1.5s, brain 1.1s, speak 14.1s
+22:20:49 [MIC] [mic] connected (system default microphone)
+22:20:59 [SYSTEM] [input] dictation (cloud:groq): দেখো, এবা তুমি কুমাসন সংক্টা পেলে করো আমাত জনে যুটুপে এনে তা দাস সেগানে ইস্কিপ পূরো, তামানে দাস সেগানে বাড়ি দাও
+22:20:59 [YOU] [mic] heard: দেখো, এবা তুমি কুমাসন সংক্টা পেলে করো আমাত জনে যুটুপে এনে তা দাস সেগানে ইস্কিপ পূরো, তামানে দাস সেগানে বাড়ি দাও
+22:20:59 [BRAIN] [brain] config reloaded (models/preferences)
+22:21:00 [BRAIN] [brain] Groq: models on this account (11): whisper-large-v3-turbo, canopylabs/orpheus-v1-english, openai/gpt-oss-120b, openai/gpt-oss-safeguard-20b, meta-llama/llama-prompt-guard-2-86m, allam-2-7b, openai/gpt-oss-20b, meta-llama/llama-prompt-guard-2-22m, canopylabs/orpheus-arabic-saudi, qwen/qwen3.8-27b, whisper-large-v3
+22:21:00 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> openai/gpt-oss-20b -> qwen/qwen3.8-27b
+22:21:00 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+22:21:00 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+22:21:01 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+22:21:01 [BRAIN] [brain] chat race: Groq answered first (1593 ms)
+22:21:01 [NALOX] NALOX: দুঃখিত স্যার, আপনার অনুরোধটি পরিষ্কারভাবে বুঝতে পারিনি।
+22:21:08 [ERROR] Voice path edge-tts failed:
+22:21:08 [ERROR] [voice] edge-tts unavailable — skipping it for a while
+22:21:09 [SYSTEM] [dashboard] Command Center closed.
+22:21:15 [VOICE] via google-tts: দুঃখিত স্যার, আপনার অনুরোধটি পরিষ্কারভাবে বুঝতে পারিনি।
+22:21:15 [VOICE] [voice] male voice unavailable — female fallback for this reply
+22:21:15 [SYSTEM] [timing] record 8.4s, transcribe 1.8s, brain 1.6s, speak 13.8s
+22:21:15 [MIC] [mic] connected (system default microphone)
+22:21:29 [SYSTEM] [input] dictation (cloud:groq): আমে আমে চ্রালে দে লূ আমে
+22:21:29 [YOU] [mic] heard: আমে আমে চ্রালে দে লূ আমে
+22:21:29 [BRAIN] [brain] config reloaded (models/preferences)
+22:21:30 [BRAIN] [brain] Groq: models on this account (11): canopylabs/orpheus-v1-english, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3-turbo, whisper-large-v3, openai/gpt-oss-safeguard-20b, openai/gpt-oss-120b, meta-llama/llama-prompt-guard-2-86m, qwen/qwen3.8-27b, openai/gpt-oss-20b, canopylabs/orpheus-arabic-saudi, allam-2-7b
+22:21:30 [BRAIN] [brain] Groq: effective walk: allam-2-7b -> openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b
+22:21:30 [BRAIN] [brain] Groq: model allam-2-7b works — remembered as the default
+22:21:30 [BRAIN] [brain] Groq: auto chat head: allam-2-7b (validation pick — leads the chat walk)
+22:21:31 [BRAIN] [tool] open_app {'name': 'chrome'}
+22:21:33 [BRAIN] [brain] Groq: model openai/gpt-oss-120b works — remembered as the default
+22:21:33 [BRAIN] [brain] chat race: Groq answered first (3858 ms)
+22:21:33 [NALOX] NALOX: Chrome চালু করে দিলাম, আর কিছু দরকার স্যার?
+22:21:36 [SYSTEM] Exit Nalox pressed in the app window.
+22:21:36 [VOICE] via google-tts (interrupted): Chrome চালু করে দিলাম, আর কিছু দরকার স্যার?
+22:21:36 [VOICE] [voice] male voice unavailable — female fallback for this reply
+22:21:36 [WAKE] [barge-in] interrupted by Arjun
+22:21:36 [SYSTEM] [timing] record 13.0s, transcribe 1.4s, brain 3.9s, speak 2.7s
+22:21:36 [MIC] [mic] connected (system default microphone)
+22:21:36 [SYSTEM] [supervisor] Nalox exited cleanly (code 42) — deliberate exit, supervisor stopping.
+08:00:35 [VOICE] [voice] starting with google-tts (worked last time)
+08:00:35 [SYSTEM] [phone-link] command server listening on port 8766 (waiting for the Nalox Phone app)
+08:00:35 [BRAIN] [brain] remembered 5 dead models from last sessions
+08:00:35 [SYSTEM] [hotkey] dictation hotkey live: ctrl+alt+space
+08:00:35 [SYSTEM] > user: Arjun | lang: en
+08:00:35 [SYSTEM] [sys] Command Center ready
+08:00:36 [VOICE] [voice] active: ElevenLabs — unavailable (402), local voice
+08:00:36 [BRAIN] [brain] Brain: checking…
+08:00:36 [SYSTEM] [prefs] call me: sir | language: bn
+08:00:36 [VOICE] [speaker] output: Speakers (Realtek(R) Audio)
+08:00:36 [SYSTEM] Nalox v9.0 started | mic: system default microphone | output: Speakers (Realtek(R) Audio) | voice: ElevenLabs — unavailable (402), local voice | brain: Brain: checking… | robot: off | briefing_news: False | full_control: True
+08:00:36 [BRAIN] [brain] Groq: models on this account (11): meta-llama/llama-prompt-guard-2-22m, canopylabs/orpheus-v1-english, openai/gpt-oss-20b, whisper-large-v3-turbo, canopylabs/orpheus-arabic-saudi, openai/gpt-oss-120b, meta-llama/llama-prompt-guard-2-86m, allam-2-7b, qwen/qwen3.8-27b, whisper-large-v3, openai/gpt-oss-safeguard-20b
+08:00:36 [BRAIN] [brain] Groq: effective walk: openai/gpt-oss-120b -> openai/gpt-oss-20b -> allam-2-7b -> qwen/qwen3.8-27b
+08:00:36 [BRAIN] [brain] Groq: model openai/gpt-oss-20b works — remembered as the default
+08:00:36 [BRAIN] [brain] Groq: auto chat head: openai/gpt-oss-20b (validation pick — leads the chat walk)
+08:00:37 [BRAIN] [brain] Gemini boot check: 1 configured model(s) not on this account — marked dead before the first turn: gemini-2.0-flash
+08:00:47 [BRAIN] [brain] boot answer test: Groq did not answer
+08:00:47 [SYSTEM] Telegram: discarded 0 queued message(s) from while Nalox was off
+08:00:51 [BRAIN] [brain] Ollama server auto-started
+08:00:51 [BRAIN] [BRAIN] Offline brain (Ollama) ready: qwen3:8b
+08:00:51 [SYSTEM] [sys] boot probe complete — everything checked (7/10 ok; warn: Ollama (offline brain); FAILED: Brain answer test, FreeLLMAPI)
+08:00:51 [SYSTEM] [sys] boot probe detail: Microphone ✓ system default microphone; Groq brain ✓ key OK · 11 models · head openai/gpt-oss-20b; Brain answer test ✗ Groq did not answer; Voice ✓ ElevenLabs — unavailable (402), local voice; Gemini ✓ 3 model(s) ready · 1 dead skipped; FreeLLMAPI ✗ app not running — open FreeLLMAPI; Ollama (offline brain) ⚠ server starting — finishes in background; Muse Wonder ✓ key accepted — billing checked at first use; Phone link ✓ link server on — waiting for the phone app; Telegram ✓ bridge on
+08:00:51 [SYSTEM] [sys] Command Center opened at start
+08:00:51 [NALOX] NALOX: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+08:00:59 [VOICE] via tts-cache: শুভ সকাল, sir! আমি Nalox। কেমন আছেন? আজ কী করতে পারি?
+08:00:59 [SYSTEM] [sys] startup briefing off — greeting only (digest is on demand: say 'good morning')
+08:00:59 [MIC] [mic] connected (system default microphone)
+08:00:59 [SYSTEM] [ready] Type, tap 🎙, or press ctrl+alt+space and speak — Telegram works too
+08:01:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
-  File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\.venv\Lib\site-packages\requests\sessions.py", line 784 in send
   File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\.venv\Lib\site-packages\requests\sessions.py", line 651 in request
   File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\.venv\Lib\site-packages\requests\api.py", line 71 in request
   File "C:\Users\arjun\Downloads\nalox-assistant\nalox-assistant\.venv\Lib\site-packages\requests\api.py", line 87 in get
@@ -1757,3 +1735,6 @@ Thread 0x000065a0 (most recent call first):
 ===== Nalox boot 2026-11-16 21:09:35 — faulthandler armed =====
 
 ===== Nalox boot 2026-11-16 22:16:37 — faulthandler armed =====
+===== CLEAN EXIT 2026-11-16 22:21:36 — supervisor saw code 42 =====
+
+===== Nalox boot 2026-11-17 08:00:35 — faulthandler armed =====
