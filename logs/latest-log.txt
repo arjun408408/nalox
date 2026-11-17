@@ -1,20 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-17 10:33:44 (laptop local time)
+Synced: 2026-11-17 16:26:43 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:35:11 [VOICE] [voice] male voice unavailable — female fallback for this reply
-14:35:15 [VOICE] via google-tts: একটু বলুন কোন অ্যাপ বা সাইট।
-14:35:15 [SYSTEM] [timing] wake→record 8.6s, transcribe 2.8s, brain 1.3s, speak 7.2s
-14:35:15 [SYSTEM] [sys] follow-up listening (8s) — no wake word needed
-14:35:26 [SYSTEM] [ears] wake transcription paused briefly (worker slow) — still listening
-14:35:27 [SYSTEM] [ears] heard via cloud:groq
-14:35:27 [MIC] [heard] করা ভুঝেন হেন দেখা করো মে জদো গোলো টেইভ ওপেন আছে সব গোলো ওফ করো
-14:35:27 [YOU] [mic] heard: করা ভুঝেন হেন দেখা করো মে জদো গোলো টেইভ ওপেন আছে সব গোলো ওফ করো
-14:35:27 [BRAIN] [brain] config reloaded (models/preferences)
-14:35:27 [BRAIN] [brain] Groq: models on this account (11): canopylabs/orpheus-arabic-saudi, openai/gpt-oss-safeguard-20b, meta-llama/llama-prompt-guard-2-22m, whisper-large-v3-turbo, whisper-large-v3, meta-llama/llama-prompt-guard-2-86m, openai/gpt-oss-120b, allam-2-7b, qwen/qwen3.8-27b, canopylabs/orpheus-v1-english, openai/gpt-oss-20b
 14:35:27 [BRAIN] [brain] Groq: effective walk: qwen/qwen3.8-27b -> openai/gpt-oss-120b -> allam-2-7b -> openai/gpt-oss-20b
 14:35:27 [BRAIN] [brain] Groq: auto chat head: qwen/qwen3.8-27b (validation pick — leads the chat walk)
 14:35:28 [BRAIN] [tool] read_my_screen
@@ -1439,6 +1429,22 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 10:31:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 10:32:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 10:33:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+10:33:47 [SYSTEM] [logsync] log sent
+10:34:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+10:35:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+10:36:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+10:37:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:16:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:17:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:18:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:19:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:20:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:21:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:22:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:23:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:24:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:25:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+16:26:39 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
