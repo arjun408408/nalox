@@ -1,22 +1,10 @@
 Nalox log sync
 Version: 9.0
-Synced: 2026-11-17 08:42:35 (laptop local time)
+Synced: 2026-11-17 08:52:42 (laptop local time)
 log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fault.log
 
 ===== nalox_log.txt (tail) =====
 [... earlier log lines trimmed by log sync ...]
-14:30:21 [SYSTEM] [logsync] log sent
-14:30:53 [MIC] [heard] nalox, que anunía al mismo
-14:30:56 [MIC] [mic] wake word heard
-14:30:57 [WAKE] [wake] wake word heard
-14:30:57 [NALOX] NALOX: Yes Sir,
-14:30:59 [VOICE] via google-tts: Yes Sir,
-14:30:59 [YOU] [mic] heard: dan alas kainu yang ini
-14:31:00 [BRAIN] [brain] Gemini model gemini-2.5-flash is gone — trying gemini-2.0-flash
-14:31:00 [BRAIN] [lang-guard] Groq reply rejected — wrong language for the owner's preference; trying the next provider
-14:31:00 [heartbeat] state=thinking mic=Microphone Array (Realtek(R) Au queue=0 seg=11 blip=0 short=0 peak=0.1060 dec=10 (t9 b0 s1 r0) dmax=13.7s
-14:31:01 [BRAIN] [brain] Muse Wonder: billing required (HTTP 402) — parked for this session; the other brains keep answering
-14:31:01 [BRAIN] [brain] Gemini model gemini-2.0-flash is gone — trying gemini-2.5-flash-lite
 14:31:02 [BRAIN] [brain] Gemini model gemini-2.5-flash-lite is gone — trying gemini-flash-latest
 14:31:05 [BRAIN] [brain] chat fallback: Ollama failed: not reachable at http://localhost:11434
 14:31:06 [NALOX] NALOX: আমার brain-এর connection-এ সমস্যা হচ্ছে, sir — Settings-এ Groq key টা একবার check করবেন।
@@ -1416,6 +1404,18 @@ log sync: nalox diagnostics upload — the tail of nalox_log.txt, then nalox_fau
 08:39:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 08:40:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 08:41:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:42:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:42:38 [SYSTEM] [logsync] log sent
+08:43:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:44:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:45:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:46:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:47:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:48:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:49:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:50:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:51:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
+08:52:36 [heartbeat] state=listening mic=system default microphone queue=0 dict=idle
 
 ===== nalox_fault.log (tail) =====
 [... earlier log lines trimmed by log sync ...]
